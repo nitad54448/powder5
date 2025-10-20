@@ -308,7 +308,7 @@ Grosse-Kunstleve, R. W., Sauter, N. K., Moriarty, N. W., & Adams, P. D. (2002). 
 
 The **powder5** toolkit was developed by Nita Dragoe from Université Paris-Saclay as a simple browser-based implementation of powder pattern decomposition methods. It is a long-time successor of PowderV2 (Dragoe, N. (2001). *J. Appl. Cryst.*, 34, 535) and has been updated to include the Pawley method and modern global optimization algorithms.
 
-Last Updated: 10 October 2025.
+Last Updated: 20 October 2025.
 This document was updated with the assistance of an AI.
 
 > **Disclaimer:** This application is provided for educational and research purposes. While it implements standard and robust algorithms, it is not a substitute for fully validated, peer-reviewed software packages (e.g., GSAS-II, FullProf, TOPAS) for analyses intended for publication.
