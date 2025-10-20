@@ -1,6 +1,7 @@
 # Powder Pattern Decomposition - Help (powder5)
 
-This document serves as a scientific and technical guide for the **powder5** web application, a tool for the analysis of powder X-ray diffraction (PXRD) data.
+This document serves as a scientific and technical guide for the **powder5** web application, a tool for the analysis of powder X-ray diffraction (PXRD) data. This [program](https://nitad54448.github.io/powder5/powder5.html) can be launched directly in a browser.
+
 
 ## Help Topics
 
