@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
+
     <script>
         MathJax = {
           tex: {
@@ -90,7 +90,7 @@
             transition: all 0.2s ease;
             font-size: 15px;
         }
-        
+
         #nav-panel li a.sub-link {
             padding-left: 28px;
             font-size: 14px;
@@ -115,7 +115,7 @@
             overflow-y: auto;
             background-color: var(--system-background);
         }
-        
+
         #content-area h2 {
             font-size: 28px;
             font-weight: 700;
@@ -124,7 +124,7 @@
             border-bottom: 1px solid var(--system-separator);
             margin-bottom: 24px;
         }
-        
+
         #content-area h3 {
             font-size: 22px;
             font-weight: 600;
@@ -133,7 +133,7 @@
             padding-bottom: 8px;
             border-bottom: 1px solid var(--system-gray-5);
         }
-        
+
         #content-area h4 {
             font-size: 18px;
             font-weight: 600;
@@ -150,17 +150,28 @@
             font-size: 0.9em;
             border: 1px solid var(--system-gray-4);
         }
-        
+
         .reference-item {
             margin-bottom: 1em;
         }
 
         .note {
-            background-color: #eef6ff;
+            background-color: #eef6ff; /* Light blue background */
             border-left: 4px solid var(--system-blue);
             padding: 16px;
             margin: 24px 0;
             border-radius: 0 8px 8px 0;
+        }
+        /* --- Added Warning Note Style --- */
+        .warning-note {
+            background-color: #fffbeb; /* Light yellow background */
+            border-left: 4px solid #f59e0b; /* Amber/Yellow border */
+            padding: 16px;
+            margin: 24px 0;
+            border-radius: 0 8px 8px 0;
+        }
+        .warning-note strong {
+             color: #b45309; /* Darker amber text */
         }
     </style>
 </head>
@@ -206,17 +217,17 @@
                 The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for rigorous, unbiased intensity extraction. Peak profiles are modeled using phenomenological functions adapted from the GSAS software package, including a versatile <strong>Simple pseudo-Voigt (Profile Function #4)</strong> and a more physically rigorous <strong>Anisotropic model (Profile Function #3)</strong> based on the Thompson-Cox-Hastings (TCH) formulation with a Stephens model for anisotropic line broadening.
             </p>
         </section>
-        
+
         <hr>
-        
+
         <section id="getting-started">
             <h2>Getting Started: Data Input</h2>
             <p>
                 Analysis commences with the loading of a powder diffraction data file. The application is designed to automatically parse numerous common ASCII-based file formats from major instrument manufacturers and standard crystallographic software.
             </p>
             <ul>
-                <li><b>Supported Formats:</b> Built-in parsers are included for Bruker (<code>.brml</code>, <code>.uxd</code>), PANalytical (<code>.xrdml</code>), Rigaku (<code>.ras</code>), Philips (<code>.udf</code>), and GSAS (<code>.esd</code>, <code>.gsa</code>, <code>.xra</code>).</li>
-                <li><b>Generic Data:</b> Standard two-column ASCII files containing $2\theta$ and intensity values are also supported. The parser accommodates space, comma, or semicolon delimiters. Comment lines prefixed with <code>#</code> are ignored.</li>
+                <li><b>Supported Formats:</b> Built-in parsers are included for Bruker (<code>.brml</code>, <code>.uxd</code>), PANalytical (<code>.xrdml</code>), Rigaku (<code>.ras</code>, <code>.rasx</code>), Philips (<code>.udf</code>, <code>.rd</code>, <code>.sd</code>), GSAS (<code>.esd</code>, <code>.gsa</code>, <code>.xra</code>), and Jade (<code>.mdi</code>).</li>
+                <li><b>Generic Data:</b> Standard two-column ASCII files (<code>.xy</code>, <code>.csv</code>, <code>.txt</code>, <code>.dat</code>, <code>.asc</code> etc.) containing $2\theta$ and intensity values are also supported. The parser accommodates space, comma, or semicolon delimiters. Comment lines prefixed with <code>#</code>, <code>!</code>, <code>;</code> or <code>//</code> are ignored, as are non-numeric header lines.</li>
                 <li><b>Metadata Parsing:</b> For many instrument-specific formats, instrument parameters such as the X-ray wavelength for Kα1 are read from the file's metadata and used to populate the relevant fields in the user interface. It is incumbent upon the user to verify the correctness of these automatically populated values.</li>
             </ul>
         </section>
@@ -240,9 +251,9 @@
                 <li><b>Background Anchor Points:</b> To impose constraints on the background model, hold down the <strong>Ctrl</strong> key and <strong>click</strong> on a point in the pattern. This designates the nearest experimental data point as an anchor, a point that is given a significantly higher weight during refinement, thereby compelling the background function to pass through its vicinity.</li>
             </ul>
         </section>
-        
+
         <hr>
-        
+
         <section id="decomposition-methods">
             <h2>Pattern Decomposition Methodologies</h2>
             <p>
@@ -261,7 +272,7 @@
                 <li><b>Parameter Refinement:</b> These newly extracted intensities are held constant, and a non-linear least-squares refinement is performed on the lattice, background, and profile parameters to minimize the difference between the calculated and observed patterns.</li>
                 <li><b>Iteration:</b> The refined parameters from Step 3 are used to restart the process from Step 1. This cycle repeats until the parameters and R-factors converge.</li>
             </ol>
-            
+
             <h3 id="pawley-method">The Pawley Method</h3>
             <p>
                 The Pawley method employs a simultaneous, non-iterative approach. It treats the integrated intensity ($I_{hkl}$) of each Bragg reflection as an independent, refinable variable within a single, large-scale least-squares minimization.
@@ -271,15 +282,21 @@
             </p>
             <ul>
                 <li><b>Advantages:</b> The Pawley method is considered more rigorous as it avoids the iterative bias of the Le Bail method, particularly in cases of severe peak overlap. It can yield more accurate and statistically sound integrated intensities and parameter uncertainties.</li>
-                <li><b>Disadvantages:</b> The inclusion of hundreds or thousands of intensity variables significantly increases the computational complexity and memory requirements. The refinement is also more susceptible to instability and parameter correlation, especially if the initial model is poor.</li>
+                <li><b>Disadvantages:</b> The inclusion of hundreds or thousands of intensity variables significantly increases the computational complexity and memory requirements. The refinement is also more susceptible to instability and parameter correlation, especially if the initial model is poor or if stochastic optimization algorithms are used.</li>
             </ul>
+             <!-- ## ADDED WARNING NOTE ## -->
+            <div class="warning-note">
+                <strong>Algorithm Recommendation for Pawley Method:</strong><br>
+                Due to the high dimensionality and potential for parameter correlation when refining individual intensities, the Pawley method is significantly more stable when used with the <strong>Levenberg-Marquardt (LM)</strong> algorithm. The stochastic algorithms (Simulated Annealing and Parallel Tempering) can struggle to converge reliably in Pawley mode. <strong>It is strongly recommended to use only the LM algorithm for Pawley refinements, preferably after obtaining a good initial model using the Le Bail method.</strong> The user interface enforces this by disabling the "Run Pawley" button when SA or PT is selected.
+            </div>
+             <!-- ## END WARNING NOTE ## -->
         </section>
 
         <hr>
-        
+
         <section id="algorithms">
             <h2>Minimization Algorithms</h2>
-            <p>The goal of refinement is to minimize the sum-of-squares objective function, $\chi^2 = \sum w_i (y_{i,obs} - y_{i,calc})^2$, where $w_i$ is the statistical weight of each data point. This application provides several algorithms to navigate the complex parameter space and find the minimum of this function.</p>
+            <p>The goal of refinement is to minimize the sum-of-squares objective function, $\chi^2 = \sum w_i (y_{i,obs} - y_{i,calc})^2$, where $w_i$ is the statistical weight of each data point (typically $w_i = 1/y_{i,obs}$). This application provides several algorithms to navigate the complex parameter space and find the minimum of this function.</p>
 
             <h3 id="algorithms-lm">Levenberg-Marquardt (LM)</h3>
             <p>
@@ -288,8 +305,9 @@
             <ul>
                 <li><b>Characteristics:</b> LM is a local minimizer, exhibiting rapid quadratic convergence when the initial parameters are close to the true minimum. It is the preferred method for final, high-precision refinement and is the only algorithm here that can calculate valid estimated standard deviations (ESDs) for the refined parameters from the covariance matrix.</li>
                 <li><b>Limitations:</b> It is susceptible to converging to a local minimum if the starting model is far from the global solution.</li>
+                <li><b>Pawley Mode: Recommended algorithm for Pawley refinements due to stability.</b></li>
             </ul>
-            
+
             <h3 id="algorithms-sa">Simulated Annealing (SA)</h3>
             <p>
                 Simulated Annealing is a stochastic, global optimization metaheuristic inspired by the annealing process in metallurgy. The algorithm introduces a "temperature" parameter, $T$, which controls the probability of accepting a parameter step that increases the objective function.
@@ -298,9 +316,10 @@
                  At high temperatures, the algorithm explores the parameter space widely, frequently accepting "uphill" moves that allow it to escape local minima. As the refinement proceeds, $T$ is gradually reduced according to a cooling schedule, reducing the probability of accepting non-improving solutions. The system eventually "freezes" into a low-energy state, which is expected to be the global minimum.
             </p>
              <ul>
-                <li><b>Use Case:</b> Ideal for exploring complex solution spaces or when the initial parameters are poorly known. It can effectively escape local minima where gradient-based methods like LM would become trapped.</li>
+                <li><b>Use Case:</b> Ideal for exploring complex solution spaces or when the initial parameters are poorly known, particularly in Le Bail mode. It can effectively escape local minima where gradient-based methods like LM would become trapped.</li>
+                <li><b>Pawley Mode: Not recommended due to potential instability.</b></li>
             </ul>
-            
+
             <h3 id="algorithms-pt">Parallel Tempering (Replica Exchange)</h3>
             <p>
                 Parallel Tempering, also known as Replica Exchange MCMC, is an advanced stochastic algorithm designed to overcome the slow convergence of traditional Simulated Annealing. Instead of a single system with a decreasing temperature, Parallel Tempering simulates multiple copies (or "replicas") of the system simultaneously, each at a different, fixed temperature in a predefined ladder ($T_1 < T_2 < ... < T_N$).
@@ -308,12 +327,13 @@
             <ul>
                 <li><b>Mechanism:</b> Each replica evolves independently according to a standard Monte Carlo or SA algorithm at its respective temperature. The high-temperature replicas explore the parameter space broadly (high mobility), while the low-temperature replicas perform a fine-grained search of local minima (high precision).</li>
                 <li><b>The Swap Move:</b> Periodically, the algorithm attempts to swap the entire set of parameters between adjacent replicas (e.g., between replica $i$ at temperature $T_i$ and replica $i+1$ at $T_{i+1}$). The swap is accepted with a Metropolis-like probability that depends on the energies and temperatures of the two replicas. This crucial step allows a good solution discovered by a high-temperature replica in a distant valley to "percolate down" to the low-temperature replicas, dramatically improving the efficiency of finding the global minimum.</li>
-                 <li><b>Advantages:</b> Significantly more efficient at global exploration than standard Simulated Annealing, making it the most robust choice for complex problems or when the starting model is highly uncertain.</li>
+                 <li><b>Advantages:</b> Significantly more efficient at global exploration than standard Simulated Annealing, making it the most robust choice for complex problems or when the starting model is highly uncertain (primarily in Le Bail mode).</li>
+                 <li><b>Pawley Mode: Not recommended due to potential instability.</b></li>
             </ul>
         </section>
-        
+
         <hr>
-        
+
         <section id="parameters">
             <h2>Guide to Refinable Parameters</h2>
             <p>This section provides a detailed breakdown of the parameters you can control and refine.</p>
@@ -347,8 +367,8 @@
             <h3 id="parameters-background">Background Modeling</h3>
             <p>The background is modeled as a superposition of empirical functions on the "Background" tab.</p>
              <ul>
-                <li><b>Chebyshev Polynomial:</b> A 6-term Chebyshev polynomial of the first kind provides a flexible and orthogonal basis for modeling slowly varying background features. It is recommended to refine coefficients sequentially, starting with the lowest-order terms.</li>
-                <li><b>Amorphous Hump:</b> A single Lorentzian function can be added to the background model to account for broad scattering features, such as from a glass capillary or an amorphous sample component.</li>
+                <li><b>Chebyshev Polynomial:</b> A flexible Chebyshev polynomial of the first kind (up to 9 terms, <code>B0</code>-<code>B8</code>) provides a flexible and orthogonal basis for modeling slowly varying background features. It is recommended to refine coefficients sequentially, starting with the lowest-order terms.</li>
+                <li><b>Amorphous Hump:</b> A single Lorentzian function (defined by <code>Hump Height</code>, <code>Position</code>, <code>FWHM</code>) can be added to the background model to account for broad scattering features, such as from a glass capillary or an amorphous sample component.</li>
                 <li><b>Anchor Points:</b> Manual anchor points can be added by <strong>Ctrl+Clicking</strong> on the chart. These points are assigned a high weight in the least-squares minimization, effectively constraining the background function to pass through specified regions.</li>
             </ul>
 
@@ -360,9 +380,9 @@
                 $$H_L = LX / \cos\theta$$
             </p>
             <ul>
-                <li><code>GU, GV, GW, GP</code>: Parameters describing the Gaussian FWHM. The terms are associated with strain ($GU$), instrumental factors ($GV, GW$), and particle size effects ($GP$).</li>
-                <li><code>LX</code>: Describes the Lorentzian FWHM, primarily associated with crystallite size broadening.</li>
-                <li><code>eta</code>: A simple linear mixing parameter ($\eta=0$ for pure Gaussian, $\eta=1$ for pure Lorentzian).</li>
+                <li><code>GU, GV, GW, GP</code>: Parameters describing the Gaussian FWHM ($H_G$). The terms are associated with strain ($GU$), instrumental factors ($GV, GW$), and particle size effects ($GP$). Note that $GU$, $GW$, and $GP$ should physically be non-negative.</li>
+                <li><code>LX</code>: Describes the Lorentzian FWHM ($H_L$), primarily associated with crystallite size broadening ($LX > 0$).</li>
+                <li><code>eta</code>: A simple linear mixing parameter ($0 \le \eta \le 1$; $\eta=0$ for pure Gaussian, $\eta=1$ for pure Lorentzian).</li>
                 <li><code>shft & trns</code>: Corrects for peak position shifts due to sample displacement and transparency, respectively.
                     <div class="note" style="margin-top: 1em; margin-bottom: 0;">
                         <strong>Unit and Scaling for the <code>shft</code> parameter:</strong><br>
@@ -377,12 +397,12 @@
                     </div>
                 </li>
             </ul>
-            
+
             <h3 id="parameters-profile3">Profile Function #3 (Anisotropic TCH)</h3>
             <p>
                 This is a physically rigorous profile function adapted from GSAS, convoluting a <strong>Thompson-Cox-Hastings (TCH) pseudo-Voigt</strong> with a <strong>Stephens model</strong> for anisotropic strain broadening.
             </p>
-            
+
             <h4>Isotropic Broadening (TCH Model)</h4>
             <p>The TCH formulation models the FWHM of the Gaussian ($H_G$) and Lorentzian ($H_L$) components based on physical contributions to line broadening:
                 $$H_G^2 = U \tan^2\theta + V \tan\theta + W$$
@@ -390,10 +410,10 @@
             </p>
             <p>The total FWHM ($H$) and pseudo-Voigt mixing parameter ($\eta$) are then derived from these components using polynomial approximations. The final shape is $pV(x) = \eta L(x, H) + (1-\eta)G(x, H)$, where both functions share the same convoluted FWHM.</p>
             <ul>
-                <li><code>U, V, W</code>: Gaussian broadening parameters related to strain ($U, V$) and instrumental resolution ($W$), following the Caglioti formulation.</li>
-                <li><code>X, Y</code>: Lorentzian broadening parameters related to strain ($X$) and crystallite size ($Y$), following the Scherrer formula.</li>
+                <li><code>U, V, W</code>: Gaussian broadening parameters related to strain ($U, V$) and instrumental resolution ($W$). Physically, $U$ and $W$ should be non-negative.</li>
+                <li><code>X, Y</code>: Lorentzian broadening parameters related to strain ($X$) and crystallite size ($Y$). Physically, $X$ and $Y$ should be non-negative.</li>
             </ul>
-            
+
             <h4>Peak Asymmetry</h4>
              <p>The <code>S/L</code> and <code>H/L</code> parameters introduce an angle-dependent asymmetry, primarily correcting for axial divergence effects at low $2\theta$.</p>
 
@@ -402,7 +422,7 @@
                 Anisotropic microstrain, where broadening varies with crystallographic direction, is modeled by adding terms to the Lorentzian component ($H_L$) that are dependent on the Miller indices ($hkl$). The model is a fourth-order polynomial in the reciprocal lattice vectors.
             </p>
             <p>
-                The refinable parameters (<code>S400</code>, <code>S040</code>, etc.) are the non-zero, symmetry-unique coefficients of this polynomial. The application automatically applies symmetry constraints based on the Laue class of the selected space group.
+                The refinable parameters (<code>S400</code>, <code>S040</code>, etc.) are the non-zero, symmetry-unique coefficients of this polynomial. The application automatically applies symmetry constraints based on the Laue class of the selected space group (e.g., for cubic, $S400=S040=S004$).
             </p>
             <div class="note">
                 <strong>Unit and Scaling for Stephens <code>S_hkl</code> parameters:</strong><br>
@@ -413,44 +433,46 @@
         </section>
 
         <hr>
-        
+
         <section id="strategy">
             <h2>Recommended Refinement Strategy</h2>
             <p>
                 A sequential and hierarchical refinement strategy is crucial for achieving a stable and physically meaningful solution. Attempting to refine all parameters simultaneously from a poor starting model will likely lead to divergence or convergence to a false minimum.
             </p>
-            
+
             <h3>Phase 1: Initial Model Setup</h3>
             <ol>
                 <li><b>Define the Model:</b> Load data, select the crystal system and space group, and define the refinement range using the <strong>$2\theta$ sliders</strong>.</li>
-                <li><b>Background Refinement:</b> Model the background by refining the first two or three Chebyshev terms (<code>B0</code>, <code>B1</code>, <code>B2</code>). Use anchor points if necessary to constrain complex background shapes.</li>
+                <li><b>Background Refinement:</b> Model the background by refining the first few Chebyshev terms (e.g., <code>B0</code>, <code>B1</code>, <code>B2</code>). Add the Hump parameters if needed. Use anchor points if necessary to constrain complex background shapes.</li>
                 <li><b>Peak Position Refinement:</b> Using the <strong>Le Bail</strong> and <strong>LM</strong> algorithms, refine only the <strong>Lattice Parameter(s)</strong> and, if necessary, the instrumental <strong>Zero Shift</strong>. The goal is to align the calculated Bragg positions with the observed peak maxima.</li>
             </ol>
-            
+
             <h3>Phase 2: Peak Profile Refinement</h3>
             <ol start="4">
-                <li><b>Isotropic Broadening:</b> Once positions are correct, refine the primary isotropic peak shape parameters (e.g., <strong>W, Y, U, X</strong> in Profile #3). This will account for the dominant size and strain contributions.</li>
-                <li><b>Asymmetry and Shape:</b> Introduce asymmetry parameters (<strong>S/L</strong>) if there is a clear misfit at low angles.</li>
-                <li><b>Anisotropic Broadening:</b> If systematic misfits remain (e.g., some peaks are consistently broader than the model), introduce the anisotropic Stephens parameters (e.g., <strong>S400</strong>). Refine only the symmetry-independent terms.</li>
+                <li><b>Isotropic Broadening:</b> Once positions are correct, refine the primary isotropic peak shape parameters (e.g., <strong>W, Y, U, X</strong> in Profile #3, or <strong>GW, GP, LX</strong> in Profile #4). This will account for the dominant size and strain contributions.</li>
+                <li><b>Asymmetry and Shape:</b> Introduce asymmetry parameters (<strong>S/L</strong> in Profile #3, <strong>shft/trns</strong> in Profile #4) if there is a clear misfit, particularly at low angles. Refine the mixing parameter (<strong>eta</strong> in Profile #4) if needed.</li>
+                <li><b>Anisotropic Broadening (Profile #3 only):</b> If systematic misfits remain (e.g., some peaks are consistently broader than the model), introduce the anisotropic Stephens parameters (e.g., <strong>S400</strong>). Refine only the symmetry-independent terms.</li>
             </ol>
 
             <h3>Phase 3: Finalization and Intensity Extraction</h3>
             <ol start="7">
-                 <li><b>Global Optimization:</b> If the LM algorithm converges to a poor solution, switch to <strong>Parallel Tempering</strong> or <strong>Simulated Annealing</strong> for one or more cycles to perform a global search. Afterwards, switch back to LM for a final, precise local minimization.</li>
-                <li><b>Pawley Refinement:</b> With a stable and well-refined model from the Le Bail method, a final refinement can be performed using the <strong>Pawley method</strong>. This will provide the most statistically robust set of integrated intensities, suitable for subsequent structure solution.</li>
+                 <li><b>Global Optimization (Optional):</b> If the LM algorithm converges to a poor solution during the Le Bail steps, switch to <strong>Parallel Tempering</strong> or <strong>Simulated Annealing</strong> for one or more Le Bail cycles to perform a global search. Afterwards, switch back to LM for a final, precise local minimization.</li>
+                 <!-- ## UPDATED PAWLEY STEP ## -->
+                <li><b>Pawley Refinement (LM Only):</b> With a stable and well-refined model from the Le Bail method, perform a final refinement using the <strong>Pawley method</strong> with the <strong>Levenberg-Marquardt (LM)</strong> algorithm. This will provide the most statistically robust set of integrated intensities, suitable for subsequent structure solution. <strong>Using SA or PT for Pawley is not recommended due to potential instability.</strong></li>
+                 <!-- ## END UPDATE ## -->
             </ol>
 
                         <div class="note">
                 <h4>Technical Note on Calculation Parameters</h4>
                 <p>
-                    The theoretical pattern is calculated using a hybrid approach for performance and accuracy. A search window (defined by <code>CALCULATION_WINDOW_MULTIPLIER</code>) is used to find all potential contributions to a given data point. However, only points where the calculated peak height is greater than a defined threshold (<code>PEAK_HEIGHT_CUTOFF</code>, now set at 0.2%) relative to its maximum are included in the final sum.
+                    The theoretical pattern is calculated using a hybrid approach for performance and accuracy. A search window (defined by <code>CALCULATION_WINDOW_MULTIPLIER</code>, typically 6-8 times the peak FWHM) is used to find all potential contributions to a given data point. However, only points where the calculated peak height is greater than a defined threshold (<code>PEAK_HEIGHT_CUTOFF</code>, currently 0.2%) relative to its maximum are included in the final sum.
                 </p>
             </div>
 
         </section>
-        
+
         <hr>
-        
+
         <section id="results">
             <h2>Interpretation of Results</h2>
             <p>
@@ -461,17 +483,17 @@
             <p>Standard crystallographic R-factors are provided to quantify the quality of the fit.</p>
             <ul>
                 <li>
-                    <b>R-pattern ($R_p$):</b> The unweighted residual error, sensitive primarily to the fit of high-intensity reflections.
-                    $$R_p = \frac{\sum |y_{i,obs} - y_{i,calc}|}{\sum y_{i,obs}} \times 100\%$$
+                    <b>R-pattern ($R_p$):</b> The unweighted residual error based on net intensities, sensitive primarily to the fit of high-intensity reflections.
+                    $$R_p = \frac{\sum |(y_{i,obs} - y_{i,bkg}) - (y_{i,calc} - y_{i,bkg})|}{\sum |y_{i,obs} - y_{i,bkg}|} \times 100\%$$
                 </li>
                 <li>
-                    <b>Weighted R-pattern ($R_{wp}$):</b> The primary figure of merit, weighted by the inverse of the observed intensities ($w_i = 1/y_{i,obs}$), which properly accounts for the counting statistics across the entire pattern.
+                    <b>Weighted R-pattern ($R_{wp}$):</b> The primary figure of merit, weighted by the inverse of the observed gross intensities ($w_i = 1/y_{i,obs}$), which properly accounts for the counting statistics across the entire pattern.
                     $$R_{wp} = \left[ \frac{\sum w_i (y_{i,obs} - y_{i,calc})^2}{\sum w_i y_{i,obs}^2} \right]^{1/2} \times 100\%$$
                 </li>
                 <li>
-                    <b>Reduced Chi-squared ($\chi^2$, Goodness of Fit):</b> The most statistically rigorous indicator. For a statistically perfect fit where the model correctly describes the data and the weights are accurate, $\chi^2$ should be exactly 1.0.
-                     $$\chi^2 = \frac{\sum w_i (y_{i,obs} - y_{i,calc})^2}{N - P}$$
-                     where $N$ is the number of data points and $P$ is the number of refined parameters.
+                    <b>Reduced Chi-squared ($\chi^2$, Goodness of Fit):</b> The most statistically rigorous indicator. For a statistically perfect fit where the model correctly describes the data and the weights are accurate, $\chi^2$ should approach 1.0.
+                     $$\chi^2 = \frac{1}{N - P} \sum w_i (y_{i,obs} - y_{i,calc})^2 = \left(\frac{R_{wp}}{R_{exp}}\right)^2$$
+                     where $N$ is the number of data points, $P$ is the number of refined parameters, and $R_{exp}$ is the statistically expected minimum $R_{wp}$.
                 </li>
             </ul>
 
@@ -480,7 +502,7 @@
                 A simple numerical integration over a fixed angular range is insufficient for accurately determining the observed integrated intensity ($I_{obs}$) of overlapping peaks. This tool employs a more robust <strong>intensity partitioning</strong> method.
             </p>
             <p>
-                At each point in the diffraction pattern, the net observed intensity ($y_{obs} - y_{bkg}$) is distributed among all contributing Bragg reflections. This distribution is proportional to the value of each peak's calculated profile function at that specific point. By integrating these partitioned "slices" of intensity for each reflection across the entire pattern, the method yields a reliable $I_{obs}$ value that correctly deconvolutes contributions from neighboring peaks.
+                At each point in the diffraction pattern, the net observed intensity ($y_{obs} - y_{bkg}$) is distributed among all contributing Bragg reflections. This distribution is proportional to the value of each peak's calculated profile function at that specific point. By integrating these partitioned "slices" of intensity for each reflection across the entire pattern (using the trapezoidal rule), the method yields a reliable $I_{obs}$ value that correctly deconvolutes contributions from neighboring peaks.
             </p>
 
             <h3>Visual Inspection</h3>
@@ -489,29 +511,29 @@
             </p>
             <ul>
                 <li>
-                    <b>The Difference Plot:</b> A successful refinement should yield a difference plot that consists of random, uncorrelated noise centered on zero.
+                    <b>The Difference Plot:</b> A successful refinement should yield a difference plot that consists of random, uncorrelated noise centered on zero. The plot is scaled relative to the main pattern for visibility.
                 </li>
                 <li>
                     <b>Systematic Residuals:</b> The presence of structured, non-random features in the difference plot (e.g., "M-shaped" residuals around peaks, broad humps, or un-indexed peaks) is a clear indication of systematic errors in the model. These may arise from an incorrect peak shape, unmodeled anisotropy or asymmetry, an inadequate background model, or the presence of an unaccounted-for impurity phase.
                 </li>
             </ul>
-            
+
             <blockquote>
             <h3 id="results-wh">Williamson-Hall Size-Strain Analysis</h3>
             <p>
                 For refinements utilizing <strong>Profile Function #3 (Anisotropic TCH)</strong> and the <strong>Pawley method</strong>, the application can automatically perform a Williamson-Hall analysis to extract microstructural information. This method separates the contributions of crystallite size and microstrain to the total peak broadening by analyzing their different dependencies on the diffraction angle, $\theta$.
             </p>
             <p>
-                The analysis is based on the linear Williamson-Hall equation, where $\beta$ is the total physical peak breadth (FWHM) in radians:
+                The analysis is based on the linear Williamson-Hall equation, where $\beta$ is the total physical peak breadth (FWHM) in radians derived from the refined sample-only broadening parameters (<code>U</code>, <code>X</code>, <code>Y</code>):
                 $$\beta \cos(\theta) = \frac{K\lambda}{L} + 4\epsilon \sin(\theta)$$
             </p>
             <p>
-                This equation describes a straight line when plotting $\beta \cos(\theta)$ vs. $4\sin(\theta)$. The software performs a linear least-squares fit on the refined sample-broadening parameters (<code>U</code>, <code>X</code>, <code>Y</code>) to determine the y-intercept (related to crystallite size, $L$) and the slope (related to microstrain, $\epsilon$).
+                This equation describes a straight line when plotting $\beta \cos(\theta)$ vs. $4\sin(\theta)$. The software performs a linear least-squares fit on the relevant data points to determine the y-intercept (related to crystallite size, $L$) and the slope (related to microstrain, $\epsilon$).
             </p>
 
             <h4>Reported Values</h4>
             <ul>
-                <li><b>Apparent Crystallite Size (nm):</b> An estimate of the average size of the coherently scattering domains, calculated from the y-intercept of the Williamson-Hall plot.</li>
+                <li><b>Apparent Crystallite Size (nm):</b> An estimate of the average size of the coherently scattering domains, calculated from the y-intercept of the Williamson-Hall plot (using $K=0.9$).</li>
                 <li><b>Apparent Microstrain (%):</b> An estimate of the root-mean-square strain within the crystallites, calculated from the slope of the plot.</li>
                 <li><b>Linear Fit R²:</b> The coefficient of determination for the linear regression. A value close to 1.0 indicates that the isotropic size/strain model is a good fit for the observed peak broadening. Values significantly less than 1.0 may suggest that broadening is anisotropic or that the model is otherwise inadequate.</li>
             </ul>
@@ -519,8 +541,8 @@
 
             <h3>Data Export</h3>
             <ul>
-                <li><b>Save Report:</b> Generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), and a point-by-point list of observed, calculated, and difference intensities.</li>
-                <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters, suitable for archival or reporting.</li>
+                <li><b>Save Report:</b> Generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), the Williamson-Hall analysis results (if applicable), a list of reflections with calculated and observed intensities, and (optionally) a point-by-point list of observed, calculated, background, and difference intensities.</li>
+                <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters and statistics, suitable for archival or reporting.</li>
             </ul>
         </section>
 
@@ -554,19 +576,19 @@
             </div>
             <div class="reference-item">
                 <strong>cctbx - Computational Crystallography Toolbox:</strong><br>
-                Grosse-Kunstleve, R. W., Sauter, N. K., Moriarty, N. W., & Adams, P. D. (2002). "The Computational Crystallography Toolbox: crystallographic algorithms in a reusable software framework". <em>Journal of Applied Crystallography</em>, 35(1), 126-136.
+                Grosse-Kunstleve, R. W., Sauter, N. K., Moriarty, N. W., & Adams, P. D. (2002). "The Computational Crystallography Toolbox: crystallographic algorithms in a reusable software framework". <em>Journal of Applied Crystallography</em>, 35(1), 126-136. (Used for space group systematic absence rules).
             </div>
         </section>
 
         <hr>
-        
+
         <section id="about">
             <h2>About This Tool</h2>
             <p>
                 The <strong>powder5</strong> toolkit was developed by Nita Dragoe from Université Paris-Saclay as a simple browser-based implementation of powder pattern decomposition methods. It is a long-time successor of PowderV2 (Dragoe, N. (2001). <em>J. Appl. Cryst.</em>, 34, 535) and has been updated to include the Pawley method and modern global optimization algorithms.
             </p>
             <p>
-                Last Updated: 10 October 2025.<br>This document was updated with the assistance of an AI.
+                Version: 1.09 | Last Updated: 24 October 2025.<br>This document was updated with the assistance of an AI.
             </p>
             <div class="note">
                 <strong>Disclaimer:</strong> This application is provided for educational and research purposes. While it implements standard and robust algorithms, it is not a substitute for fully validated, peer-reviewed software packages (e.g., GSAS-II, FullProf, TOPAS) for analyses intended for publication.
@@ -587,22 +609,45 @@
                 link.classList.remove('active');
                 if (link.getAttribute('href') === `#${id}`) {
                     link.classList.add('active');
+                    // Optional: Scroll link into view if needed
+                    // link.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 }
             });
         };
 
+        // Debounce scroll listener for performance
+        let scrollTimeout;
         contentArea.addEventListener('scroll', () => {
-            let current = '';
-            sections.forEach(section => {
-                const sectionTop = section.offsetTop;
-                if (contentArea.scrollTop >= sectionTop - 100) {
-                    current = section.getAttribute('id');
+             clearTimeout(scrollTimeout);
+             scrollTimeout = setTimeout(() => {
+                let current = '';
+                let minTop = Infinity;
+
+                sections.forEach(section => {
+                    const sectionTop = section.getBoundingClientRect().top; // Relative to viewport
+
+                    // Find the section closest to the top of the viewport
+                    if (sectionTop >= -100 && sectionTop < minTop) { // Allow slightly above viewport
+                        minTop = sectionTop;
+                        current = section.getAttribute('id');
+                    }
+                });
+
+                // Fallback if no section is near the top (e.g., scrolled to bottom)
+                if (!current && contentArea.scrollHeight - contentArea.scrollTop - contentArea.clientHeight < 100) {
+                     current = sections[sections.length - 1].getAttribute('id');
                 }
-            });
-            if (current) {
-                activateLink(current);
-            }
+
+                if (current) {
+                    activateLink(current);
+                }
+            }, 100); // Adjust debounce delay as needed
         });
+
+         // Initial check on load
+         if (sections.length > 0) {
+              activateLink(sections[0].getAttribute('id'));
+         }
     });
 </script>
 
