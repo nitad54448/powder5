@@ -173,6 +173,14 @@
         .warning-note strong {
              color: #b45309; /* Darker amber text */
         }
+        /* Added style for links in About section */
+        #about a {
+            color: var(--system-blue);
+            text-decoration: none;
+        }
+        #about a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -587,8 +595,13 @@
             <p>
                 The <strong>powder5</strong> toolkit was developed by Nita Dragoe from Université Paris-Saclay as a simple browser-based implementation of powder pattern decomposition methods. It is a long-time successor of PowderV2 (Dragoe, N. (2001). <em>J. Appl. Cryst.</em>, 34, 535) and has been updated to include the Pawley method and modern global optimization algorithms.
             </p>
+            
             <p>
-                Version: 1.09 | Last Updated: 24 October 2025.<br>This document was updated with the assistance of an AI.
+                Numerical calculations, including matrix operations and optimization routines, are performed using the <a href="https://github.com/sloisel/numeric" target="_blank">numeric.js</a> library by Sébastien Loisel, which is distributed under the MIT license.
+            </p>
+      
+            <p>
+                Version: 1.10 | Last Updated: 24 October 2025.<br>This document was updated with the assistance of an AI.
             </p>
             <div class="note">
                 <strong>Disclaimer:</strong> This application is provided for educational and research purposes. While it implements standard and robust algorithms, it is not a substitute for fully validated, peer-reviewed software packages (e.g., GSAS-II, FullProf, TOPAS) for analyses intended for publication.
@@ -653,3 +666,4 @@
 
 </body>
 </html>
+
