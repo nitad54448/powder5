@@ -2104,8 +2104,6 @@ function evaluateExpression(h, k, l, expr) {
          */
         function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
             // NOTE: This version runs in the main thread for PREVIEW ONLY.
-            // It does NOT interact with the worker's cache.
-
             if (!spaceGroup || !spaceGroup.number) {
                  console.error("Preview HKL Gen: Invalid spaceGroup object provided.");
                  return [];
@@ -2122,10 +2120,18 @@ function evaluateExpression(h, k, l, expr) {
              const maxDim = Math.max(a || 0, b || a || 0, c || a || 0);
              if (maxDim <= 0) return [];
 
-             const sinThetaMax = Math.sin(maxTth * Math.PI / 360);
-              if (sinThetaMax <= 0) return []; // Avoid division by zero/negative dMin
-             const dMinEstimate = lambda / (2 * sinThetaMax);
-             const maxIndex = Math.ceil(maxDim / dMinEstimate) + 5;
+            // --- OPTIMIZATION: Calculate max 1/d^2 for pruning ---
+            const sinThetaMax_preview = Math.sin(maxTth * Math.PI / 360);
+            if (sinThetaMax_preview <= 0) return []; 
+            const dMin_preview = lambda / (2 * sinThetaMax_preview);
+            const inv_d_sq_max = 1.0 / (dMin_preview * dMin_preview);
+            const maxIndex = Math.ceil(maxDim / dMin_preview) + 5; // Generous max index
+            
+            // Pre-calculate params squared
+            const a_sq = a * a;
+            const b_sq = (b && b > 0) ? b * b : a_sq;
+            const c_sq = (c && c > 0) ? c * c : a_sq;
+            // --- End Optimization Setup ---
 
 
             let rawReflections = [];
@@ -2141,9 +2147,7 @@ function evaluateExpression(h, k, l, expr) {
                     const { multiplicity } = getMultiplicityAndCanonicalHKL(h, k, l, laue_class);
                      if (multiplicity > 0) {
                          rawReflections.push({
-                            h_orig: h,
-                            k_orig: k,
-                            l_orig: l,
+                            h_orig: h, k_orig: k, l_orig: l,
                             hkl_list: [`(${h},${k},${l})`],
                             multiplicity: multiplicity
                         });
@@ -2152,22 +2156,101 @@ function evaluateExpression(h, k, l, expr) {
                 }
             };
 
-            // Simplified loops (adjust as needed per system for full coverage)
             const maxI = maxIndex;
+
             if (system === 'monoclinic' || system === 'triclinic') {
-                for (let h = -maxI; h <= maxI; h++) for (let k = 0; k <= maxI; k++) for (let l = -maxI; l <= maxI; l++) loopAndAdd(h, k, l);
+                // Pruning is too complex due to h*l term, use original loop ranges
+                // This is the correct asymmetric unit for 2/m (unique axis b)
+                for (let h = -maxI; h <= maxI; h++) {
+                    for (let k = 0; k <= maxI; k++) {
+                        for (let l = 0; l <= maxI; l++) {
+                            loopAndAdd(h, k, l);
+                        }
+                    }
+                }
             } else if (system === 'orthorhombic') {
-                for (let h = 0; h <= maxI; h++) for (let k = 0; k <= maxI; k++) for (let l = 0; l <= maxI; l++) loopAndAdd(h, k, l);
+                if (b_sq <= 0 || c_sq <= 0) return []; // Need all params
+                for (let h = 0; h <= maxI; h++) {
+                    const h_term = (h*h) / a_sq;
+                    if (h_term > inv_d_sq_max && h > 0) break; // Prune
+
+                    for (let k = 0; k <= maxI; k++) {
+                        const hk_term = h_term + (k*k) / b_sq;
+                        if (hk_term > inv_d_sq_max && k > 0) break; // Prune
+
+                        for (let l = 0; l <= maxI; l++) {
+                            if (h === 0 && k === 0 && l === 0) continue;
+                            const hkl_term = hk_term + (l*l) / c_sq;
+                            if (hkl_term > inv_d_sq_max) {
+                                 if (l === 0) break; 
+                                 break; // Prune
+                            }
+                            loopAndAdd(h, k, l);
+                        }
+                    }
+                }
             } else if (system === 'hexagonal' || system === 'trigonal' || system === 'rhombohedral') {
-                for (let h = 0; h <= maxI; h++) for (let k = 0; k <= maxI; k++) for (let l = -maxI; l <= maxI; l++) loopAndAdd(h, k, l);
+                if (c_sq <= 0) return []; // Need a and c
+                const a_term_prefactor = 4.0 / (3.0 * a_sq);
+                for (let h = 0; h <= maxI; h++) {
+                    const h_term_only = a_term_prefactor * (h*h);
+                    if (h_term_only > inv_d_sq_max && h > 0) break;
+
+                    for (let k = 0; k <= h; k++) { // Use h >= k >= 0
+                        const hk_term = a_term_prefactor * (h*h + h*k + k*k);
+                        if (hk_term > inv_d_sq_max && k > 0) break; 
+
+                        for (let l = 0; l <= maxI; l++) { // Use l >= 0
+                            if (h === 0 && k === 0 && l === 0) continue;
+                            const hkl_term = hk_term + (l*l) / c_sq;
+                            if (hkl_term > inv_d_sq_max) {
+                                if (l === 0) break;
+                                break;
+                            }
+                            loopAndAdd(h, k, l);
+                        }
+                    }
+                }
             } else { // Cubic, Tetragonal
-                for (let h = 0; h <= maxI; h++) for (let k = 0; k <= h; k++) for (let l = 0; l <= k; l++) loopAndAdd(h, k, l);
+                const isTetragonal = (system === 'tetragonal');
+                if (isTetragonal && c_sq <= 0) return []; // Tet needs c
+
+                for (let h = 0; h <= maxI; h++) {
+                    const h_term = (h*h) / a_sq;
+                    if (h_term > inv_d_sq_max && h > 0) break;
+
+                    for (let k = 0; k <= h; k++) { // Use h >= k
+                        const hk_term_base = (h*h + k*k);
+                        if (isTetragonal) {
+                             if (hk_term_base / a_sq > inv_d_sq_max && k > 0) break;
+                        } else {
+                             if (hk_term_base / a_sq > inv_d_sq_max && k > 0) break;
+                        }
+
+                        for (let l = 0; l <= k; l++) { // Use k >= l
+                            if (h === 0 && k === 0 && l === 0) continue;
+                            
+                            let hkl_term;
+                            if (isTetragonal) {
+                                hkl_term = (h*h + k*k) / a_sq + (l*l) / c_sq;
+                            } else { // Cubic
+                                hkl_term = (h*h + k*k + l*l) / a_sq;
+                            }
+
+                            if (hkl_term > inv_d_sq_max) {
+                                if (l === 0) break;
+                                break;
+                            }
+                            loopAndAdd(h, k, l);
+                        }
+                    }
+                }
             }
 
-            // --- IMPORTANT: DO NOT use hklIndexCache here ---
-            // This function is only for the main thread's preview generation.
             return rawReflections;
         }
+
+
 
         // --- HKL Position Calculation (Needed for Preview in Main Thread) ---
         function updateHklPositions(hklList, params, system) {
