@@ -510,14 +510,106 @@ function calculatePeakShift(tth, params) {
     }
 }
 
+/**
+ * [NEW HELPER] Calculates widths for simple_pvoigt
+ */
+function _calculateWidths_Simple(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
+    let gamma_G = 1e-4;
+    let gamma_L = 1e-4;
+
+    const GU = params.GU || 0;
+    const GV = params.GV || 0;
+    const GW = params.GW || 0;
+    const GP = params.GP || 0;
+    const LX = params.LX || 0;
+    
+    const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
+    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+    
+    const calculated_L = LX / cosTheta_safe;
+    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+
+    return { gamma_G, gamma_L };
+}
+
+/**
+ * [NEW HELPER] Calculates widths for split_pvoigt
+ */
+function _calculateWidths_Split(tth, hkl, params, side, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
+    let gamma_G = 1e-4;
+    let gamma_L = 1e-4;
+    let GU, GV, GW, LX;
+
+    if (side === 'left') {
+        GU = params.GU_L || 0;
+        GV = params.GV_L || 0;
+        GW = params.GW_L || 0;
+        LX = params.LX_L || 0;
+    } else { // 'right' or 'center'
+        GU = params.GU_R || 0;
+        GV = params.GV_R || 0;
+        GW = params.GW_R || 0;
+        LX = params.LX_R || 0;
+    }
+
+    const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW; // No GP for split
+    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+
+    const calculated_L = LX / cosTheta_safe;
+    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+
+    return { gamma_G, gamma_L };
+}
+
+/**
+ * [NEW HELPER] Calculates widths for tch_aniso
+ */
+function _calculateWidths_TCH(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
+    let gamma_G = 1e-4;
+    let gamma_L = 1e-4;
+
+    const U = params.U || 0;
+    const V = params.V || 0;
+    const W = params.W || 0;
+    const X = params.X || 0;
+    const Y = params.Y || 0;
+    
+    const gamma_G_sq = U * tanTheta * tanTheta + V * tanTheta + W;
+    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+    
+    const calculated_L = X * tanTheta + Y / cosTheta_safe;
+    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+
+    // Anisotropic broadening
+    if (hkl && hkl.d && hkl.h_orig !== undefined) {
+         const d_sq = hkl.d * hkl.d;
+         if (d_sq > 1e-9) {
+            const d_inv_sq = 1 / d_sq;
+            const h_val = hkl.h_orig, k_val = hkl.k_orig, l_val = hkl.l_orig;
+            const h2 = h_val*h_val, k2 = k_val*k_val, l2 = l_val*l_val;
+            const h4 = h2*h2, k4 = k2*k2, l4 = l2*l2;
+
+            const S400 = params.S400 || 0, S040 = params.S040 || 0, S004 = params.S004 || 0;
+            const S220 = params.S220 || 0, S202 = params.S202 || 0, S022 = params.S022 || 0;
+
+            let H_aniso = S400*h4 + S040*k4 + S004*l4 + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
+            H_aniso *= d_inv_sq * d_inv_sq;
+            if(isFinite(H_aniso) && H_aniso > 0) gamma_L += H_aniso / 1000.0;
+        }
+    }
+            
+    return { gamma_G, gamma_L };
+}
+
+
 
 
 /**
- * Calculates Gaussian and Lorentzian width components (gamma_G, gamma_L).
- * For split_pvoigt, 'side' can be 'left' or 'right'.
+ * Calculates Gaussian and Lorentzian width components (gamma_G, gamma_L)
+ * This is now a DISPATCHER function.
  */
 function calculateProfileWidths(tth, hkl, params, side = 'center') {
-     if (!params || !params.profileType) return { gamma_G: 1e-4, gamma_L: 1e-4 };
+    if (!params || !params.profileType) return { gamma_G: 1e-4, gamma_L: 1e-4 };
     
     const profileType = params.profileType;
     const thetaRad = tth * (Math.PI / 180) / 2;
@@ -533,83 +625,31 @@ function calculateProfileWidths(tth, hkl, params, side = 'center') {
     const cosTheta_safe = Math.max(cosTheta, 1e-9);
     const cosThetaSq_safe = Math.max(cosTheta * cosTheta, 1e-9);
 
-    let gamma_G = 1e-4;
-    let gamma_L = 1e-4;
+    let widths = { gamma_G: 1e-4, gamma_L: 1e-4 };
 
+    // --- Dispatch to specific width calculators ---
     switch (profileType) {
-        case "simple_pvoigt": {
-            const GU = params.GU || 0;
-            const GV = params.GV || 0;
-            const GW = params.GW || 0;
-            const GP = params.GP || 0;
-            const LX = params.LX || 0;
-            const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
-            if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-            const calculated_L = LX / cosTheta_safe;
-            if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+        case "simple_pvoigt":
+            widths = _calculateWidths_Simple(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe);
             break;
-        }
-        
-        case "split_pvoigt": {
-            let GU, GV, GW, LX;
-            if (side === 'left') {
-                GU = params.GU_L || 0;
-                GV = params.GV_L || 0;
-                GW = params.GW_L || 0;
-                LX = params.LX_L || 0;
-            } else { // 'right' or 'center'
-                GU = params.GU_R || 0;
-                GV = params.GV_R || 0;
-                GW = params.GW_R || 0;
-                LX = params.LX_R || 0;
-            }
-            const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW; // No GP for split
-            if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-            const calculated_L = LX / cosTheta_safe;
-            if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+        case "split_pvoigt":
+            widths = _calculateWidths_Split(tth, hkl, params, side, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe);
             break;
-        }
-
-        case "tch_aniso": {
-             const U = params.U || 0;
-             const V = params.V || 0;
-             const W = params.W || 0;
-             const X = params.X || 0;
-             const Y = params.Y || 0;
-            const gamma_G_sq = U * tanTheta * tanTheta + V * tanTheta + W;
-            if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-            const calculated_L = X * tanTheta + Y / cosTheta_safe;
-            if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
-
-            if (hkl && hkl.d && hkl.h_orig !== undefined) {
-                 const d_sq = hkl.d * hkl.d;
-                 if (d_sq > 1e-9) {
-                    const d_inv_sq = 1 / d_sq;
-                    const h_val = hkl.h_orig, k_val = hkl.k_orig, l_val = hkl.l_orig;
-                    const h2 = h_val*h_val, k2 = k_val*k_val, l2 = l_val*l_val;
-                    const h4 = h2*h2, k4 = k2*k2, l4 = l2*l2;
-
-                    const S400 = params.S400 || 0, S040 = params.S040 || 0, S004 = params.S004 || 0;
-                    const S220 = params.S220 || 0, S202 = params.S202 || 0, S022 = params.S022 || 0;
-
-                    let H_aniso = S400*h4 + S040*k4 + S004*l4 + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
-                    H_aniso *= d_inv_sq * d_inv_sq;
-                    if(isFinite(H_aniso) && H_aniso > 0) gamma_L += H_aniso / 1000.0;
-                }
-            }
+        case "tch_aniso":
+            widths = _calculateWidths_TCH(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe);
             break;
-        }
     }
 
     return {
-        gamma_G: Math.max(1e-4, isFinite(gamma_G) ? gamma_G : 1e-4),
-        gamma_L: Math.max(1e-4, isFinite(gamma_L) ? gamma_L : 1e-4)
+        gamma_G: Math.max(1e-4, isFinite(widths.gamma_G) ? widths.gamma_G : 1e-4),
+        gamma_L: Math.max(1e-4, isFinite(widths.gamma_L) ? widths.gamma_L : 1e-4)
     };
 }
 
 
 /**
  * Calculates the total FWHM of a TCH/Split peak from its Gaussian and Lorentzian components.
+ * (This is only used by TCH and can remain as-is)
  */
 function getPeakFWHM(gamma_G, gamma_L) {
     const gG = Math.max(1e-9, gamma_G || 1e-9);
@@ -626,180 +666,231 @@ function getPeakFWHM(gamma_G, gamma_L) {
      return Math.max(1e-6, fwhm);
 }
 
-
 /**
- * Calculates the integrated area under a pseudo-Voigt peak shape.
+ * [NEW HELPER] Calculates area for simple_pvoigt
  */
-function getPseudoVoigtArea(tth_peak, hkl, params) {
+function _getArea_Simple(tth_peak, hkl, params) {
     const GAUSS_AREA_CONST = 1.0644677;
     const LORENTZ_AREA_CONST = 1.5707963;
 
-    if (!params || !params.profileType) return 1.0;
-    const profileType = params.profileType;
-
-    switch (profileType) {
-        case "simple_pvoigt": {
-            const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-            const gG = Math.max(1e-9, gamma_G);
-            const gL = Math.max(1e-9, gamma_L);
-            const area_G = gG * GAUSS_AREA_CONST;
-            const area_L = gL * LORENTZ_AREA_CONST;
-            const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-            const totalArea = currentEta * area_L + (1 - currentEta) * area_G;
-            return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
-        }
-        
-        case "split_pvoigt": {
-            const { gamma_G: gG_L, gamma_L: gL_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
-            const { gamma_G: gG_R, gamma_L: gL_R } = calculateProfileWidths(tth_peak, hkl, params, 'right');
-            
-            const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
-            
-            const area_G_L = Math.max(1e-9, gG_L) * GAUSS_AREA_CONST;
-            const area_L_L = Math.max(1e-9, gL_L) * LORENTZ_AREA_CONST;
-            const totalArea_L = currentEta * area_L_L + (1 - currentEta) * area_G_L;
-
-            const area_G_R = Math.max(1e-9, gG_R) * GAUSS_AREA_CONST;
-            const area_L_R = Math.max(1e-9, gL_R) * LORENTZ_AREA_CONST;
-            const totalArea_R = currentEta * area_L_R + (1 - currentEta) * area_G_R;
-            
-            const totalArea = (totalArea_L + totalArea_R) / 2.0; // Average area
-            return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
-        }
-
-        case "tch_aniso": {
-            const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-            const gG = Math.max(1e-9, gamma_G);
-            const gL = Math.max(1e-9, gamma_L);
-            
-            const fwhm = getPeakFWHM(gG, gL);
-            const ratio = (fwhm > 1e-9) ? gL / fwhm : 0;
-            const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-            const currentEta = Math.max(0, Math.min(1, eta_calc));
-            const area_G_combined = fwhm * GAUSS_AREA_CONST;
-            const area_L_combined = fwhm * LORENTZ_AREA_CONST;
-            const totalArea = currentEta * area_L_combined + (1 - currentEta) * area_G_combined;
-            return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
-        }
-    }
-    return 1.0; // Default
+    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+    const gG = Math.max(1e-9, gamma_G);
+    const gL = Math.max(1e-9, gamma_L);
+    const area_G = gG * GAUSS_AREA_CONST;
+    const area_L = gL * LORENTZ_AREA_CONST;
+    const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
+    return currentEta * area_L + (1 - currentEta) * area_G;
 }
 
 /**
+ * [NEW HELPER] Calculates area for split_pvoigt
+ */
+function _getArea_Split(tth_peak, hkl, params) {
+    const GAUSS_AREA_CONST = 1.0644677;
+    const LORENTZ_AREA_CONST = 1.5707963;
+
+    const { gamma_G: gG_L, gamma_L: gL_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
+    const { gamma_G: gG_R, gamma_L: gL_R } = calculateProfileWidths(tth_peak, hkl, params, 'right');
+    
+    const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+    
+    const area_G_L = Math.max(1e-9, gG_L) * GAUSS_AREA_CONST;
+    const area_L_L = Math.max(1e-9, gL_L) * LORENTZ_AREA_CONST;
+    const totalArea_L = currentEta * area_L_L + (1 - currentEta) * area_G_L;
+
+    const area_G_R = Math.max(1e-9, gG_R) * GAUSS_AREA_CONST;
+    const area_L_R = Math.max(1e-9, gL_R) * LORENTZ_AREA_CONST;
+    const totalArea_R = currentEta * area_L_R + (1 - currentEta) * area_G_R;
+    
+    // Average area of the two halves
+    return (totalArea_L + totalArea_R) / 2.0; 
+}
+
+/**
+ * [NEW HELPER] Calculates area for tch_aniso
+ */
+function _getArea_TCH(tth_peak, hkl, params) {
+    const GAUSS_AREA_CONST = 1.0644677;
+    const LORENTZ_AREA_CONST = 1.5707963;
+
+    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+    const gG = Math.max(1e-9, gamma_G);
+    const gL = Math.max(1e-9, gamma_L);
+    
+    const fwhm = getPeakFWHM(gG, gL);
+    const ratio = (fwhm > 1e-9) ? gL / fwhm : 0;
+    const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
+    const currentEta = Math.max(0, Math.min(1, eta_calc));
+    
+    // TCH area uses the convoluted FWHM
+    const area_G_combined = fwhm * GAUSS_AREA_CONST;
+    const area_L_combined = fwhm * LORENTZ_AREA_CONST;
+    
+    return currentEta * area_L_combined + (1 - currentEta) * area_G_combined;
+}
+
+
+
+/**
+ * Calculates the integrated area under a pseudo-Voigt peak shape.
+ * This is now a DISPATCHER function.
+ */
+function getPseudoVoigtArea(tth_peak, hkl, params) {
+    if (!params || !params.profileType) return 1.0;
+
+    let totalArea = 1.0;
+    switch (params.profileType) {
+        case "simple_pvoigt":
+            totalArea = _getArea_Simple(tth_peak, hkl, params);
+            break;
+        case "split_pvoigt":
+            totalArea = _getArea_Split(tth_peak, hkl, params);
+            break;
+        case "tch_aniso":
+            totalArea = _getArea_TCH(tth_peak, hkl, params);
+            break;
+    }
+    return (isFinite(totalArea) && totalArea > 0) ? totalArea : 1.0;
+}
+
+
+
+/**
  * Applies asymmetry correction (FCJ model for TCH).
+ * [REFACTORED] Simplified logic.
  */
 function applyAsymmetry(x, x0, tth_peak, params) {
-    if (!params) return x - x0;
-    const profileType = params.profileType;
-
-    switch (profileType) {
-        case "tch_aniso": {
-            if (!params.SL && !params.HL) return x - x0;
-            
-            const delta_2theta = x - x0;
-            if (Math.abs(delta_2theta) < 1e-9) return 0;
-            if (tth_peak < 0.1 || tth_peak >= 180) return delta_2theta;
-
-            const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
-            const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
-            const tan_theta = Math.tan(safe_theta_rad);
-            if (Math.abs(tan_theta) < 1e-9) return delta_2theta;
-            const cot_theta = 1.0 / tan_theta;
-
-            const SL = params.SL || 0;
-            const HL = params.HL || 0;
-            const asymmetry_param = SL * cot_theta + HL;
-            if (!isFinite(asymmetry_param)) return delta_2theta;
-
-            const correction_term = asymmetry_param * Math.abs(delta_2theta);
-            const MAX_CORRECTION_EFFECT = 0.95;
-            const asymmetry_factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(correction_term), MAX_CORRECTION_EFFECT));
-            const corrected = delta_2theta / asymmetry_factor;
-            return isFinite(corrected) ? corrected : delta_2theta;
-        }
-        
-        case "simple_pvoigt":
-        case "split_pvoigt":
-        default:
-            // Asymmetry for these is handled by shift/transparency, applied to x0
-            return x - x0; 
+    // Only apply for TCH profile, and only if params are set
+    if (!params || params.profileType !== "tch_aniso" || (!params.SL && !params.HL)) {
+        return x - x0;
     }
+            
+    const delta_2theta = x - x0;
+    if (Math.abs(delta_2theta) < 1e-9) return 0;
+    if (tth_peak < 0.1 || tth_peak >= 180) return delta_2theta;
+
+    const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
+    const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
+    const tan_theta = Math.tan(safe_theta_rad);
+    if (Math.abs(tan_theta) < 1e-9) return delta_2theta;
+    const cot_theta = 1.0 / tan_theta;
+
+    const SL = params.SL || 0;
+    const HL = params.HL || 0;
+    const asymmetry_param = SL * cot_theta + HL;
+    if (!isFinite(asymmetry_param)) return delta_2theta;
+
+    const correction_term = asymmetry_param * Math.abs(delta_2theta);
+    const MAX_CORRECTION_EFFECT = 0.95;
+    const asymmetry_factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(correction_term), MAX_CORRECTION_EFFECT));
+    const corrected = delta_2theta / asymmetry_factor;
+    return isFinite(corrected) ? corrected : delta_2theta;
 }
 
 
 /**
  * Calculates the pseudo-Voigt peak shape value at point x.
+ * This is now a DISPATCHER function.
  */
 function pseudoVoigt(x, x0, tth_peak, hkl, params) {
      if (!params) return 0.0;
 
+    // Apply asymmetry correction *once* at the top level
     const corrected_delta = applyAsymmetry(x, x0, tth_peak, params);
-    const Cg = 2.772588722239781; // 4 * ln(2)
+    
     let result = 0.0;
-
     try {
         switch (params.profileType) {
-            case "simple_pvoigt": {
-                const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-                const H_G = Math.max(1e-9, gamma_G);
-                const H_L = Math.max(1e-9, gamma_L);
-                if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
-
-                const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-                const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
-                const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
-                const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
-                const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
-                result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+            case "simple_pvoigt":
+                result = _pseudoVoigt_Simple(corrected_delta, tth_peak, hkl, params);
                 break;
-            }
-            
-            case "split_pvoigt": {
-                let H_G, H_L;
-                if (corrected_delta < 0) { // Left side
-                    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
-                    H_G = Math.max(1e-9, gamma_G);
-                    H_L = Math.max(1e-9, gamma_L);
-                } else { // Right side
-                    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'right');
-                    H_G = Math.max(1e-9, gamma_G);
-                    H_L = Math.max(1e-9, gamma_L);
-                }
-                if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
-
-                const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
-                const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
-                const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
-                const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
-                const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
-                result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+            case "split_pvoigt":
+                result = _pseudoVoigt_Split(corrected_delta, tth_peak, hkl, params);
                 break;
-            }
-
-            case "tch_aniso": {
-                const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-                const H_G = Math.max(1e-9, gamma_G);
-                const H_L = Math.max(1e-9, gamma_L);
-                if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
-
-                const fwhm = getPeakFWHM(H_G, H_L);
-                if (fwhm <= 1e-9) return Math.abs(corrected_delta) < 1e-6 ? 1.0 : 0.0;
-
-                const ratio = H_L / fwhm;
-                const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-                const currentEta = Math.max(0, Math.min(1, eta_calc));
-                const delta_over_fwhm_sq = Math.pow(corrected_delta / fwhm, 2);
-                const gaussianShape = Math.exp(-Cg * delta_over_fwhm_sq);
-                const lorentzianShape = 1 / (1 + 4 * delta_over_fwhm_sq);
-                result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+            case "tch_aniso":
+                result = _pseudoVoigt_TCH(corrected_delta, tth_peak, hkl, params);
                 break;
-            }
         }
     } catch (calcError) {
          // console.warn("Error in pseudoVoigt calculation:", calcError);
          return 0.0;
     }
      return (isFinite(result) && result >= 0) ? result : 0.0;
+}
+
+
+/**
+ * [NEW HELPER] Calculates shape for simple_pvoigt
+ */
+function _pseudoVoigt_Simple(corrected_delta, tth_peak, hkl, params) {
+    const Cg = 2.772588722239781; // 4 * ln(2)
+
+    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+    const H_G = Math.max(1e-9, gamma_G);
+    const H_L = Math.max(1e-9, gamma_L);
+    if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
+
+    const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
+    const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
+    const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
+    
+    const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
+    const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
+    
+    return currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+}
+
+/**
+ * [NEW HELPER] Calculates shape for split_pvoigt
+ */
+function _pseudoVoigt_Split(corrected_delta, tth_peak, hkl, params) {
+    const Cg = 2.772588722239781; // 4 * ln(2)
+    let H_G, H_L;
+
+    if (corrected_delta < 0) { // Left side
+        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
+        H_G = Math.max(1e-9, gamma_G);
+        H_L = Math.max(1e-9, gamma_L);
+    } else { // Right side
+        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'right');
+        H_G = Math.max(1e-9, gamma_G);
+        H_L = Math.max(1e-9, gamma_L);
+    }
+    if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
+
+    const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+    const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
+    const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
+
+    const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
+    const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
+
+    return currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+}
+
+/**
+ * [NEW HELPER] Calculates shape for tch_aniso
+ */
+function _pseudoVoigt_TCH(corrected_delta, tth_peak, hkl, params) {
+    const Cg = 2.772588722239781; // 4 * ln(2)
+
+    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+    const H_G = Math.max(1e-9, gamma_G);
+    const H_L = Math.max(1e-9, gamma_L);
+    if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
+
+    const fwhm = getPeakFWHM(H_G, H_L);
+    if (fwhm <= 1e-9) return Math.abs(corrected_delta) < 1e-6 ? 1.0 : 0.0;
+
+    const ratio = H_L / fwhm;
+    const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
+    const currentEta = Math.max(0, Math.min(1, eta_calc));
+    
+    const delta_over_fwhm_sq = Math.pow(corrected_delta / fwhm, 2);
+    const gaussianShape = Math.exp(-Cg * delta_over_fwhm_sq);
+    const lorentzianShape = 1 / (1 + 4 * delta_over_fwhm_sq);
+    
+    return currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
 }
 
 
