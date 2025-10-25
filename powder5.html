@@ -1017,7 +1017,7 @@
     </div>
 
     <div style="position: absolute; bottom: 6px; right: 12px; font-size: 10px; color: var(--system-secondary-label);">
-        Powder 5, version 111, 24 Oct 2025
+        Powder 5, version 112, 25 Oct 2025
     </div>
 </div>
 
@@ -3369,6 +3369,12 @@ function debounce(func, wait) {
             // Store the current Y-axis zoom state BEFORE making any changes
             const currentYMin = mainChart.scales.y.min;
             const currentYMax = mainChart.scales.y.max;
+            
+            // --- ADDED THIS BLOCK ---
+            // Store the current X-axis zoom state as well
+            const currentXMin = mainChart.scales.x.min;
+            const currentXMax = mainChart.scales.x.max;
+            // --- END OF ADDED BLOCK ---
 
             const findDataset = (label) => mainChart.data.datasets.find(d => d.label === label);
             
@@ -3376,7 +3382,7 @@ function debounce(func, wait) {
             findDataset('Simulation (Manual)').data = [];
 
             // 2. Calculate the total pattern and the raw difference array
-const totalCalcPattern = numeric.add(numeric.mul(netPeakPattern_sliced, scaleFactor), background_sliced);
+            const totalCalcPattern = numeric.add(numeric.mul(netPeakPattern_sliced, scaleFactor), background_sliced);
             
             const diff = numeric.sub(workingData.intensity, totalCalcPattern);
 
@@ -3397,11 +3403,14 @@ const totalCalcPattern = numeric.add(numeric.mul(netPeakPattern_sliced, scaleFac
             // 4. Restore the Y-axis zoom state FIRST. This sets the final "frame" for the chart.
             mainChart.options.scales.y.min = currentYMin;
             mainChart.options.scales.y.max = currentYMax;
-            
-            // 5. NOW call rescalePlot. It will use the correct, restored axis dimensions to draw the difference plot.
+
+           
+            // 4b. Restore the X-axis zoom state.
+            mainChart.options.scales.x.min = currentXMin;
+            mainChart.options.scales.x.max = currentXMax;
+           
             rescalePlot(false); 
             
-            // 6. Finally, update the chart once to draw everything in its correct place.
             mainChart.update('none');
         }
 
@@ -3525,7 +3534,6 @@ const totalCalcPattern = numeric.add(numeric.mul(netPeakPattern_sliced, scaleFac
             mainChart.update('none');
         }        
 
-
         function rescalePlot(updateY = false) {
         // === CONFIGURABLE PARAMETERS FOR DIFFERENCE PLOT ===
         const DIFF_PLOT_MIN_RATIO = 0.1;  // Minimum allocation: 10% of Y scale
@@ -3557,10 +3565,13 @@ const totalCalcPattern = numeric.add(numeric.mul(netPeakPattern_sliced, scaleFac
         // Update Y-axis 
         if (updateY) {
             mainChart.options.scales.y.max = globalYMax;
+            // --- This line was moved inside the if(updateY) block ---
+            mainChart.options.scales.y.min = -constantNegSpaceHeight;
         }
-        mainChart.options.scales.y.min = -constantNegSpaceHeight;
         
-        // Draw HKL Markers with a fixed pixel height
+        // --- The problematic line was REMOVED from here ---
+        
+        // Draw HKL Markers
         const hklDataset = findDataset('HKL Markers');
         if (hklDataset && hklDataset.data.length > 0) {
             const HKL_MARKER_PIXEL_HEIGHT = 20;
@@ -3751,7 +3762,7 @@ const totalCalcPattern = numeric.add(numeric.mul(netPeakPattern_sliced, scaleFac
                 `${modeName} Refinement Report`,
                 '========================================================================',
                 '',
-                `Powder5, version 109, 24 Oct 2025`, 
+                `Powder5, version 112, 25 Oct 2025`, 
                 `Report Generated: ${now.toLocaleString()}`,
                 `Data File: ${controls.fileName.textContent || 'N/A'}`,
                 ''
