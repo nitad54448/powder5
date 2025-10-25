@@ -696,7 +696,7 @@
 
 <body>
 
-    <div id="app-container">
+<div id="app-container">
         <div id="controls-panel">
             
             <div class="control-group" style="padding-top: 16px;">
@@ -837,100 +837,141 @@
                 </div>
 
                 <div id="tab-panel-profile" class="tab-content-panel">
-                     <div class="control-group">
-                        <div class="parameter-grid-2col" style="margin-bottom: 24px;">
+                     <div class="control-group"> <div class="parameter-grid-2col" style="margin-bottom: 24px;">
                              <label for="profile-function-select" class="control-label">Profile Function</label>
-<select id="profile-function-select" class="control-select">
-   <option value="4" selected>Simple pVoigt</option>
-   <option value="3">Anisotropy</option>
-</select>
+                             <select id="profile-function-select" class="control-select">
+                                <option value="simple_pvoigt" selected>Simple pVoigt</option>
+                                <option value="tch_aniso">TCH (Size/Strain/Aniso)</option>
+                                <option value="split_pvoigt">Split pVoigt (Asymmetric)</option>
+                             </select>
                         </div>
 
-                        <div id="simple-pvoigt-params-container" class="profile-controls-container">
-    <h3 class="profile-section-header">Gaussian Broadening</h3>
-    <label class="control-label">GU</label>
-    <input type="number" id="param-gu" value="0.035" step="0.01" class="control-input" min="0">
-    <input type="checkbox" id="fit-gu" class="fit-checkbox">
-    <label class="control-label">GV</label>
-    <input type="number" id="param-gv" value="-0.03" step="0.01" class="control-input">
-    <input type="checkbox" id="fit-gv" class="fit-checkbox" >
-    <label class="control-label">GW</label>
-    <input type="number" id="param-gw" value="0.02" step="0.01" class="control-input" min="0">
-    <input type="checkbox" id="fit-gw" class="fit-checkbox" >
-     <label class="control-label">GP</label>
-    <input type="number" id="param-gp" value="0.0" step="0.001" class="control-input">
-    <input type="checkbox" id="fit-gp" class="fit-checkbox">
-    <h3 class="profile-section-header">Lorentzian Broadening</h3>
-    <label class="control-label">LX</label>
-    <input type="number" id="param-lx" value="0.05" step="0.01" class="control-input" min="0">
-    <input type="checkbox" id="fit-lx" class="fit-checkbox" >
-     <h3 class="profile-section-header">Peak Shape & Position</h3>
-     <label class="control-label">eta (Mixing)</label>
-    <input type="number" id="param-eta" value="0.74" step="0.01" min="0" max="1" class="control-input">
-    <input type="checkbox" id="fit-eta" class="fit-checkbox">
-     <label class="control-label">shft (Displ.)</label>
-    <input type="number" id="param-shft" value="0" step="0.01" class="control-input">
-    <input type="checkbox" id="fit-shft" class="fit-checkbox" >
-     <label class="control-label">trns (Transp.)</label>
-    <input type="number" id="param-trns" value="0" step="0.01" class="control-input">
-    <input type="checkbox" id="fit-trns" class="fit-checkbox">
-</div>
+                        <div id="profile-simple-pvoigt-container" class="profile-controls-container">
+                            <h3 class="profile-section-header">Gaussian Broadening</h3>
+                            <label class="control-label">GU</label>
+                            <input type="number" id="param-gu" value="0.035" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-gu" class="fit-checkbox">
+                            <label class="control-label">GV</label>
+                            <input type="number" id="param-gv" value="-0.03" step="0.01" class="control-input">
+                            <input type="checkbox" id="fit-gv" class="fit-checkbox" >
+                            <label class="control-label">GW</label>
+                            <input type="number" id="param-gw" value="0.02" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-gw" class="fit-checkbox" >
+                             <label class="control-label">GP</label>
+                            <input type="number" id="param-gp" value="0.0" step="0.001" class="control-input">
+                            <input type="checkbox" id="fit-gp" class="fit-checkbox">
+                            <h3 class="profile-section-header">Lorentzian Broadening</h3>
+                            <label class="control-label">LX</label>
+                            <input type="number" id="param-lx" value="0.05" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-lx" class="fit-checkbox" >
+                             <h3 class="profile-section-header">Peak Shape & Position</h3>
+                             <label class="control-label">eta (Mixing)</label>
+                            <input type="number" id="param-eta" value="0.74" step="0.01" min="0" max="1" class="control-input">
+                            <input type="checkbox" id="fit-eta" class="fit-checkbox">
+                             <label class="control-label">shft (Displ.)</label>
+                            <input type="number" id="param-shft" value="0" step="0.01" class="control-input">
+                            <input type="checkbox" id="fit-shft" class="fit-checkbox" >
+                             <label class="control-label">trns (Transp.)</label>
+                            <input type="number" id="param-trns" value="0" step="0.01" class="control-input">
+                            <input type="checkbox" id="fit-trns" class="fit-checkbox">
+                        </div>
 
-<div id="anisotropy-params-container" class="profile-controls-container hidden">
-    <h3 class="profile-section-header">Isotropic Gaussian (TCH)</h3>
-    <label class="control-label">U</label>
-    <input type="number" id="param-u" value="0.04" step="0.01" class="control-input" min="0">
-    <input type="checkbox" id="fit-u" class="fit-checkbox">
-    <label class="control-label">V</label>
-    <input type="number" id="param-v" value="-0.03" step="0.01" class="control-input">
-    <input type="checkbox" id="fit-v" class="fit-checkbox" >
-    <label class="control-label">W</label>
-    <input type="number" id="param-w" value="0.02" step="0.01" class="control-input" min="0">
-    <input type="checkbox" id="fit-w" class="fit-checkbox" >
-    
-    <h3 class="profile-section-header">Isotropic Lorentzian (TCH)</h3>
-    <label class="control-label">X</label>
-    <input type="number" id="param-x" value="0.001" step="0.01" class="control-input" min="0">
-    <input type="checkbox" id="fit-x" class="fit-checkbox" >
-    <label class="control-label">Y</label>
-    <input type="number" id="param-y" value="0.005" step="0.01" class="control-input" min="0">
-    <input type="checkbox" id="fit-y" class="fit-checkbox" >
-
-        <h3 class="profile-section-header">Peak Asymmetry</h3>
-    <label class="control-label">S/L</label>
-    <input type="number" id="param-sl" value="0.0" step="0.001" class="control-input">
-    <input type="checkbox" id="fit-sl" class="fit-checkbox">
-    <label class="control-label">H/L</label>
-    <input type="number" id="param-hl" value="0.0" step="0.001" class="control-input">
-    <input type="checkbox" id="fit-hl" class="fit-checkbox" >
-
-
-    <h3 class="profile-section-header">Anisotropic Broadening (Stephens)</h3>
-    <label class="control-label">S400</label>
-    <input type="number" id="param-s400" value="0.0" step="0.1" class="control-input">
-    <input type="checkbox" id="fit-s400" class="fit-checkbox">
-    <label class="control-label">S040</label>
-    <input type="number" id="param-s040" value="0.0" step="0.1" class="control-input">
-    <input type="checkbox" id="fit-s040" class="fit-checkbox">
-    <label class="control-label">S004</label>
-    <input type="number" id="param-s004" value="0.0" step="0.1" class="control-input">
-    <input type="checkbox" id="fit-s004" class="fit-checkbox">
-    <label class="control-label">S220</label>
-    <input type="number" id="param-s220" value="0.0" step="0.1" class="control-input">
-    <input type="checkbox" id="fit-s220" class="fit-checkbox">
-     <label class="control-label">S202</label>
-    <input type="number" id="param-s202" value="0.0" step="0.1" class="control-input">
-    <input type="checkbox" id="fit-s202" class="fit-checkbox">
-    <label class="control-label">S022</label>
-    <input type="number" id="param-s022" value="0.0" step="0.1" class="control-input">
-    <input type="checkbox" id="fit-s022" class="fit-checkbox">
-    
-
-</div>
-
-                    </div>
-                </div>
-            </div>
+                        <div id="profile-tch-aniso-container" class="profile-controls-container hidden">
+                            <h3 class="profile-section-header">Isotropic Gaussian (TCH)</h3>
+                            <label class="control-label">U</label>
+                            <input type="number" id="param-u" value="0.04" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-u" class="fit-checkbox">
+                            <label class="control-label">V</label>
+                            <input type="number" id="param-v" value="-0.03" step="0.01" class="control-input">
+                            <input type="checkbox" id="fit-v" class="fit-checkbox" >
+                            <label class="control-label">W</label>
+                            <input type="number" id="param-w" value="0.02" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-w" class="fit-checkbox" >
+                            
+                            <h3 class="profile-section-header">Isotropic Lorentzian (TCH)</h3>
+                            <label class="control-label">X</label>
+                            <input type="number" id="param-x" value="0.001" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-x" class="fit-checkbox" >
+                            <label class="control-label">Y</label>
+                            <input type="number" id="param-y" value="0.005" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-y" class="fit-checkbox" >
+                        
+                                <h3 class="profile-section-header">Peak Asymmetry</h3>
+                            <label class="control-label">S/L</label>
+                            <input type="number" id="param-sl" value="0.0" step="0.001" class="control-input">
+                            <input type="checkbox" id="fit-sl" class="fit-checkbox">
+                            <label class="control-label">H/L</label>
+                            <input type="number" id="param-hl" value="0.0" step="0.001" class="control-input">
+                            <input type="checkbox" id="fit-hl" class="fit-checkbox" >
+                        
+                        
+                            <h3 class="profile-section-header">Anisotropic Broadening (Stephens)</h3>
+                            <label class="control-label">S400</label>
+                            <input type="number" id="param-s400" value="0.0" step="0.1" class="control-input">
+                            <input type="checkbox" id="fit-s400" class="fit-checkbox">
+                            <label class="control-label">S040</label>
+                            <input type="number" id="param-s040" value="0.0" step="0.1" class="control-input">
+                            <input type="checkbox" id="fit-s040" class="fit-checkbox">
+                            <label class="control-label">S004</label>
+                            <input type="number" id="param-s004" value="0.0" step="0.1" class="control-input">
+                            <input type="checkbox" id="fit-s004" class="fit-checkbox">
+                            <label class="control-label">S220</label>
+                            <input type="number" id="param-s220" value="0.0" step="0.1" class="control-input">
+                            <input type="checkbox" id="fit-s220" class="fit-checkbox">
+                             <label class="control-label">S202</label>
+                            <input type="number" id="param-s202" value="0.0" step="0.1" class="control-input">
+                            <input type="checkbox" id="fit-s202" class="fit-checkbox">
+                            <label class="control-label">S022</label>
+                            <input type="number" id="param-s022" value="0.0" step="0.1" class="control-input">
+                            <input type="checkbox" id="fit-s022" class="fit-checkbox">
+                        </div>
+        
+                        <div id="profile-split-pvoigt-container" class="profile-controls-container hidden">
+                            <h3 class="profile-section-header">Gaussian (Left Side)</h3>
+                            <label class="control-label">GU-L</label>
+                            <input type="number" id="param-gu_l" value="0.035" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-gu_l" class="fit-checkbox">
+                            <label class="control-label">GV-L</label>
+                            <input type="number" id="param-gv_l" value="-0.03" step="0.01" class="control-input">
+                            <input type="checkbox" id="fit-gv_l" class="fit-checkbox">
+                            <label class="control-label">GW-L</label>
+                            <input type="number" id="param-gw_l" value="0.02" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-gw_l" class="fit-checkbox">
+                        
+                            <h3 class="profile-section-header">Gaussian (Right Side)</h3>
+                            <label class="control-label">GU-R</label>
+                            <input type="number" id="param-gu_r" value="0.035" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-gu_r" class="fit-checkbox">
+                            <label class="control-label">GV-R</label>
+                            <input type="number" id="param-gv_r" value="-0.03" step="0.01" class="control-input">
+                            <input type="checkbox" id="fit-gv_r" class="fit-checkbox">
+                            <label class="control-label">GW-R</label>
+                            <input type="number" id="param-gw_r" value="0.02" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-gw_r" class="fit-checkbox">
+                            
+                            <h3 class="profile-section-header">Lorentzian (Left Side)</h3>
+                            <label class="control-label">LX-L</label>
+                            <input type="number" id="param-lx_l" value="0.05" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-lx_l" class="fit-checkbox">
+                        
+                            <h3 class="profile-section-header">Lorentzian (Right Side)</h3>
+                            <label class="control-label">LX-R</label>
+                            <input type="number" id="param-lx_r" value="0.05" step="0.01" class="control-input" min="0">
+                            <input type="checkbox" id="fit-lx_r" class="fit-checkbox">
+                        
+                             <h3 class="profile-section-header">Peak Shape</h3>
+                             <label class="control-label">eta (Mixing)</label>
+                            <input type="number" id="param-eta_split" value="0.74" step="0.01" min="0" max="1" class="control-input">
+                            <input type="checkbox" id="fit-eta_split" class="fit-checkbox">
+                             <label class="control-label">shft (Displ.)</label>
+                            <input type="number" id="param-shft_split" value="0" step="0.01" class="control-input">
+                            <input type="checkbox" id="fit-shft_split" class="fit-checkbox">
+                             <label class="control-label">trns (Transp.)</label>
+                            <input type="number" id="param-trns_split" value="0" step="0.01" class="control-input">
+                            <input type="checkbox" id="fit-trns_split" class="fit-checkbox">
+                        </div>
+                    
+                     </div> </div> </div>
 
             <div class="bottom-actions"> 
                  <div class="control-group" style="border-top: none; padding-top: 0;">
@@ -1017,9 +1058,10 @@
     </div>
 
     <div style="position: absolute; bottom: 6px; right: 12px; font-size: 10px; color: var(--system-secondary-label);">
-        Powder 5, version 112, 25 Oct 2025
+        Powder 5, version 113, 25 Oct 2025
     </div>
 </div>
+
 
 
 
@@ -1064,9 +1106,16 @@ if (tooltipContainer && tooltipContent) {
         ratio21: document.getElementById('ratio21'),      
             zeroShift: document.getElementById('zero-shift'),
             fitZeroShift: document.getElementById('fit-zero-shift'),
-            profileSelect: document.getElementById('profile-function-select'),
-            simplePVoigtParamsContainer: document.getElementById('simple-pvoigt-params-container'),
-            anisotropyParamsContainer: document.getElementById('anisotropy-params-container'),
+ 
+
+          profileSelect: document.getElementById('profile-function-select'),
+            
+            // Profile containers
+            profileSimplePVoigtContainer: document.getElementById('profile-simple-pvoigt-container'),
+            profileTchAnisoContainer: document.getElementById('profile-tch-aniso-container'),
+            profileSplitPVoigtContainer: document.getElementById('profile-split-pvoigt-container'),
+
+            // Simple pVoigt
             paramGU: document.getElementById('param-gu'), fitGU: document.getElementById('fit-gu'),
             paramGV: document.getElementById('param-gv'), fitGV: document.getElementById('fit-gv'),
             paramGW: document.getElementById('param-gw'), fitGW: document.getElementById('fit-gw'),
@@ -1075,6 +1124,8 @@ if (tooltipContainer && tooltipContent) {
             paramEta: document.getElementById('param-eta'), fitEta: document.getElementById('fit-eta'),
             paramShft: document.getElementById('param-shft'), fitShft: document.getElementById('fit-shft'),
             paramTrns: document.getElementById('param-trns'), fitTrns: document.getElementById('fit-trns'),
+
+            // TCH Aniso
             paramU: document.getElementById('param-u'), fitU: document.getElementById('fit-u'),
             paramV: document.getElementById('param-v'), fitV: document.getElementById('fit-v'),
             paramW: document.getElementById('param-w'), fitW: document.getElementById('fit-w'),
@@ -1088,6 +1139,22 @@ if (tooltipContainer && tooltipContent) {
             paramS220: document.getElementById('param-s220'), fitS220: document.getElementById('fit-s220'),
             paramS202: document.getElementById('param-s202'), fitS202: document.getElementById('fit-s202'),
             paramS022: document.getElementById('param-s022'), fitS022: document.getElementById('fit-s022'),
+
+            // Split pVoigt (NEW)
+            paramGU_L: document.getElementById('param-gu_l'), fitGU_L: document.getElementById('fit-gu_l'),
+            paramGV_L: document.getElementById('param-gv_l'), fitGV_L: document.getElementById('fit-gv_l'),
+            paramGW_L: document.getElementById('param-gw_l'), fitGW_L: document.getElementById('fit-gw_l'),
+            paramLX_L: document.getElementById('param-lx_l'), fitLX_L: document.getElementById('fit-lx_l'),
+            paramGU_R: document.getElementById('param-gu_r'), fitGU_R: document.getElementById('fit-gu_r'),
+            paramGV_R: document.getElementById('param-gv_r'), fitGV_R: document.getElementById('fit-gv_r'),
+            paramGW_R: document.getElementById('param-gw_r'), fitGW_R: document.getElementById('fit-gw_r'),
+            paramLX_R: document.getElementById('param-lx_r'), fitLX_R: document.getElementById('fit-lx_r'),
+            paramEta_split: document.getElementById('param-eta_split'), fitEta_split: document.getElementById('fit-eta_split'),
+            paramShft_split: document.getElementById('param-shft_split'), fitShft_split: document.getElementById('fit-shft_split'),
+            paramTrns_split: document.getElementById('param-trns_split'), fitTrns_split: document.getElementById('fit-trns_split'), 
+           
+           
+           
             algorithmSelect: document.getElementById('algorithm-select'),
             iterationsSlider: document.getElementById('iterations-slider'),
             iterationsValue: document.getElementById('iterations-value'),
@@ -1124,8 +1191,10 @@ const bgContainer = document.getElementById('background-params-container');
 
 
         // --- Global State ---
-        let profileParamCache = { "3": {}, "4": {} };
-        let currentProfile = "4";
+        // --- Global State ---
+        let profileParamCache = { "simple_pvoigt": {}, "tch_aniso": {}, "split_pvoigt": {} };
+        let currentProfile = "simple_pvoigt";
+
        
         let isFitting = false;
         let lastGeneratedHklList = [];
@@ -1338,9 +1407,41 @@ const bgContainer = document.getElementById('background-params-container');
             return { system, centering };
         }
 
-        function saveProfileState(profileId) { const state = {}; const container = document.getElementById((profileId === '4') ? 'simple-pvoigt-params-container' : 'anisotropy-params-container'); if (container) container.querySelectorAll('input[type="number"], input[type="checkbox"]').forEach(input => { state[input.id] = (input.type === 'checkbox') ? input.checked : input.value; }); profileParamCache[profileId] = state; }
-        function restoreProfileState(profileId) { const state = profileParamCache[profileId]; if (!state || Object.keys(state).length === 0) return; const container = document.getElementById((profileId === '4') ? 'simple-pvoigt-params-container' : 'anisotropy-params-container'); if (container) container.querySelectorAll('input[type="number"], input[type="checkbox"]').forEach(input => { if (state[input.id] !== undefined) input.type === 'checkbox' ? (input.checked = state[input.id]) : (input.value = state[input.id]); }); }
-        
+        function saveProfileState(profileId) {
+            const state = {};
+            let container;
+            switch (profileId) {
+                case "simple_pvoigt": container = controls.profileSimplePVoigtContainer; break;
+                case "tch_aniso": container = controls.profileTchAnisoContainer; break;
+                case "split_pvoigt": container = controls.profileSplitPVoigtContainer; break;
+            }
+            if (container) {
+                container.querySelectorAll('input[type="number"], input[type="checkbox"]').forEach(input => {
+                    state[input.id] = (input.type === 'checkbox') ? input.checked : input.value;
+                });
+            }
+            profileParamCache[profileId] = state;
+        }
+
+        function restoreProfileState(profileId) {
+            const state = profileParamCache[profileId];
+            if (!state || Object.keys(state).length === 0) return;
+            let container;
+            switch (profileId) {
+                case "simple_pvoigt": container = controls.profileSimplePVoigtContainer; break;
+                case "tch_aniso": container = controls.profileTchAnisoContainer; break;
+                case "split_pvoigt": container = controls.profileSplitPVoigtContainer; break;
+            }
+            if (container) {
+                container.querySelectorAll('input[type="number"], input[type="checkbox"]').forEach(input => {
+                    if (state[input.id] !== undefined) {
+                        input.type === 'checkbox' ? (input.checked = state[input.id]) : (input.value = state[input.id]);
+                    }
+                });
+            }
+        }        
+
+
         // Data mapping systems to their possible Laue classes...peut etre mieux de les mettres dans la const spaceGroups ?
         const laueClassMap = {
             'cubic': [{ value: 'm-3m', text: 'm-3m' }, { value: 'm-3', text: 'm-3' }],
@@ -2273,137 +2374,122 @@ function evaluateExpression(h, k, l, expr) {
 
         // --- Profile Shape & Width (Needed for Preview/Tooltips) ---
         function calculatePeakShift(tth, params) {
-             // Ensure params and profileType exist
              if (!params || !params.profileType) return 0;
-            const profileType = String(params.profileType || "4"); // Ensure string
-
-            if (profileType === "4") {
+            const profileType = params.profileType;
+            
+            const calcShift = (tth, shft, trns) => {
                 const thetaRad = tth * (Math.PI / 180) / 2;
-                // Handle edge case near 90 degrees 2theta (theta near PI/2)
-                if (Math.abs(thetaRad - Math.PI / 2.0) < 1e-6) {
-                     return 0; // Avoid potential division by zero or large shifts
-                }
+                if (Math.abs(thetaRad - Math.PI / 2.0) < 1e-6) return 0;
                 const cosTheta = Math.cos(thetaRad);
                 const sin2Theta = Math.sin(2 * thetaRad);
-                // Ensure parameters exist, default to 0
-                const shftParam = params.shft || 0;
-                const trnsParam = params.trns || 0;
+                const displacementShift = -(shft / 1000) * cosTheta * (180 / Math.PI);
+                const transparencyShift = trns * sin2Theta * (180 / Math.PI);
+                const totalShift = displacementShift + transparencyShift;
+                return isFinite(totalShift) ? totalShift : 0;
+            };
 
-                const displacementShift = -(shftParam / 1000) * cosTheta * (180 / Math.PI);
-                const transparencyShift = trnsParam * sin2Theta * (180 / Math.PI);
-                 const totalShift = displacementShift + transparencyShift;
-                 return isFinite(totalShift) ? totalShift : 0; // Ensure finite result
-            } else {
-                return 0; // No shift for TCH profile in this implementation
+            switch (profileType) {
+                case "simple_pvoigt":
+                    return calcShift(tth, params.shft || 0, params.trns || 0);
+                case "split_pvoigt":
+                    return calcShift(tth, params.shft_split || 0, params.trns_split || 0);
+                case "tch_aniso":
+                default:
+                    return 0; // No shift for TCH profile
             }
         }
 
-        function calculateProfileWidths(tth, hkl, params) {
-             // Ensure params and profileType exist
+        function calculateProfileWidths(tth, hkl, params, side = 'center') {
              if (!params || !params.profileType) return { gamma_G: 1e-4, gamma_L: 1e-4 };
-            const profileType = String(params.profileType || "4"); // Ensure string type
+            
+            const profileType = params.profileType;
             const thetaRad = tth * (Math.PI / 180) / 2;
 
-            // Prevent division by zero or tan(Infinity) at 90 degrees
             const MAX_ANGLE_RAD = Math.PI / 2.0 - 1e-6;
             const safeThetaRad = Math.min(thetaRad, MAX_ANGLE_RAD);
-             if (safeThetaRad < 1e-6) { // Also handle angles near zero if needed
+             if (safeThetaRad < 1e-6) {
                  return { gamma_G: 1e-4, gamma_L: 1e-4 };
              }
 
             const tanTheta = Math.tan(safeThetaRad);
             const cosTheta = Math.cos(safeThetaRad);
+            const cosTheta_safe = Math.max(cosTheta, 1e-9);
+            const cosThetaSq_safe = Math.max(cosTheta * cosTheta, 1e-9);
 
-            let gamma_G = 1e-4; // Default tiny width, strictly positive
-            let gamma_L = 1e-4; // Default tiny width, strictly positive
+            let gamma_G = 1e-4;
+            let gamma_L = 1e-4;
 
-            if (profileType === "4") {
-                // --- Robust Simple pVoigt Calculation ---
-                const GU = params.GU || 0;
-                const GV = params.GV || 0;
-                const GW = params.GW || 0;
-                const GP = params.GP || 0;
-                const LX = params.LX || 0;
-
-                // Ensure cosTheta is not zero before dividing
-                const cosThetaSq_safe = Math.max(cosTheta * cosTheta, 1e-9);
-                const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
-
-                if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) {
-                    gamma_G = Math.sqrt(gamma_G_sq);
-                } else {
-                    gamma_G = 1e-4; // Fallback width
+            switch (profileType) {
+                case "simple_pvoigt": {
+                    const GU = params.GU || 0;
+                    const GV = params.GV || 0;
+                    const GW = params.GW || 0;
+                    const GP = params.GP || 0;
+                    const LX = params.LX || 0;
+                    const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
+                    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+                    const calculated_L = LX / cosTheta_safe;
+                    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+                    break;
+                }
+                
+                case "split_pvoigt": {
+                    let GU, GV, GW, LX;
+                    if (side === 'left') {
+                        GU = params.GU_L || 0;
+                        GV = params.GV_L || 0;
+                        GW = params.GW_L || 0;
+                        LX = params.LX_L || 0;
+                    } else { // 'right' or 'center'
+                        GU = params.GU_R || 0;
+                        GV = params.GV_R || 0;
+                        GW = params.GW_R || 0;
+                        LX = params.LX_R || 0;
+                    }
+                    const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW; // No GP for split
+                    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+                    const calculated_L = LX / cosTheta_safe;
+                    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+                    break;
                 }
 
-                const cosTheta_safe = Math.max(cosTheta, 1e-9);
-                const calculated_L = LX / cosTheta_safe;
+                case "tch_aniso": {
+                     const U = params.U || 0;
+                     const V = params.V || 0;
+                     const W = params.W || 0;
+                     const X = params.X || 0;
+                     const Y = params.Y || 0;
+                    const gamma_G_sq = U * tanTheta * tanTheta + V * tanTheta + W;
+                    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+                    const calculated_L = X * tanTheta + Y / cosTheta_safe;
+                    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
 
-                if (calculated_L > 0 && isFinite(calculated_L)) {
-                    gamma_L = calculated_L;
-                } else {
-                     gamma_L = 1e-4; // Fallback width
-                }
+                    if (hkl && hkl.d && hkl.h_orig !== undefined) {
+                         const d_sq = hkl.d * hkl.d;
+                         if (d_sq > 1e-9) {
+                            const d_inv_sq = 1 / d_sq;
+                            const h_val = hkl.h_orig, k_val = hkl.k_orig, l_val = hkl.l_orig;
+                            const h2 = h_val*h_val, k2 = k_val*k_val, l2 = l_val*l_val;
+                            const h4 = h2*h2, k4 = k2*k2, l4 = l2*l2;
 
-            } else { // Profile 3 (TCH)
-                // --- TCH Profile Calculation ---
-                 const U = params.U || 0;
-                 const V = params.V || 0;
-                 const W = params.W || 0;
-                 const X = params.X || 0;
-                 const Y = params.Y || 0;
+                            const S400 = params.S400 || 0, S040 = params.S040 || 0, S004 = params.S004 || 0;
+                            const S220 = params.S220 || 0, S202 = params.S202 || 0, S022 = params.S022 || 0;
 
-                const gamma_G_sq = U * tanTheta * tanTheta + V * tanTheta + W;
-
-                if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) {
-                    gamma_G = Math.sqrt(gamma_G_sq);
-                } else {
-                    gamma_G = 1e-4; // Fallback
-                }
-
-                const cosTheta_safe = Math.max(cosTheta, 1e-9);
-                const calculated_L = X * tanTheta + Y / cosTheta_safe;
-
-                if (calculated_L > 0 && isFinite(calculated_L)) {
-                    gamma_L = calculated_L;
-                } else {
-                     gamma_L = 1e-4; // Fallback
-                }
-
-                // Anisotropic broadening (Stephens) - Profile 3 only
-                 if (hkl && hkl.d && hkl.h_orig !== undefined) {
-                     const d_sq = hkl.d * hkl.d;
-                     if (d_sq > 1e-9) { // Avoid division by zero
-                        const d_inv_sq = 1 / d_sq;
-                        const h_val = hkl.h_orig;
-                        const k_val = hkl.k_orig;
-                        const l_val = hkl.l_orig;
-                        const h2 = h_val * h_val, k2 = k_val * k_val, l2 = l_val * l_val;
-                        const h4 = h2*h2, k4 = k2*k2, l4 = l2*l2;
-
-                        const S400 = params.S400 || 0;
-                        const S040 = params.S040 || 0;
-                        const S004 = params.S004 || 0;
-                        const S220 = params.S220 || 0;
-                        const S202 = params.S202 || 0;
-                        const S022 = params.S022 || 0;
-
-                        let H_aniso = S400 * h4 + S040 * k4 + S004 * l4 +
-                                      S220 * h2 * k2 + S202 * h2 * l2 + S022 * k2 * l2;
-                        H_aniso *= d_inv_sq * d_inv_sq; // Example using d^-4 scaling
-
-                        if(isFinite(H_aniso) && H_aniso > 0) {
-                              gamma_L += H_aniso / 1000.0;
+                            let H_aniso = S400*h4 + S040*k4 + S004*l4 + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
+                            H_aniso *= d_inv_sq * d_inv_sq;
+                            if(isFinite(H_aniso) && H_aniso > 0) gamma_L += H_aniso / 1000.0;
                         }
                     }
+                    break;
                 }
             }
 
-            // Final safeguard: ensure widths are always positive and finite
             return {
                 gamma_G: Math.max(1e-4, isFinite(gamma_G) ? gamma_G : 1e-4),
                 gamma_L: Math.max(1e-4, isFinite(gamma_L) ? gamma_L : 1e-4)
             };
         }
+
 
         /**
          * Calculates the total FWHM of a pseudo-Voigt peak from its Gaussian and Lorentzian components.
@@ -2439,129 +2525,190 @@ function evaluateExpression(h, k, l, expr) {
          * Calculates the integrated area under a pseudo-Voigt peak shape.
          * Runs in main thread for previews.
          */
-        function getPseudoVoigtArea(gamma_G, gamma_L, params) {
-            const GAUSS_AREA_CONST = 1.0644677; // sqrt(pi / (4*ln(2)))
-            const LORENTZ_AREA_CONST = 1.5707963; // pi / 2
+        function getPseudoVoigtArea(tth_peak, hkl, params) {
+            const GAUSS_AREA_CONST = 1.0644677;
+            const LORENTZ_AREA_CONST = 1.5707963;
 
-            // Ensure params and profileType exist
-             if (!params || !params.profileType) return 1.0; // Default area? Or throw error?
-            const profileType = String(params.profileType || "4");
-            const gG = Math.max(1e-9, gamma_G || 1e-9); // Ensure positive widths
-            const gL = Math.max(1e-9, gamma_L || 1e-9);
+            if (!params || !params.profileType) return 1.0;
+            const profileType = params.profileType;
 
+            switch (profileType) {
+                case "simple_pvoigt": {
+                    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+                    const gG = Math.max(1e-9, gamma_G);
+                    const gL = Math.max(1e-9, gamma_L);
+                    const area_G = gG * GAUSS_AREA_CONST;
+                    const area_L = gL * LORENTZ_AREA_CONST;
+                    const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
+                    const totalArea = currentEta * area_L + (1 - currentEta) * area_G;
+                    return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
+                }
+                
+                case "split_pvoigt": {
+                    // We must approximate the area of the split function.
+                    // We'll average the areas calculated from the left and right widths.
+                    const { gamma_G: gG_L, gamma_L: gL_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
+                    const { gamma_G: gG_R, gamma_L: gL_R } = calculateProfileWidths(tth_peak, hkl, params, 'right');
+                    
+                    const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+                    
+                    const area_G_L = Math.max(1e-9, gG_L) * GAUSS_AREA_CONST;
+                    const area_L_L = Math.max(1e-9, gL_L) * LORENTZ_AREA_CONST;
+                    const totalArea_L = currentEta * area_L_L + (1 - currentEta) * area_G_L;
 
-            if (profileType === "4") {
-                const area_G = gG * GAUSS_AREA_CONST;
-                const area_L = gL * LORENTZ_AREA_CONST;
-                const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-                const totalArea = currentEta * area_L + (1 - currentEta) * area_G;
-                 return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0; // Ensure positive finite area
+                    const area_G_R = Math.max(1e-9, gG_R) * GAUSS_AREA_CONST;
+                    const area_L_R = Math.max(1e-9, gL_R) * LORENTZ_AREA_CONST;
+                    const totalArea_R = currentEta * area_L_R + (1 - currentEta) * area_G_R;
+                    
+                    const totalArea = (totalArea_L + totalArea_R) / 2.0;
+                    return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
+                }
 
-            } else { // TCH Profile (Type 3)
-                const fwhm = getPeakFWHM(gG, gL);
-
-                const ratio = (fwhm > 1e-9) ? gL / fwhm : 0;
-                const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-                const currentEta = Math.max(0, Math.min(1, eta_calc));
-
-                const area_G_combined = fwhm * GAUSS_AREA_CONST;
-                const area_L_combined = fwhm * LORENTZ_AREA_CONST;
-                const totalArea = currentEta * area_L_combined + (1 - currentEta) * area_G_combined;
-                 return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0; // Ensure positive finite area
+                case "tch_aniso": {
+                    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+                    const gG = Math.max(1e-9, gamma_G);
+                    const gL = Math.max(1e-9, gamma_L);
+                    
+                    const fwhm = getPeakFWHM(gG, gL);
+                    const ratio = (fwhm > 1e-9) ? gL / fwhm : 0;
+                    const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
+                    const currentEta = Math.max(0, Math.min(1, eta_calc));
+                    const area_G_combined = fwhm * GAUSS_AREA_CONST;
+                    const area_L_combined = fwhm * LORENTZ_AREA_CONST;
+                    const totalArea = currentEta * area_L_combined + (1 - currentEta) * area_G_combined;
+                    return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
+                }
             }
+            return 1.0; // Default
         }
+
 
         /**
          * Applies asymmetry correction. Runs in main thread for previews.
          */
         function applyAsymmetry(x, x0, tth_peak, params) {
-            // Ensure params exist
             if (!params) return x - x0;
-            const profileType = String(params.profileType || "4");
+            const profileType = params.profileType;
 
-            // No asymmetry for profile 4 or if SL/HL are zero/missing
-            if (profileType === "4" || (!params.SL && !params.HL)) {
-                return x - x0;
+            switch (profileType) {
+                case "tch_aniso": {
+                    if (!params.SL && !params.HL) return x - x0;
+                    
+                    const delta_2theta = x - x0;
+                    if (Math.abs(delta_2theta) < 1e-9) return 0;
+                    if (tth_peak < 0.1 || tth_peak >= 180) return delta_2theta;
+
+                    const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
+                    const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
+                    const tan_theta = Math.tan(safe_theta_rad);
+                    if (Math.abs(tan_theta) < 1e-9) return delta_2theta;
+                    const cot_theta = 1.0 / tan_theta;
+
+                    const SL = params.SL || 0;
+                    const HL = params.HL || 0;
+                    const asymmetry_param = SL * cot_theta + HL;
+                    if (!isFinite(asymmetry_param)) return delta_2theta;
+
+                    const correction_term = asymmetry_param * Math.abs(delta_2theta);
+                    const MAX_CORRECTION_EFFECT = 0.95;
+                    const asymmetry_factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(correction_term), MAX_CORRECTION_EFFECT));
+                    const corrected = delta_2theta / asymmetry_factor;
+                    return isFinite(corrected) ? corrected : delta_2theta;
+                }
+                
+                case "simple_pvoigt":
+                case "split_pvoigt":
+                default:
+                    // Asymmetry for these profiles is handled by shift/transparency,
+                    // which is already applied to x0.
+                    return x - x0; 
             }
-
-            const delta_2theta = x - x0;
-            if (Math.abs(delta_2theta) < 1e-9) return 0;
-            if (tth_peak < 0.1 || tth_peak >= 180) return delta_2theta; // Invalid peak position
-
-            const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
-            const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
-            const tan_theta = Math.tan(safe_theta_rad);
-            if (Math.abs(tan_theta) < 1e-9) return delta_2theta;
-            const cot_theta = 1.0 / tan_theta;
-
-            const SL = params.SL || 0;
-            const HL = params.HL || 0;
-            const asymmetry_param = SL * cot_theta + HL;
-            if (!isFinite(asymmetry_param)) return delta_2theta;
-
-            const correction_term = asymmetry_param * Math.abs(delta_2theta);
-            const MAX_CORRECTION_EFFECT = 0.95;
-            // Ensure factor is positive and not too close to zero
-            const asymmetry_factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(correction_term), MAX_CORRECTION_EFFECT));
-
-            const corrected = delta_2theta / asymmetry_factor;
-             return isFinite(corrected) ? corrected : delta_2theta; // Fallback if calculation fails
         }
+
 
         /**
          * Calculates the pseudo-Voigt peak shape value. Runs in main thread for previews.
          */
-        function pseudoVoigt(x, x0, tth_peak, gamma_G, gamma_L, params) {
-             // Ensure params exist
+        function pseudoVoigt(x, x0, tth_peak, hkl, params) {
              if (!params) return 0.0;
-             const H_G = Math.max(1e-9, gamma_G || 1e-9);
-             const H_L = Math.max(1e-9, gamma_L || 1e-9);
 
             const corrected_delta = applyAsymmetry(x, x0, tth_peak, params);
-            if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
-
-            const profileType = String(params.profileType || "4");
             const Cg = 2.772588722239781; // 4 * ln(2)
-
             let result = 0.0;
-            try { // Add try-catch for safety during calculation
-                 if (profileType === "4") {
-                     const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-                     const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
-                     const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
-                     const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
-                     const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
-                     result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
-                 } else { // TCH (Profile 3)
-                     const fwhm = getPeakFWHM(H_G, H_L);
-                     if (fwhm <= 1e-9) return Math.abs(corrected_delta) < 1e-6 ? 1.0 : 0.0; // Approx delta
 
-                     const ratio = H_L / fwhm;
-                     const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-                     const currentEta = Math.max(0, Math.min(1, eta_calc));
+            try {
+                switch (params.profileType) {
+                    case "simple_pvoigt": {
+                        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+                        const H_G = Math.max(1e-9, gamma_G);
+                        const H_L = Math.max(1e-9, gamma_L);
+                        if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
 
-                     const delta_over_fwhm_sq = Math.pow(corrected_delta / fwhm, 2);
-                     const gaussianShape = Math.exp(-Cg * delta_over_fwhm_sq);
-                     const lorentzianShape = 1 / (1 + 4 * delta_over_fwhm_sq);
-                     result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
-                 }
+                        const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
+                        const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
+                        const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
+                        const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
+                        const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
+                        result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+                        break;
+                    }
+                    
+                    case "split_pvoigt": {
+                        let H_G, H_L;
+                        if (corrected_delta < 0) { // Left side
+                            const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
+                            H_G = Math.max(1e-9, gamma_G);
+                            H_L = Math.max(1e-9, gamma_L);
+                        } else { // Right side
+                            const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'right');
+                            H_G = Math.max(1e-9, gamma_G);
+                            H_L = Math.max(1e-9, gamma_L);
+                        }
+                        if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
+
+                        const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+                        const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
+                        const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
+                        const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
+                        const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
+                        result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+                        break;
+                    }
+
+                    case "tch_aniso": {
+                        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+                        const H_G = Math.max(1e-9, gamma_G);
+                        const H_L = Math.max(1e-9, gamma_L);
+                        if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
+
+                        const fwhm = getPeakFWHM(H_G, H_L);
+                        if (fwhm <= 1e-9) return Math.abs(corrected_delta) < 1e-6 ? 1.0 : 0.0;
+
+                        const ratio = H_L / fwhm;
+                        const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
+                        const currentEta = Math.max(0, Math.min(1, eta_calc));
+                        const delta_over_fwhm_sq = Math.pow(corrected_delta / fwhm, 2);
+                        const gaussianShape = Math.exp(-Cg * delta_over_fwhm_sq);
+                        const lorentzianShape = 1 / (1 + 4 * delta_over_fwhm_sq);
+                        result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+                        break;
+                    }
+                }
             } catch (calcError) {
                  console.warn("Error in pseudoVoigt calculation:", calcError);
-                 return 0.0; // Return 0 if any math error occurs
+                 return 0.0;
             }
-
-             return (isFinite(result) && result >= 0) ? result : 0.0; // Ensure non-negative finite result
+             return (isFinite(result) && result >= 0) ? result : 0.0;
         }
+
 
         /**
          * Calculates the overall diffraction pattern. Runs in main thread for previews.
          */
-        function calculatePattern(tthAxis, hklList, params) {
-             // Ensure params exist
-             if (!params) return new Float64Array(tthAxis ? tthAxis.length : 0);
 
+        function calculatePattern(tthAxis, hklList, params) {
             const n_points = tthAxis ? tthAxis.length : 0;
-            if (n_points === 0 || !hklList || hklList.length === 0) {
+            if (n_points === 0 || !hklList || hklList.length === 0 || !params) {
                 return new Float64Array(n_points);
             }
 
@@ -2571,10 +2718,8 @@ function evaluateExpression(h, k, l, expr) {
             const lambda2 = params.lambda2 || 0;
             const ratio21 = params.ratio || 0;
             const zeroShift = params.zeroShift || 0;
-            // Use global constants for calculation window and cutoff
             const WINDOW_MULT = CALCULATION_WINDOW_MULTIPLIER;
             const HEIGHT_CUTOFF = PEAK_HEIGHT_CUTOFF;
-
 
             // --- K-alpha 1 ---
             hklList.forEach(peak => {
@@ -2583,11 +2728,15 @@ function evaluateExpression(h, k, l, expr) {
                 const basePos1 = peak.tth + zeroShift;
                 const shift1 = calculatePeakShift(basePos1, params);
                 const peakPos1 = basePos1 + shift1;
-                const { gamma_G, gamma_L } = calculateProfileWidths(basePos1, peak, params);
-                const shapeArea1 = getPseudoVoigtArea(gamma_G, gamma_L, params);
-                if (shapeArea1 <= 1e-9 || !isFinite(shapeArea1)) return;
 
-                const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
+                // NEW: Get area and widths for window calculation
+                const shapeArea1 = getPseudoVoigtArea(peak.tth, peak, params);
+                if (shapeArea1 <= 1e-9 || !isFinite(shapeArea1)) return;
+                
+                // Get widths just for the window approximation
+                const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
+                const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L); // This is an approximation but fine for the window
+                
                 const window1 = WINDOW_MULT * Math.max(0.01, fwhm_approx1);
                 const min_tth1 = peakPos1 - window1;
                 const max_tth1 = peakPos1 + window1;
@@ -2599,7 +2748,8 @@ function evaluateExpression(h, k, l, expr) {
                 for (let i = startIndex; i < n_points; i++) {
                     const current_tth = tthAxis[i];
                     if (current_tth > max_tth1) break;
-                    const intensityAtPoint = pseudoVoigt(current_tth, peakPos1, basePos1, gamma_G, gamma_L, params);
+                    // NEW: Call pseudoVoigt with hkl object
+                    const intensityAtPoint = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params); 
                     if (intensityAtPoint > HEIGHT_CUTOFF) {
                         pattern[i] += peak.intensity * (intensityAtPoint / shapeArea1);
                     }
@@ -2621,11 +2771,14 @@ function evaluateExpression(h, k, l, expr) {
                     const basePos2 = tth2 + zeroShift;
                     const shift2 = calculatePeakShift(basePos2, params);
                     const peakPos2 = basePos2 + shift2;
-                    const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(basePos2, peak, params);
-                    const shapeArea2 = getPseudoVoigtArea(gG2, gL2, params);
+                    
+                    // NEW: Get area and widths for window
+                    const shapeArea2 = getPseudoVoigtArea(tth2, peak, params);
                     if (shapeArea2 <= 1e-9 || !isFinite(shapeArea2)) return;
 
+                    const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
                     const fwhm_approx2 = getPeakFWHM(gG2, gL2);
+
                     const window2 = WINDOW_MULT * Math.max(0.01, fwhm_approx2);
                     const min_tth2 = peakPos2 - window2;
                     const max_tth2 = peakPos2 + window2;
@@ -2637,7 +2790,8 @@ function evaluateExpression(h, k, l, expr) {
                     for (let i = startIndex2; i < n_points; i++) {
                         const current_tth = tthAxis[i];
                         if (current_tth > max_tth2) break;
-                        const intensityAtPoint = pseudoVoigt(current_tth, peakPos2, basePos2, gG2, gL2, params);
+                        // NEW: Call pseudoVoigt
+                        const intensityAtPoint = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
                         if (intensityAtPoint > HEIGHT_CUTOFF) {
                             pattern[i] += peak.intensity * ratio21 * (intensityAtPoint / shapeArea2);
                         }
@@ -2645,13 +2799,11 @@ function evaluateExpression(h, k, l, expr) {
                 });
             }
 
-            // Final check for NaNs/Infinities in the pattern
             for (let i = 0; i < n_points; i++) {
                 if (!isFinite(pattern[i])) {
-                    pattern[i] = 0; // Replace invalid numbers with zero
+                    pattern[i] = 0;
                 }
             }
-
             return pattern;
         }
 
@@ -3037,7 +3189,6 @@ function estimateBackgroundParameters(tth, intensity) {
         }
 
 
-
         const getAllParams = () => {
             const profileType = controls.profileSelect.value;
             let params = {
@@ -3056,7 +3207,6 @@ function estimateBackgroundParameters(tth, intensity) {
             });
 
             const { system } = getSystemAndCentering();
-
             switch(system) {
                 case 'cubic': case 'tetragonal': case 'orthorhombic': 
                     params.alpha = params.beta = params.gamma = 90; 
@@ -3070,23 +3220,37 @@ function estimateBackgroundParameters(tth, intensity) {
                     break;
             }
 
-            if (profileType === "4") {
-                Object.assign(params, { 
-                    GU: parseFloat(controls.paramGU.value), GV: parseFloat(controls.paramGV.value), 
-                    GW: parseFloat(controls.paramGW.value), GP: parseFloat(controls.paramGP.value), 
-                    LX: parseFloat(controls.paramLX.value), eta: parseFloat(controls.paramEta.value), 
-                    shft: parseFloat(controls.paramShft.value), trns: parseFloat(controls.paramTrns.value) 
-                });
-            } else {
-                Object.assign(params, { 
-                    U: parseFloat(controls.paramU.value), V: parseFloat(controls.paramV.value), 
-                    W: parseFloat(controls.paramW.value), X: parseFloat(controls.paramX.value), 
-                    Y: parseFloat(controls.paramY.value), SL: parseFloat(controls.paramSL.value), 
-                    HL: parseFloat(controls.paramHL.value), S400: parseFloat(controls.paramS400.value), 
-                    S040: parseFloat(controls.paramS040.value), S004: parseFloat(controls.paramS004.value), 
-                    S220: parseFloat(controls.paramS220.value), S202: parseFloat(controls.paramS202.value), 
-                    S022: parseFloat(controls.paramS022.value) 
-                });
+            switch (profileType) {
+                case "simple_pvoigt":
+                    Object.assign(params, { 
+                        GU: parseFloat(controls.paramGU.value), GV: parseFloat(controls.paramGV.value), 
+                        GW: parseFloat(controls.paramGW.value), GP: parseFloat(controls.paramGP.value), 
+                        LX: parseFloat(controls.paramLX.value), eta: parseFloat(controls.paramEta.value), 
+                        shft: parseFloat(controls.paramShft.value), trns: parseFloat(controls.paramTrns.value) 
+                    });
+                    break;
+                case "tch_aniso":
+                    Object.assign(params, { 
+                        U: parseFloat(controls.paramU.value), V: parseFloat(controls.paramV.value), 
+                        W: parseFloat(controls.paramW.value), X: parseFloat(controls.paramX.value), 
+                        Y: parseFloat(controls.paramY.value), SL: parseFloat(controls.paramSL.value), 
+                        HL: parseFloat(controls.paramHL.value), S400: parseFloat(controls.paramS400.value), 
+                        S040: parseFloat(controls.paramS040.value), S004: parseFloat(controls.paramS004.value), 
+                        S220: parseFloat(controls.paramS220.value), S202: parseFloat(controls.paramS202.value), 
+                        S022: parseFloat(controls.paramS022.value) 
+                    });
+                    break;
+                case "split_pvoigt":
+                    Object.assign(params, { 
+                        GU_L: parseFloat(controls.paramGU_L.value), GV_L: parseFloat(controls.paramGV_L.value), 
+                        GW_L: parseFloat(controls.paramGW_L.value), LX_L: parseFloat(controls.paramLX_L.value),
+                        GU_R: parseFloat(controls.paramGU_R.value), GV_R: parseFloat(controls.paramGV_R.value), 
+                        GW_R: parseFloat(controls.paramGW_R.value), LX_R: parseFloat(controls.paramLX_R.value),
+                        eta_split: parseFloat(controls.paramEta_split.value),
+                        shft_split: parseFloat(controls.paramShft_split.value), 
+                        trns_split: parseFloat(controls.paramTrns_split.value) 
+                    });
+                    break;
             }
 
             // Add Chebyshev and Hump parameters
@@ -3100,7 +3264,7 @@ function estimateBackgroundParameters(tth, intensity) {
 
             return params;
         };
-       
+
         const getFitFlags = () => {
             const profileType = controls.profileSelect.value;
             let flags = {
@@ -3112,18 +3276,41 @@ function estimateBackgroundParameters(tth, intensity) {
                 gamma: document.getElementById('fit-lattice-gamma')?.checked ?? false,
                 zeroShift: controls.fitZeroShift.checked,
             };
-            if (profileType === "4") {
-                Object.assign(flags, { GU: controls.fitGU.checked, GV: controls.fitGV.checked, GW: controls.fitGW.checked, GP: controls.fitGP.checked, LX: controls.fitLX.checked, eta: controls.fitEta.checked, shft: controls.fitShft.checked, trns: controls.fitTrns.checked });
-            } else {
-                Object.assign(flags, { U: controls.fitU.checked, V: controls.fitV.checked, W: controls.fitW.checked, X: controls.fitX.checked, Y: controls.fitY.checked, SL: controls.fitSL.checked, HL: controls.fitHL.checked });
-                if (profileType === "3") {
-                    Object.assign(flags, { S400: controls.fitS400.checked, S040: controls.fitS040.checked, S004: controls.fitS004.checked, S220: controls.fitS220.checked, S202: controls.fitS202.checked, S022: controls.fitS022.checked });
+
+            switch (profileType) {
+                case "simple_pvoigt":
+                    Object.assign(flags, { 
+                        GU: controls.fitGU.checked, GV: controls.fitGV.checked, GW: controls.fitGW.checked, 
+                        GP: controls.fitGP.checked, LX: controls.fitLX.checked, eta: controls.fitEta.checked, 
+                        shft: controls.fitShft.checked, trns: controls.fitTrns.checked 
+                    });
+                    break;
+                case "tch_aniso":
+                    Object.assign(flags, { 
+                        U: controls.fitU.checked, V: controls.fitV.checked, W: controls.fitW.checked, 
+                        X: controls.fitX.checked, Y: controls.fitY.checked, SL: controls.fitSL.checked, 
+                        HL: controls.fitHL.checked, S400: controls.fitS400.checked, 
+                        S040: controls.fitS040.checked, S004: controls.fitS004.checked, 
+                        S220: controls.fitS220.checked, S202: controls.fitS202.checked, 
+                        S022: controls.fitS022.checked 
+                    });
                     const { system } = getSystemAndCentering();
                     switch (system) {
                         case 'cubic': flags.S040 = flags.S004 = flags.S202 = flags.S022 = false; break;
                         case 'hexagonal': case 'tetragonal': case 'rhombohedral': flags.S040 = flags.S022 = false; break;
                     }
-                }
+                    break;
+                case "split_pvoigt":
+                     Object.assign(flags, { 
+                        GU_L: controls.fitGU_L.checked, GV_L: controls.fitGV_L.checked, 
+                        GW_L: controls.fitGW_L.checked, LX_L: controls.fitLX_L.checked,
+                        GU_R: controls.fitGU_R.checked, GV_R: controls.fitGV_R.checked, 
+                        GW_R: controls.fitGW_R.checked, LX_R: controls.fitLX_R.checked,
+                        eta_split: controls.fitEta_split.checked,
+                        shft_split: controls.fitShft_split.checked, 
+                        trns_split: controls.fitTrns_split.checked 
+                    });
+                    break;
             }
 
             // Add Chebyshev and Hump flags
@@ -3322,7 +3509,6 @@ function debounce(func, wait) {
             if (stats && typeof stats.rwp === 'number') controls.rwpResult.textContent = stats.rwp.toFixed(2);
             if (stats && typeof stats.chi2 === 'number') controls.chi2Result.textContent = stats.chi2.toFixed(3);
             
-            // Update lattice, zero shift, and profile parameters
             safeUpdate(params.a, document.getElementById('lattice-param-a'), 4);
             safeUpdate(params.b, document.getElementById('lattice-param-b'), 4);
             safeUpdate(params.c, document.getElementById('lattice-param-c'), 4);
@@ -3332,24 +3518,33 @@ function debounce(func, wait) {
             safeUpdate(params.zeroShift, controls.zeroShift, 4);
             
             const profileType = params.profileType || controls.profileSelect.value;
-            if (profileType === "4") {
-                safeUpdate(params.GU, controls.paramGU, 4); safeUpdate(params.GV, controls.paramGV, 4);
-                safeUpdate(params.GW, controls.paramGW, 4); safeUpdate(params.GP, controls.paramGP, 4);
-                safeUpdate(params.LX, controls.paramLX, 4); safeUpdate(params.eta, controls.paramEta, 4);
-                safeUpdate(params.shft, controls.paramShft, 4); safeUpdate(params.trns, controls.paramTrns, 4);
-            } else {
-                safeUpdate(params.U, controls.paramU, 4); safeUpdate(params.V, controls.paramV, 4);
-                safeUpdate(params.W, controls.paramW, 4); safeUpdate(params.X, controls.paramX, 4);
-                safeUpdate(params.Y, controls.paramY, 4); safeUpdate(params.SL, controls.paramSL, 4);
-                safeUpdate(params.HL, controls.paramHL, 4);
-                if (profileType === "3") {
+            switch(profileType) {
+                case "simple_pvoigt":
+                    safeUpdate(params.GU, controls.paramGU, 4); safeUpdate(params.GV, controls.paramGV, 4);
+                    safeUpdate(params.GW, controls.paramGW, 4); safeUpdate(params.GP, controls.paramGP, 4);
+                    safeUpdate(params.LX, controls.paramLX, 4); safeUpdate(params.eta, controls.paramEta, 4);
+                    safeUpdate(params.shft, controls.paramShft, 4); safeUpdate(params.trns, controls.paramTrns, 4);
+                    break;
+                case "tch_aniso":
+                    safeUpdate(params.U, controls.paramU, 4); safeUpdate(params.V, controls.paramV, 4);
+                    safeUpdate(params.W, controls.paramW, 4); safeUpdate(params.X, controls.paramX, 4);
+                    safeUpdate(params.Y, controls.paramY, 4); safeUpdate(params.SL, controls.paramSL, 4);
+                    safeUpdate(params.HL, controls.paramHL, 4);
                     safeUpdate(params.S400, controls.paramS400, 4); safeUpdate(params.S040, controls.paramS040, 4);
                     safeUpdate(params.S004, controls.paramS004, 4); safeUpdate(params.S220, controls.paramS220, 4);
                     safeUpdate(params.S202, controls.paramS202, 4); safeUpdate(params.S022, controls.paramS022, 4);
-                }
+                    break;
+                case "split_pvoigt":
+                    safeUpdate(params.GU_L, controls.paramGU_L, 4); safeUpdate(params.GV_L, controls.paramGV_L, 4);
+                    safeUpdate(params.GW_L, controls.paramGW_L, 4); safeUpdate(params.LX_L, controls.paramLX_L, 4);
+                    safeUpdate(params.GU_R, controls.paramGU_R, 4); safeUpdate(params.GV_R, controls.paramGV_R, 4);
+                    safeUpdate(params.GW_R, controls.paramGW_R, 4); safeUpdate(params.LX_R, controls.paramLX_R, 4);
+                    safeUpdate(params.eta_split, controls.paramEta_split, 4);
+                    safeUpdate(params.shft_split, controls.paramShft_split, 4); 
+                    safeUpdate(params.trns_split, controls.paramTrns_split, 4);
+                    break;
             }
             
-            // --- Update background parameter inputs 
             for (let i = 0; i < NUM_BACKGROUND_PARAMS; i++) {
                 safeUpdate(params[`B${i}`], document.getElementById(`param-b${i}`), 4);
             }
@@ -3687,7 +3882,7 @@ function debounce(func, wait) {
                     const current_tth = expData.tth[i];
                     if (current_tth > max_tth) break;
                     
-                    const profile_val = pseudoVoigt(current_tth, peakPos, basePos, gamma_G, gamma_L, params);
+                    const profile_val = pseudoVoigt(current_tth, peakPos, basePos, peak, params);
                     if (profile_val > PEAK_HEIGHT_CUTOFF) {
                         current_peak_profile[i] = profile_val;
                         total_profile_sum[i] += profile_val;
@@ -3726,30 +3921,20 @@ function debounce(func, wait) {
             return i_obs_map;
         }
 
-        /**
-         * Generates a text report summarizing or detailing the refinement results.
-         * Includes ESD calculation if Levenberg-Marquardt was used.
-         * @param {string} format - 'summary' (parameters only) or 'full' (includes point data).
-         * @returns {string} The formatted report content.
-         */
+
         function generateReportContent(format = 'summary') {
             // Ensure fit results and necessary data are available
             if (!fitResults || !fitResults.params || !fitResults.stats || !fitResults.fitFlags || !fitResults.hklList) {
                 return "Error: Fit results are incomplete or not available.";
             }
-             // Need workingData (the slice used for fitting) for ESD calculation N
-            if (fitResults.algorithm === 'lm' && (!workerWorkingData || !workerWorkingData.intensity || workerWorkingData.intensity.length === 0)) {
+             if (fitResults.algorithm === 'lm' && (!workerWorkingData || !workerWorkingData.intensity || workerWorkingData.intensity.length === 0)) {
                  console.warn("generateReportContent: workingData slice not available for ESD calculation.");
-                 // Proceed without ESDs or return an error? Proceeding without ESDs.
             }
 
-
             const now = new Date();
-            // Destructure results for easier access
             const { params: finalParams, stats, fitFlags, hklList, algorithm, refinementMode, JtJ, parameterInfo, ss_res } = fitResults;
             const mainScaleFactor = stats.scaleFactor || 1.0;
 
-            // Helper to format lines with fixed widths
             const formatLine = (cols, widths) => {
                 return cols.map((col, i) => {
                      const colStr = (col === null || col === undefined) ? '-' : String(col);
@@ -3775,9 +3960,15 @@ function debounce(func, wait) {
             };
             const algorithmName = algorithmNames[algorithm] || 'Unknown';
 
-            const profileNameMap = { "3": "TCH w/ Anisotropy", "4": "Simple pVoigt"};
-            const profileType = String(finalParams.profileType || "4"); // Ensure string
+            // --- REFACTORED SECTION 1: Profile Name ---
+            const profileNameMap = {
+                "simple_pvoigt": "Simple pVoigt",
+                "tch_aniso": "TCH (Size/Strain/Aniso)",
+                "split_pvoigt": "Split pVoigt (Asymmetric)"
+            };
+            const profileType = finalParams.profileType || "simple_pvoigt";
             const profileName = profileNameMap[profileType] || "Unknown Profile";
+            // --- END SECTION 1 ---
 
             const selectedSg = spaceGroups.find(sg => sg.number === parseInt(controls.spaceGroupSelect.value, 10));
             const spaceGroupName = selectedSg ? `${selectedSg.number} – ${selectedSg.name}` : 'N/A';
@@ -3789,17 +3980,17 @@ function debounce(func, wait) {
                 `χ² (GOF):     ${stats.chi2 !== undefined ? stats.chi2.toFixed(3) : 'N/A'}`,
                 `Algorithm:    ${algorithmName}`,
                 `Refinement:   ${modeName}`,
-                `Profile:      ${profileName} (#${profileType})`,
+                `Profile:      ${profileName} (${profileType})`, // Use string key
                 `Space Group:  ${spaceGroupName}`,
                 ''
             ];
 
-            // --- Williamson-Hall Analysis ---
+            // --- REFACTORED SECTION 2: Williamson-Hall ---
             let whAnalysisSection = [];
-            // This analysis is typically meaningful for TCH profile where size/strain are separated
-            if (profileType === "3" && hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
+            // This analysis is only valid for TCH profile
+            if (profileType === "tch_aniso" && hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
+            // --- END SECTION 2 ---
                 try {
-                     // Note: calculateWilliamsonHall might need adjustment if moved to worker previously
                     const whResults = calculateWilliamsonHall(finalParams, hklList);
                     if (whResults) {
                         whAnalysisSection.push(
@@ -3818,29 +4009,23 @@ function debounce(func, wait) {
             }
 
 
-            // --- ESD Calculation ---
+            // --- ESD Calculation (No change needed here, it's based on parameterInfo) ---
             let esds = {};
             let esdWarning = null;
-
             if (algorithm === 'lm' && JtJ && parameterInfo && ss_res !== undefined && workerWorkingData && workerWorkingData.intensity && workerWorkingData.intensity.length > 0) {
-                 const P = parameterInfo.length; // Number of parameters actually refined
-                 const N = workerWorkingData.intensity.length; // Number of data points used
-
+                 const P = parameterInfo.length; 
+                 const N = workerWorkingData.intensity.length; 
                  if (P === 0) {
                      esdWarning = "No parameters were refined.";
                  } else if (N > P) {
                      const degreesOfFreedom = N - P;
                      if (ss_res >= 0 && isFinite(ss_res)) {
-                          const reduced_chi_sq = (degreesOfFreedom > 0) ? (ss_res / degreesOfFreedom) : 0; // Variance of residuals (approx)
-
+                          const reduced_chi_sq = (degreesOfFreedom > 0) ? (ss_res / degreesOfFreedom) : 0; 
                           let cov_matrix = null;
                           try {
-                              // Validate JtJ before inversion
                                if (Array.isArray(JtJ) && JtJ.length === P && Array.isArray(JtJ[0]) && JtJ[0].length === P) {
-                                  // H = JtJ (approximation); Cov = H^-1 * reduced_chi_sq
                                    const H_inv = numeric.inv(JtJ);
                                    if (H_inv) {
-                                       // Scale by reduced_chi_sq to get Covariance matrix
                                         cov_matrix = numeric.mul(H_inv, reduced_chi_sq);
                                    } else {
                                         throw new Error("Matrix inversion returned null.");
@@ -3852,22 +4037,17 @@ function debounce(func, wait) {
                                console.error("Matrix inversion error:", invError);
                                cov_matrix = null;
                           }
-
                           if (cov_matrix) {
                               parameterInfo.forEach((p_info, i) => {
                                    if (cov_matrix[i] && cov_matrix[i][i] !== undefined) {
-                                       const variance = cov_matrix[i][i]; // Variance is the diagonal element
-
-                                        if (variance >= 0 && isFinite(variance)) { // Variance must be non-negative
-                                            const sigma_scaled = Math.sqrt(variance); // Standard deviation (in scaled units)
-                                            const scale = p_info.scale || 1.0; // Get the scale factor used during refinement
-
-                                            // ESD is sigma converted back to original parameter units
-                                            esds[p_info.name] = sigma_scaled * scale; // Un-normalize ESD
-
+                                       const variance = cov_matrix[i][i];
+                                        if (variance >= 0 && isFinite(variance)) {
+                                            const sigma_scaled = Math.sqrt(variance);
+                                            const scale = p_info.scale || 1.0;
+                                            esds[p_info.name] = sigma_scaled * scale; 
                                         } else {
                                              console.warn(`Invalid or negative variance term for parameter ${p_info.name}:`, variance);
-                                             esds[p_info.name] = NaN; // Mark ESD as invalid
+                                             esds[p_info.name] = NaN; 
                                              esdWarning = esdWarning || 'Negative/invalid variance encountered.';
                                         }
                                    } else {
@@ -3882,7 +4062,7 @@ function debounce(func, wait) {
                      } else {
                           esdWarning = "Invalid sum of squared residuals (ss_res) for variance calculation.";
                      }
-                 } else { // N <= P
+                 } else { 
                      esdWarning = `N (${N}) <= P (${P}), cannot calculate reliable errors.`;
                  }
             } else if (algorithm !== 'lm') {
@@ -3891,21 +4071,18 @@ function debounce(func, wait) {
                  esdWarning = "Required data for ESD calculation is missing (JtJ, parameterInfo, ss_res, or workingData).";
             }
 
-
-            // --- Parameter Table Generation ---
+            // --- REFACTORED SECTION 3: Parameter Table Generation ---
             const paramWidths = [24, 18, 10, 18]; // Name, Value, Fitted, ESD
             const paramHeader = formatLine(['Parameter', 'Value', 'Fitted', 'ESD'], paramWidths);
             const paramLines = [];
             const paramGroups = {};
 
-            // Helper to add parameter definition
             const addParam = (group, name, value, flag, esd_key) => {
-                 if (value !== undefined && value !== null) { // Only add if value exists
+                 if (value !== undefined && value !== null) {
                      group.push({ name: name, value: value, flag: flag, esd_key: esd_key });
                  }
             };
 
-            // Define Parameter Groups (Ensure esd_key matches names in parameterInfo)
             paramGroups['Structural & Instrumental'] = [];
             addParam(paramGroups['Structural & Instrumental'], 'a (Å)', finalParams.a, fitFlags.a, 'a');
             addParam(paramGroups['Structural & Instrumental'], 'b (Å)', finalParams.b, fitFlags.b, 'b');
@@ -3913,45 +4090,57 @@ function debounce(func, wait) {
             addParam(paramGroups['Structural & Instrumental'], 'alpha (°)', finalParams.alpha, fitFlags.alpha, 'alpha');
             addParam(paramGroups['Structural & Instrumental'], 'beta (°)', finalParams.beta, fitFlags.beta, 'beta');
             addParam(paramGroups['Structural & Instrumental'], 'gamma (°)', finalParams.gamma, fitFlags.gamma, 'gamma');
-            addParam(paramGroups['Structural & Instrumental'], 'Radiation 1 (Å)', finalParams.lambda, undefined, undefined); // Not fitted
-            addParam(paramGroups['Structural & Instrumental'], 'Radiation 2 (Å)', finalParams.lambda2, undefined, undefined); // Not fitted
-            addParam(paramGroups['Structural & Instrumental'], 'Ratio (I2/I1)', finalParams.ratio, undefined, undefined);   // Not fitted
+            addParam(paramGroups['Structural & Instrumental'], 'Radiation 1 (Å)', finalParams.lambda, undefined, undefined);
+            addParam(paramGroups['Structural & Instrumental'], 'Radiation 2 (Å)', finalParams.lambda2, undefined, undefined);
+            addParam(paramGroups['Structural & Instrumental'], 'Ratio (I2/I1)', finalParams.ratio, undefined, undefined);
             addParam(paramGroups['Structural & Instrumental'], 'Zero Shift (°)', finalParams.zeroShift, fitFlags.zeroShift, 'zeroShift');
-            addParam(paramGroups['Structural & Instrumental'], '2theta Min (°)', workerWorkingData ? workerWorkingData.tth[0] : null, undefined, undefined); // Fitted range
-            addParam(paramGroups['Structural & Instrumental'], '2theta Max (°)', workerWorkingData ? workerWorkingData.tth[workerWorkingData.tth.length - 1] : null, undefined, undefined); // Fitted range
-
+            addParam(paramGroups['Structural & Instrumental'], '2theta Min (°)', workerWorkingData ? workerWorkingData.tth[0] : null, undefined, undefined);
+            addParam(paramGroups['Structural & Instrumental'], '2theta Max (°)', workerWorkingData ? workerWorkingData.tth[workerWorkingData.tth.length - 1] : null, undefined, undefined);
 
             paramGroups['Profile Parameters'] = [];
-            if (profileType === "4") { // Simple pVoigt
-                addParam(paramGroups['Profile Parameters'], 'GU', finalParams.GU, fitFlags.GU, 'GU');
-                addParam(paramGroups['Profile Parameters'], 'GV', finalParams.GV, fitFlags.GV, 'GV');
-                addParam(paramGroups['Profile Parameters'], 'GW', finalParams.GW, fitFlags.GW, 'GW');
-                addParam(paramGroups['Profile Parameters'], 'GP', finalParams.GP, fitFlags.GP, 'GP');
-                addParam(paramGroups['Profile Parameters'], 'LX', finalParams.LX, fitFlags.LX, 'LX');
-                addParam(paramGroups['Profile Parameters'], 'eta (Mixing)', finalParams.eta, fitFlags.eta, 'eta');
-                addParam(paramGroups['Profile Parameters'], 'shft (Displ.)', finalParams.shft, fitFlags.shft, 'shft');
-                addParam(paramGroups['Profile Parameters'], 'trns (Transp.)', finalParams.trns, fitFlags.trns, 'trns');
-            } else { // TCH (Profile 3)
-                addParam(paramGroups['Profile Parameters'], 'U', finalParams.U, fitFlags.U, 'U');
-                addParam(paramGroups['Profile Parameters'], 'V', finalParams.V, fitFlags.V, 'V');
-                addParam(paramGroups['Profile Parameters'], 'W', finalParams.W, fitFlags.W, 'W');
-                addParam(paramGroups['Profile Parameters'], 'X', finalParams.X, fitFlags.X, 'X');
-                addParam(paramGroups['Profile Parameters'], 'Y', finalParams.Y, fitFlags.Y, 'Y');
-                addParam(paramGroups['Profile Parameters'], 'S/L (Asymm)', finalParams.SL, fitFlags.SL, 'SL');
-                addParam(paramGroups['Profile Parameters'], 'H/L (Asymm)', finalParams.HL, fitFlags.HL, 'HL');
-                // Anisotropy only if profile 3
-                 if (profileType === "3") {
-                     addParam(paramGroups['Profile Parameters'], 'S400', finalParams.S400, fitFlags.S400, 'S400');
-                     addParam(paramGroups['Profile Parameters'], 'S040', finalParams.S040, fitFlags.S040, 'S040');
-                     addParam(paramGroups['Profile Parameters'], 'S004', finalParams.S004, fitFlags.S004, 'S004');
-                     addParam(paramGroups['Profile Parameters'], 'S220', finalParams.S220, fitFlags.S220, 'S220');
-                     addParam(paramGroups['Profile Parameters'], 'S202', finalParams.S202, fitFlags.S202, 'S202');
-                     addParam(paramGroups['Profile Parameters'], 'S022', finalParams.S022, fitFlags.S022, 'S022');
-                 }
+            switch (profileType) {
+                case "simple_pvoigt":
+                    addParam(paramGroups['Profile Parameters'], 'GU', finalParams.GU, fitFlags.GU, 'GU');
+                    addParam(paramGroups['Profile Parameters'], 'GV', finalParams.GV, fitFlags.GV, 'GV');
+                    addParam(paramGroups['Profile Parameters'], 'GW', finalParams.GW, fitFlags.GW, 'GW');
+                    addParam(paramGroups['Profile Parameters'], 'GP', finalParams.GP, fitFlags.GP, 'GP');
+                    addParam(paramGroups['Profile Parameters'], 'LX', finalParams.LX, fitFlags.LX, 'LX');
+                    addParam(paramGroups['Profile Parameters'], 'eta (Mixing)', finalParams.eta, fitFlags.eta, 'eta');
+                    addParam(paramGroups['Profile Parameters'], 'shft (Displ.)', finalParams.shft, fitFlags.shft, 'shft');
+                    addParam(paramGroups['Profile Parameters'], 'trns (Transp.)', finalParams.trns, fitFlags.trns, 'trns');
+                    break;
+                case "tch_aniso":
+                    addParam(paramGroups['Profile Parameters'], 'U', finalParams.U, fitFlags.U, 'U');
+                    addParam(paramGroups['Profile Parameters'], 'V', finalParams.V, fitFlags.V, 'V');
+                    addParam(paramGroups['Profile Parameters'], 'W', finalParams.W, fitFlags.W, 'W');
+                    addParam(paramGroups['Profile Parameters'], 'X', finalParams.X, fitFlags.X, 'X');
+                    addParam(paramGroups['Profile Parameters'], 'Y', finalParams.Y, fitFlags.Y, 'Y');
+                    addParam(paramGroups['Profile Parameters'], 'S/L (Asymm)', finalParams.SL, fitFlags.SL, 'SL');
+                    addParam(paramGroups['Profile Parameters'], 'H/L (Asymm)', finalParams.HL, fitFlags.HL, 'HL');
+                    addParam(paramGroups['Profile Parameters'], 'S400', finalParams.S400, fitFlags.S400, 'S400');
+                    addParam(paramGroups['Profile Parameters'], 'S040', finalParams.S040, fitFlags.S040, 'S040');
+                    addParam(paramGroups['Profile Parameters'], 'S004', finalParams.S004, fitFlags.S004, 'S004');
+                    addParam(paramGroups['Profile Parameters'], 'S220', finalParams.S220, fitFlags.S220, 'S220');
+                    addParam(paramGroups['Profile Parameters'], 'S202', finalParams.S202, fitFlags.S202, 'S202');
+                    addParam(paramGroups['Profile Parameters'], 'S022', finalParams.S022, fitFlags.S022, 'S022');
+                    break;
+                case "split_pvoigt":
+                    addParam(paramGroups['Profile Parameters'], 'GU-L', finalParams.GU_L, fitFlags.GU_L, 'GU_L');
+                    addParam(paramGroups['Profile Parameters'], 'GV-L', finalParams.GV_L, fitFlags.GV_L, 'GV_L');
+                    addParam(paramGroups['Profile Parameters'], 'GW-L', finalParams.GW_L, fitFlags.GW_L, 'GW_L');
+                    addParam(paramGroups['Profile Parameters'], 'LX-L', finalParams.LX_L, fitFlags.LX_L, 'LX_L');
+                    addParam(paramGroups['Profile Parameters'], 'GU-R', finalParams.GU_R, fitFlags.GU_R, 'GU_R');
+                    addParam(paramGroups['Profile Parameters'], 'GV-R', finalParams.GV_R, fitFlags.GV_R, 'GV_R');
+                    addParam(paramGroups['Profile Parameters'], 'GW-R', finalParams.GW_R, fitFlags.GW_R, 'GW_R');
+                    addParam(paramGroups['Profile Parameters'], 'LX-R', finalParams.LX_R, fitFlags.LX_R, 'LX_R');
+                    addParam(paramGroups['Profile Parameters'], 'eta (Mixing)', finalParams.eta_split, fitFlags.eta_split, 'eta_split');
+                    addParam(paramGroups['Profile Parameters'], 'shft (Displ.)', finalParams.shft_split, fitFlags.shft_split, 'shft_split');
+                    addParam(paramGroups['Profile Parameters'], 'trns (Transp.)', finalParams.trns_split, fitFlags.trns_split, 'trns_split');
+                    break;
             }
+            // --- END SECTION 3 ---
 
             paramGroups['Background Parameters'] = [];
-             // Use global NUM_BACKGROUND_PARAMS constant
             for (let i = 0; i < NUM_BACKGROUND_PARAMS; i++) {
                  const name = `B${i}`;
                  addParam(paramGroups['Background Parameters'], name, finalParams[name], fitFlags[name], name);
@@ -3960,13 +4149,11 @@ function debounce(func, wait) {
             addParam(paramGroups['Background Parameters'], 'Hump Position', finalParams.hump_P, fitFlags.hump_P, 'hump_P');
             addParam(paramGroups['Background Parameters'], 'Hump FWHM', finalParams.hump_W, fitFlags.hump_W, 'hump_W');
 
-
-            // Format Parameter Lines
             for (const groupName in paramGroups) {
-                if (paramGroups[groupName].length > 0) { // Only add group if it has parameters
+                if (paramGroups[groupName].length > 0) {
                     paramLines.push(`--- ${groupName} ---`, paramHeader, '-'.repeat(paramHeader.length));
                     paramGroups[groupName].forEach(p => {
-                         if (p.value !== null && !isNaN(p.value)) { // Extra check for NaN
+                         if (p.value !== null && !isNaN(p.value)) {
                             const valStr = p.value.toExponential(6);
                             const fitStr = (p.flag === undefined) ? '' : (p.flag ? 'Yes' : 'No');
                             let esdStr = '';
@@ -3975,7 +4162,7 @@ function debounce(func, wait) {
                                 if (typeof esdValue === 'number' && isFinite(esdValue)) {
                                      esdStr = `(${esdValue.toExponential(2)})`;
                                 } else if (isNaN(esdValue)) {
-                                     esdStr = '(NaN)'; // Indicate if ESD calculation failed for this param
+                                     esdStr = '(NaN)';
                                 }
                             }
                             paramLines.push(formatLine([p.name, valStr, fitStr, esdStr], paramWidths));
@@ -3986,41 +4173,37 @@ function debounce(func, wait) {
             }
             if (esdWarning) paramLines.push(`NOTE regarding ESDs: ${esdWarning}`);
 
-            // --- Reflections Section ---
+            // --- Reflections Section (No change needed, logic is sound) ---
             const reflectionsSection = [];
-            if (hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) { // Need workingData for range check and Iobs
+            if (hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
                 const i_calc_header = refinementMode === 'pawley' ? 'I_refined' : 'I_extracted';
-                const reflWidths = [15, 18, 18, 18, 18]; // hkl, 2th_corr, I_calc, ESD(I), I_obs
+                const reflWidths = [15, 18, 18, 18, 18];
                 const reflHeader = formatLine(['h,k,l', '2th_corr (°)', i_calc_header, 'ESD(I)', 'I_obs (Area)'], reflWidths);
                 reflectionsSection.push('', '--- Reflections List (Integrated Intensities) ---', reflHeader, '-'.repeat(reflHeader.length));
 
                 let i_obs_map = new Map();
                 try {
-                     // Calculate I_obs using partitioning (needs workingData)
                      i_obs_map = calculateAllObservedIntensities(hklList, finalParams, workerWorkingData);
                 } catch(iobsError) {
                      console.error("Error calculating observed intensities:", iobsError);
                      reflectionsSection.push("(Error calculating I_obs)");
                 }
 
-
                 const fitted_tth_min = workerWorkingData.tth[0];
                 const fitted_tth_max = workerWorkingData.tth[workerWorkingData.tth.length - 1];
 
-                hklList.filter(hkl => hkl && hkl.tth && hkl.tth >= fitted_tth_min && hkl.tth <= fitted_tth_max) // Filter by fitted range
+                hklList.filter(hkl => hkl && hkl.tth && hkl.tth >= fitted_tth_min && hkl.tth <= fitted_tth_max)
                     .forEach(hkl => {
-                         let tthCorr = hkl.tth; // Start with theoretical position
+                         let tthCorr = hkl.tth;
                          if (finalParams.zeroShift) tthCorr += finalParams.zeroShift;
-                         try { // Calculate shift safely
+                         try {
                              tthCorr += calculatePeakShift(hkl.tth, finalParams);
-                         } catch { /* ignore shift error for report */ }
+                         } catch { /* ignore shift error */ }
 
-                        // Use final intensity directly (already scaled correctly if Le Bail)
-                        const i_calc_area = hkl.intensity || 0; // Use the value from the final hklList
-
+                        const i_calc_area = hkl.intensity || 0; 
                         const i_obs = i_obs_map.get(hkl.hkl_list[0]) || 0;
-
                         let esd_I_str = '';
+
                         if (refinementMode === 'pawley') {
                              const hkl_name = `I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`;
                              const esd_I_val = esds[hkl_name];
@@ -4031,7 +4214,6 @@ function debounce(func, wait) {
                              }
                         }
 
-                        // Filter out reflections with negligible calculated AND observed intensity
                         if (i_obs > 0.01 || i_calc_area > 0.01) {
                             reflectionsSection.push(formatLine([
                                 hkl.hkl_list[0],
@@ -4044,12 +4226,12 @@ function debounce(func, wait) {
                     });
             }
 
-            // --- Point Data Section ---
+            // --- Point Data Section (No change needed, logic is sound) ---
             const dataSection = [];
             if (format === 'full' && workerWorkingData && workerWorkingData.tth) {
                  dataSection.push('', '--- Point-by-Point Intensity Data (Fitted Range Only) ---',
-                     formatLine(['2theta', 'I_obs', 'I_calc', 'Difference', 'Background'], [15, 18, 18, 18, 18]), // Added Background
-                     '-'.repeat(15+18+18+18+18+4)); // Adjust length
+                     formatLine(['2theta', 'I_obs', 'I_calc', 'Difference', 'Background'], [15, 18, 18, 18, 18]),
+                     '-'.repeat(15+18+18+18+18+4));
 
                  try {
                      const finalBkg = calculateTotalBackground(workerWorkingData.tth, finalParams);
@@ -4075,11 +4257,9 @@ function debounce(func, wait) {
                       dataSection.push("(Error generating point data)");
                  }
             }
-
-            // Combine all sections
+            
             return [...header, ...statsSection, ...whAnalysisSection, ...paramLines, ...reflectionsSection, ...dataSection].join('\n');
         }
-
 
         // --- EVENT LISTENERS, 8 oct, version 1.0.3; update le 24 oct v 111
 
@@ -4129,8 +4309,8 @@ function debounce(func, wait) {
         
         // 2. Triggers for SIMPLE Preview Update (these use the cached HKLs)
 const controlsPanel = document.getElementById('controls-panel');
-controlsPanel.querySelectorAll('#simple-pvoigt-params-container input, #anisotropy-params-container input').forEach(el => {
-    // *** CHANGE IS HERE ***
+controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile-tch-aniso-container input, #profile-split-pvoigt-container input').forEach(el => {
+    
     // We now call the debounced function for all continuous input events
     // from sliders and number fields within the profile tabs.
     el.addEventListener('input', debouncedSimplePreviewUpdate);
@@ -4395,8 +4575,18 @@ controls.mainChartCanvas.addEventListener('contextmenu', e => {
     rescalePlot(false);
 });
 
-
-        controls.profileSelect.addEventListener('change', (e) => { const newProfile = e.target.value; saveProfileState(currentProfile); controls.simplePVoigtParamsContainer.classList.toggle('hidden', newProfile !== '4'); controls.anisotropyParamsContainer.classList.toggle('hidden', newProfile !== '3'); restoreProfileState(newProfile); currentProfile = newProfile; if (fullExperimentalData.tth.length > 0) updatePreviewPattern(); });
+    controls.profileSelect.addEventListener('change', (e) => { 
+            const newProfile = e.target.value; 
+            saveProfileState(currentProfile); 
+            
+            controls.profileSimplePVoigtContainer.classList.toggle('hidden', newProfile !== 'simple_pvoigt'); 
+            controls.profileTchAnisoContainer.classList.toggle('hidden', newProfile !== 'tch_aniso'); 
+            controls.profileSplitPVoigtContainer.classList.toggle('hidden', newProfile !== 'split_pvoigt'); 
+            
+            restoreProfileState(newProfile); 
+            currentProfile = newProfile; 
+            if (fullExperimentalData.tth.length > 0) updatePreviewPattern(); 
+        });
         
         // This now uses the new helper function
         controls.bravaisLattice.addEventListener('change', updateUIForSystemChange);

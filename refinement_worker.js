@@ -1,5 +1,5 @@
 // refinement_worker.js
-// version 111, 24 oct 2025
+// version 113, 25 oct 2025
 try {
     importScripts('numeric.min.js', 'rules_spaceGroups.js');
 } catch (e) {
@@ -22,13 +22,18 @@ if (typeof spaceGroups === 'undefined') {
 
 
 // --- 2. Define Constants & Global Worker State ---
-const NUM_BACKGROUND_PARAMS = 9; // Make sure this matches the main script
+ // Make sure this matches the main script
 const CALCULATION_WINDOW_MULTIPLIER = 6.0;
 const PEAK_HEIGHT_CUTOFF = 0.002;
+const NUM_BACKGROUND_PARAMS = 9;
 const HIGH_WEIGHT_MULTIPLIER = 50.0;
+
+
 
 let workerWorkingData = null; // To store the sliced data sent from the main thread
 let hklIndexCache = {}; // Cache for HKL indices within the worker
+
+
 
 
 
@@ -476,144 +481,126 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     return rawReflections;
 }
 
-
-// --- Profile Shape & Width ---
+/**
+ * Calculates the peak position shift due to sample displacement or transparency.
+ */
 function calculatePeakShift(tth, params) {
-    // Ensure params and profileType exist
-    if (!params || !params.profileType) return 0;
-    const profileType = String(params.profileType || "4"); // Ensure string
-
-    if (profileType === "4") {
+     if (!params || !params.profileType) return 0;
+    const profileType = params.profileType;
+    
+    const calcShift = (tth, shft, trns) => {
         const thetaRad = tth * (Math.PI / 180) / 2;
-        // Handle edge case near 90 degrees 2theta (theta near PI/2)
-        if (Math.abs(thetaRad - Math.PI / 2.0) < 1e-6) {
-             return 0; // Avoid potential division by zero or large shifts
-        }
+        if (Math.abs(thetaRad - Math.PI / 2.0) < 1e-6) return 0;
         const cosTheta = Math.cos(thetaRad);
         const sin2Theta = Math.sin(2 * thetaRad);
-        // Ensure parameters exist, default to 0
-        const shftParam = params.shft || 0;
-        const trnsParam = params.trns || 0;
+        const displacementShift = -(shft / 1000) * cosTheta * (180 / Math.PI);
+        const transparencyShift = trns * sin2Theta * (180 / Math.PI);
+        const totalShift = displacementShift + transparencyShift;
+        return isFinite(totalShift) ? totalShift : 0;
+    };
 
-        const displacementShift = -(shftParam / 1000) * cosTheta * (180 / Math.PI);
-        const transparencyShift = trnsParam * sin2Theta * (180 / Math.PI);
-         const totalShift = displacementShift + transparencyShift;
-         return isFinite(totalShift) ? totalShift : 0; // Ensure finite result
-    } else {
-        return 0; // No shift for TCH profile in this implementation
+    switch (profileType) {
+        case "simple_pvoigt":
+            return calcShift(tth, params.shft || 0, params.trns || 0);
+        case "split_pvoigt":
+            return calcShift(tth, params.shft_split || 0, params.trns_split || 0);
+        case "tch_aniso":
+        default:
+            return 0; // No shift for TCH profile
     }
 }
 
 
-function calculateProfileWidths(tth, hkl, params) {
-    // Ensure params and profileType exist
-    if (!params || !params.profileType) return { gamma_G: 1e-4, gamma_L: 1e-4 };
-    const profileType = String(params.profileType || "4"); // Ensure string type
+
+/**
+ * Calculates Gaussian and Lorentzian width components (gamma_G, gamma_L).
+ * For split_pvoigt, 'side' can be 'left' or 'right'.
+ */
+function calculateProfileWidths(tth, hkl, params, side = 'center') {
+     if (!params || !params.profileType) return { gamma_G: 1e-4, gamma_L: 1e-4 };
+    
+    const profileType = params.profileType;
     const thetaRad = tth * (Math.PI / 180) / 2;
 
-    // Prevent division by zero or tan(Infinity) at 90 degrees
     const MAX_ANGLE_RAD = Math.PI / 2.0 - 1e-6;
     const safeThetaRad = Math.min(thetaRad, MAX_ANGLE_RAD);
-     if (safeThetaRad < 1e-6) { // Also handle angles near zero if needed
+     if (safeThetaRad < 1e-6) {
          return { gamma_G: 1e-4, gamma_L: 1e-4 };
      }
 
     const tanTheta = Math.tan(safeThetaRad);
     const cosTheta = Math.cos(safeThetaRad);
+    const cosTheta_safe = Math.max(cosTheta, 1e-9);
+    const cosThetaSq_safe = Math.max(cosTheta * cosTheta, 1e-9);
 
-    let gamma_G = 1e-4; // Default tiny width, strictly positive
-    let gamma_L = 1e-4; // Default tiny width, strictly positive
+    let gamma_G = 1e-4;
+    let gamma_L = 1e-4;
 
-    if (profileType === "4") {
-        // --- Robust Simple pVoigt Calculation ---
-        const GU = params.GU || 0;
-        const GV = params.GV || 0;
-        const GW = params.GW || 0;
-        const GP = params.GP || 0;
-        const LX = params.LX || 0;
-
-        // Ensure cosTheta is not zero before dividing
-        const cosThetaSq_safe = Math.max(cosTheta * cosTheta, 1e-9);
-        const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
-
-        if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) {
-            gamma_G = Math.sqrt(gamma_G_sq);
-        } else {
-            gamma_G = 1e-4; // Fallback width
+    switch (profileType) {
+        case "simple_pvoigt": {
+            const GU = params.GU || 0;
+            const GV = params.GV || 0;
+            const GW = params.GW || 0;
+            const GP = params.GP || 0;
+            const LX = params.LX || 0;
+            const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
+            if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+            const calculated_L = LX / cosTheta_safe;
+            if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+            break;
         }
-
-        const cosTheta_safe = Math.max(cosTheta, 1e-9);
-        const calculated_L = LX / cosTheta_safe;
-
-        if (calculated_L > 0 && isFinite(calculated_L)) {
-            gamma_L = calculated_L;
-        } else {
-             gamma_L = 1e-4; // Fallback width
-        }
-
-    } else { // Profile 3 (TCH)
-        // --- TCH Profile Calculation ---
-         const U = params.U || 0;
-         const V = params.V || 0;
-         const W = params.W || 0;
-         const X = params.X || 0;
-         const Y = params.Y || 0;
-
-        const gamma_G_sq = U * tanTheta * tanTheta + V * tanTheta + W;
-
-        if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) {
-            gamma_G = Math.sqrt(gamma_G_sq);
-        } else {
-            gamma_G = 1e-4; // Fallback
-        }
-
-        const cosTheta_safe = Math.max(cosTheta, 1e-9);
-        const calculated_L = X * tanTheta + Y / cosTheta_safe;
-
-        if (calculated_L > 0 && isFinite(calculated_L)) {
-            gamma_L = calculated_L;
-        } else {
-             gamma_L = 1e-4; // Fallback
-        }
-
-        // Anisotropic broadening (Stephens) - Profile 3 only
-         if (hkl && hkl.d && hkl.h_orig !== undefined) {
-             const d_sq = hkl.d * hkl.d;
-             if (d_sq > 1e-9) { // Avoid division by zero
-                const d_inv_sq = 1 / d_sq;
-                 // Use original hkl indices directly
-                 const h_val = hkl.h_orig;
-                 const k_val = hkl.k_orig;
-                 const l_val = hkl.l_orig;
-
-                 const h2 = h_val * h_val, k2 = k_val * k_val, l2 = l_val * l_val;
-                 const h4 = h2*h2, k4 = k2*k2, l4 = l2*l2; // Need 4th powers for Stephens
-
-                 // Ensure anisotropy parameters exist, default to 0
-                 const S400 = params.S400 || 0;
-                 const S040 = params.S040 || 0;
-                 const S004 = params.S004 || 0;
-                 const S220 = params.S220 || 0;
-                 const S202 = params.S202 || 0;
-                 const S022 = params.S022 || 0;
-
-                 // Stephens formula - check exact form if needed, often involves h^4, k^4, l^4 and cross terms
-                 let H_aniso = S400 * h4 + S040 * k4 + S004 * l4 +
-                               S220 * h2 * k2 + S202 * h2 * l2 + S022 * k2 * l2;
-                 // The formula might need normalization or scaling factors depending on definition
-                 // Often involves division by (h^2+k^2+l^2)^2 or similar, or uses d^-4 scaling
-                 H_aniso *= d_inv_sq * d_inv_sq; // Example using d^-4 scaling
-
-                 // Only add anisotropic broadening if it's a valid, finite, positive number
-                 if(isFinite(H_aniso) && H_aniso > 0) {
-                      // The division by 1000 might be specific to implementation/units
-                      gamma_L += H_aniso / 1000.0;
-                 }
+        
+        case "split_pvoigt": {
+            let GU, GV, GW, LX;
+            if (side === 'left') {
+                GU = params.GU_L || 0;
+                GV = params.GV_L || 0;
+                GW = params.GW_L || 0;
+                LX = params.LX_L || 0;
+            } else { // 'right' or 'center'
+                GU = params.GU_R || 0;
+                GV = params.GV_R || 0;
+                GW = params.GW_R || 0;
+                LX = params.LX_R || 0;
             }
+            const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW; // No GP for split
+            if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+            const calculated_L = LX / cosTheta_safe;
+            if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+            break;
+        }
+
+        case "tch_aniso": {
+             const U = params.U || 0;
+             const V = params.V || 0;
+             const W = params.W || 0;
+             const X = params.X || 0;
+             const Y = params.Y || 0;
+            const gamma_G_sq = U * tanTheta * tanTheta + V * tanTheta + W;
+            if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
+            const calculated_L = X * tanTheta + Y / cosTheta_safe;
+            if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+
+            if (hkl && hkl.d && hkl.h_orig !== undefined) {
+                 const d_sq = hkl.d * hkl.d;
+                 if (d_sq > 1e-9) {
+                    const d_inv_sq = 1 / d_sq;
+                    const h_val = hkl.h_orig, k_val = hkl.k_orig, l_val = hkl.l_orig;
+                    const h2 = h_val*h_val, k2 = k_val*k_val, l2 = l_val*l_val;
+                    const h4 = h2*h2, k4 = k2*k2, l4 = l2*l2;
+
+                    const S400 = params.S400 || 0, S040 = params.S040 || 0, S004 = params.S004 || 0;
+                    const S220 = params.S220 || 0, S202 = params.S202 || 0, S022 = params.S022 || 0;
+
+                    let H_aniso = S400*h4 + S040*k4 + S004*l4 + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
+                    H_aniso *= d_inv_sq * d_inv_sq;
+                    if(isFinite(H_aniso) && H_aniso > 0) gamma_L += H_aniso / 1000.0;
+                }
+            }
+            break;
         }
     }
 
-    // Final safeguard: ensure widths are always positive and finite
     return {
         gamma_G: Math.max(1e-4, isFinite(gamma_G) ? gamma_G : 1e-4),
         gamma_L: Math.max(1e-4, isFinite(gamma_L) ? gamma_L : 1e-4)
@@ -621,149 +608,207 @@ function calculateProfileWidths(tth, hkl, params) {
 }
 
 
+/**
+ * Calculates the total FWHM of a TCH/Split peak from its Gaussian and Lorentzian components.
+ */
 function getPeakFWHM(gamma_G, gamma_L) {
-    // Ensure inputs are positive numbers
     const gG = Math.max(1e-9, gamma_G || 1e-9);
     const gL = Math.max(1e-9, gamma_L || 1e-9);
-
-    // Thompson-Cox-Hastings approximation
     const fwhm_g_5 = Math.pow(gG, 5);
     const fwhm_l_5 = Math.pow(gL, 5);
-    const fwhm_g_4_l = Math.pow(gG, 4) * gL;
-    const fwhm_g_3_l_2 = Math.pow(gG, 3) * Math.pow(gL, 2);
-    const fwhm_g_2_l_3 = Math.pow(gG, 2) * Math.pow(gL, 3);
-    const fwhm_g_l_4 = gG * Math.pow(gL, 4);
-
-    const fwhm_pow5 = fwhm_g_5 +
-                      2.69269 * fwhm_g_4_l +
-                      2.42843 * fwhm_g_3_l_2 +
-                      4.47163 * fwhm_g_2_l_3 +
-                      0.07842 * fwhm_g_l_4 +
-                      fwhm_l_5;
-
-     if (fwhm_pow5 < 0 || !isFinite(fwhm_pow5)) return Math.max(gG, gL, 1e-6); // Fallback
-
+    const fwhm_g_4_l = 2.69269 * Math.pow(gG, 4) * gL;
+    const fwhm_g_3_l_2 = 2.42843 * Math.pow(gG, 3) * Math.pow(gL, 2);
+    const fwhm_g_2_l_3 = 4.47163 * Math.pow(gG, 2) * Math.pow(gL, 3);
+    const fwhm_g_l_4 = 0.07842 * gG * Math.pow(gL, 4);
+    const fwhm_pow5 = fwhm_g_5 + fwhm_g_4_l + fwhm_g_3_l_2 + fwhm_g_2_l_3 + fwhm_g_l_4 + fwhm_l_5;
+     if (fwhm_pow5 < 0 || !isFinite(fwhm_pow5)) return Math.max(gG, gL, 1e-6);
      const fwhm = Math.pow(fwhm_pow5, 0.2);
-     return Math.max(1e-6, fwhm); // Ensure minimum positive FWHM
+     return Math.max(1e-6, fwhm);
 }
 
 
-function getPseudoVoigtArea(gamma_G, gamma_L, params) {
-    const GAUSS_AREA_CONST = 1.0644677; // sqrt(pi / (4*ln(2)))
-    const LORENTZ_AREA_CONST = 1.5707963; // pi / 2
+/**
+ * Calculates the integrated area under a pseudo-Voigt peak shape.
+ */
+function getPseudoVoigtArea(tth_peak, hkl, params) {
+    const GAUSS_AREA_CONST = 1.0644677;
+    const LORENTZ_AREA_CONST = 1.5707963;
 
-    // Ensure params and profileType exist
-     if (!params || !params.profileType) return 1.0; // Default area? Or throw error?
-    const profileType = String(params.profileType || "4");
-    const gG = Math.max(1e-9, gamma_G || 1e-9); // Ensure positive widths
-    const gL = Math.max(1e-9, gamma_L || 1e-9);
+    if (!params || !params.profileType) return 1.0;
+    const profileType = params.profileType;
 
+    switch (profileType) {
+        case "simple_pvoigt": {
+            const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+            const gG = Math.max(1e-9, gamma_G);
+            const gL = Math.max(1e-9, gamma_L);
+            const area_G = gG * GAUSS_AREA_CONST;
+            const area_L = gL * LORENTZ_AREA_CONST;
+            const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
+            const totalArea = currentEta * area_L + (1 - currentEta) * area_G;
+            return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
+        }
+        
+        case "split_pvoigt": {
+            const { gamma_G: gG_L, gamma_L: gL_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
+            const { gamma_G: gG_R, gamma_L: gL_R } = calculateProfileWidths(tth_peak, hkl, params, 'right');
+            
+            const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+            
+            const area_G_L = Math.max(1e-9, gG_L) * GAUSS_AREA_CONST;
+            const area_L_L = Math.max(1e-9, gL_L) * LORENTZ_AREA_CONST;
+            const totalArea_L = currentEta * area_L_L + (1 - currentEta) * area_G_L;
 
-    if (profileType === "4") {
-        const area_G = gG * GAUSS_AREA_CONST;
-        const area_L = gL * LORENTZ_AREA_CONST;
-        const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-        const totalArea = currentEta * area_L + (1 - currentEta) * area_G;
-         return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0; // Ensure positive finite area
+            const area_G_R = Math.max(1e-9, gG_R) * GAUSS_AREA_CONST;
+            const area_L_R = Math.max(1e-9, gL_R) * LORENTZ_AREA_CONST;
+            const totalArea_R = currentEta * area_L_R + (1 - currentEta) * area_G_R;
+            
+            const totalArea = (totalArea_L + totalArea_R) / 2.0; // Average area
+            return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
+        }
 
-    } else { // TCH Profile (Type 3)
-        const fwhm = getPeakFWHM(gG, gL);
-
-        const ratio = (fwhm > 1e-9) ? gL / fwhm : 0;
-        const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-        const currentEta = Math.max(0, Math.min(1, eta_calc));
-
-        const area_G_combined = fwhm * GAUSS_AREA_CONST;
-        const area_L_combined = fwhm * LORENTZ_AREA_CONST;
-        const totalArea = currentEta * area_L_combined + (1 - currentEta) * area_G_combined;
-         return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0; // Ensure positive finite area
+        case "tch_aniso": {
+            const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+            const gG = Math.max(1e-9, gamma_G);
+            const gL = Math.max(1e-9, gamma_L);
+            
+            const fwhm = getPeakFWHM(gG, gL);
+            const ratio = (fwhm > 1e-9) ? gL / fwhm : 0;
+            const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
+            const currentEta = Math.max(0, Math.min(1, eta_calc));
+            const area_G_combined = fwhm * GAUSS_AREA_CONST;
+            const area_L_combined = fwhm * LORENTZ_AREA_CONST;
+            const totalArea = currentEta * area_L_combined + (1 - currentEta) * area_G_combined;
+            return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
+        }
     }
+    return 1.0; // Default
 }
 
-
+/**
+ * Applies asymmetry correction (FCJ model for TCH).
+ */
 function applyAsymmetry(x, x0, tth_peak, params) {
-    // Ensure params exist
     if (!params) return x - x0;
-    const profileType = String(params.profileType || "4");
+    const profileType = params.profileType;
 
-    // No asymmetry for profile 4 or if SL/HL are zero/missing
-    if (profileType === "4" || (!params.SL && !params.HL)) {
-        return x - x0;
+    switch (profileType) {
+        case "tch_aniso": {
+            if (!params.SL && !params.HL) return x - x0;
+            
+            const delta_2theta = x - x0;
+            if (Math.abs(delta_2theta) < 1e-9) return 0;
+            if (tth_peak < 0.1 || tth_peak >= 180) return delta_2theta;
+
+            const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
+            const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
+            const tan_theta = Math.tan(safe_theta_rad);
+            if (Math.abs(tan_theta) < 1e-9) return delta_2theta;
+            const cot_theta = 1.0 / tan_theta;
+
+            const SL = params.SL || 0;
+            const HL = params.HL || 0;
+            const asymmetry_param = SL * cot_theta + HL;
+            if (!isFinite(asymmetry_param)) return delta_2theta;
+
+            const correction_term = asymmetry_param * Math.abs(delta_2theta);
+            const MAX_CORRECTION_EFFECT = 0.95;
+            const asymmetry_factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(correction_term), MAX_CORRECTION_EFFECT));
+            const corrected = delta_2theta / asymmetry_factor;
+            return isFinite(corrected) ? corrected : delta_2theta;
+        }
+        
+        case "simple_pvoigt":
+        case "split_pvoigt":
+        default:
+            // Asymmetry for these is handled by shift/transparency, applied to x0
+            return x - x0; 
     }
-
-    const delta_2theta = x - x0;
-    if (Math.abs(delta_2theta) < 1e-9) return 0;
-    if (tth_peak < 0.1 || tth_peak >= 180) return delta_2theta; // Invalid peak position
-
-    const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
-    const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
-    const tan_theta = Math.tan(safe_theta_rad);
-    if (Math.abs(tan_theta) < 1e-9) return delta_2theta;
-    const cot_theta = 1.0 / tan_theta;
-
-    const SL = params.SL || 0;
-    const HL = params.HL || 0;
-    const asymmetry_param = SL * cot_theta + HL;
-    if (!isFinite(asymmetry_param)) return delta_2theta;
-
-    const correction_term = asymmetry_param * Math.abs(delta_2theta);
-    const MAX_CORRECTION_EFFECT = 0.95;
-    // Ensure factor is positive and not too close to zero
-    const asymmetry_factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(correction_term), MAX_CORRECTION_EFFECT));
-
-    const corrected = delta_2theta / asymmetry_factor;
-     return isFinite(corrected) ? corrected : delta_2theta; // Fallback if calculation fails
 }
 
-function pseudoVoigt(x, x0, tth_peak, gamma_G, gamma_L, params) {
-     // Ensure params exist
+
+/**
+ * Calculates the pseudo-Voigt peak shape value at point x.
+ */
+function pseudoVoigt(x, x0, tth_peak, hkl, params) {
      if (!params) return 0.0;
-     const H_G = Math.max(1e-9, gamma_G || 1e-9);
-     const H_L = Math.max(1e-9, gamma_L || 1e-9);
 
     const corrected_delta = applyAsymmetry(x, x0, tth_peak, params);
-    if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
-
-    const profileType = String(params.profileType || "4");
     const Cg = 2.772588722239781; // 4 * ln(2)
-
     let result = 0.0;
-    try { // Add try-catch for safety during calculation
-         if (profileType === "4") {
-             const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-             const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
-             const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
-             const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
-             const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
-             result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
-         } else { // TCH (Profile 3)
-             const fwhm = getPeakFWHM(H_G, H_L);
-             if (fwhm <= 1e-9) return Math.abs(corrected_delta) < 1e-6 ? 1.0 : 0.0; // Approx delta
 
-             const ratio = H_L / fwhm;
-             const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-             const currentEta = Math.max(0, Math.min(1, eta_calc));
+    try {
+        switch (params.profileType) {
+            case "simple_pvoigt": {
+                const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+                const H_G = Math.max(1e-9, gamma_G);
+                const H_L = Math.max(1e-9, gamma_L);
+                if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
 
-             const delta_over_fwhm_sq = Math.pow(corrected_delta / fwhm, 2);
-             const gaussianShape = Math.exp(-Cg * delta_over_fwhm_sq);
-             const lorentzianShape = 1 / (1 + 4 * delta_over_fwhm_sq);
-             result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
-         }
+                const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
+                const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
+                const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
+                const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
+                const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
+                result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+                break;
+            }
+            
+            case "split_pvoigt": {
+                let H_G, H_L;
+                if (corrected_delta < 0) { // Left side
+                    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
+                    H_G = Math.max(1e-9, gamma_G);
+                    H_L = Math.max(1e-9, gamma_L);
+                } else { // Right side
+                    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'right');
+                    H_G = Math.max(1e-9, gamma_G);
+                    H_L = Math.max(1e-9, gamma_L);
+                }
+                if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
+
+                const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+                const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
+                const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
+                const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
+                const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
+                result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+                break;
+            }
+
+            case "tch_aniso": {
+                const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+                const H_G = Math.max(1e-9, gamma_G);
+                const H_L = Math.max(1e-9, gamma_L);
+                if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
+
+                const fwhm = getPeakFWHM(H_G, H_L);
+                if (fwhm <= 1e-9) return Math.abs(corrected_delta) < 1e-6 ? 1.0 : 0.0;
+
+                const ratio = H_L / fwhm;
+                const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
+                const currentEta = Math.max(0, Math.min(1, eta_calc));
+                const delta_over_fwhm_sq = Math.pow(corrected_delta / fwhm, 2);
+                const gaussianShape = Math.exp(-Cg * delta_over_fwhm_sq);
+                const lorentzianShape = 1 / (1 + 4 * delta_over_fwhm_sq);
+                result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
+                break;
+            }
+        }
     } catch (calcError) {
-         console.warn("Error in pseudoVoigt calculation:", calcError);
-         return 0.0; // Return 0 if any math error occurs
+         // console.warn("Error in pseudoVoigt calculation:", calcError);
+         return 0.0;
     }
-
-     return (isFinite(result) && result >= 0) ? result : 0.0; // Ensure non-negative finite result
+     return (isFinite(result) && result >= 0) ? result : 0.0;
 }
 
 
+/**
+ * Calculates the overall diffraction pattern.
+ */
 function calculatePattern(tthAxis, hklList, params) {
-     // Ensure params exist
-     if (!params) return new Float64Array(tthAxis ? tthAxis.length : 0);
-
     const n_points = tthAxis ? tthAxis.length : 0;
-    if (n_points === 0 || !hklList || hklList.length === 0) {
+    if (n_points === 0 || !hklList || hklList.length === 0 || !params) {
         return new Float64Array(n_points);
     }
 
@@ -773,10 +818,8 @@ function calculatePattern(tthAxis, hklList, params) {
     const lambda2 = params.lambda2 || 0;
     const ratio21 = params.ratio || 0;
     const zeroShift = params.zeroShift || 0;
-    // Use global constants for calculation window and cutoff
     const WINDOW_MULT = CALCULATION_WINDOW_MULTIPLIER;
     const HEIGHT_CUTOFF = PEAK_HEIGHT_CUTOFF;
-
 
     // --- K-alpha 1 ---
     hklList.forEach(peak => {
@@ -785,11 +828,13 @@ function calculatePattern(tthAxis, hklList, params) {
         const basePos1 = peak.tth + zeroShift;
         const shift1 = calculatePeakShift(basePos1, params);
         const peakPos1 = basePos1 + shift1;
-        const { gamma_G, gamma_L } = calculateProfileWidths(basePos1, peak, params);
-        const shapeArea1 = getPseudoVoigtArea(gamma_G, gamma_L, params);
+        
+        const shapeArea1 = getPseudoVoigtArea(peak.tth, peak, params);
         if (shapeArea1 <= 1e-9 || !isFinite(shapeArea1)) return;
-
+        
+        const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
         const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
+        
         const window1 = WINDOW_MULT * Math.max(0.01, fwhm_approx1);
         const min_tth1 = peakPos1 - window1;
         const max_tth1 = peakPos1 + window1;
@@ -801,7 +846,7 @@ function calculatePattern(tthAxis, hklList, params) {
         for (let i = startIndex; i < n_points; i++) {
             const current_tth = tthAxis[i];
             if (current_tth > max_tth1) break;
-            const intensityAtPoint = pseudoVoigt(current_tth, peakPos1, basePos1, gamma_G, gamma_L, params);
+            const intensityAtPoint = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params); 
             if (intensityAtPoint > HEIGHT_CUTOFF) {
                 pattern[i] += peak.intensity * (intensityAtPoint / shapeArea1);
             }
@@ -823,11 +868,13 @@ function calculatePattern(tthAxis, hklList, params) {
             const basePos2 = tth2 + zeroShift;
             const shift2 = calculatePeakShift(basePos2, params);
             const peakPos2 = basePos2 + shift2;
-            const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(basePos2, peak, params);
-            const shapeArea2 = getPseudoVoigtArea(gG2, gL2, params);
+            
+            const shapeArea2 = getPseudoVoigtArea(tth2, peak, params);
             if (shapeArea2 <= 1e-9 || !isFinite(shapeArea2)) return;
 
+            const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
             const fwhm_approx2 = getPeakFWHM(gG2, gL2);
+
             const window2 = WINDOW_MULT * Math.max(0.01, fwhm_approx2);
             const min_tth2 = peakPos2 - window2;
             const max_tth2 = peakPos2 + window2;
@@ -839,7 +886,7 @@ function calculatePattern(tthAxis, hklList, params) {
             for (let i = startIndex2; i < n_points; i++) {
                 const current_tth = tthAxis[i];
                 if (current_tth > max_tth2) break;
-                const intensityAtPoint = pseudoVoigt(current_tth, peakPos2, basePos2, gG2, gL2, params);
+                const intensityAtPoint = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
                 if (intensityAtPoint > HEIGHT_CUTOFF) {
                     pattern[i] += peak.intensity * ratio21 * (intensityAtPoint / shapeArea2);
                 }
@@ -847,18 +894,13 @@ function calculatePattern(tthAxis, hklList, params) {
         });
     }
 
-    // Final check for NaNs/Infinities in the pattern
     for (let i = 0; i < n_points; i++) {
         if (!isFinite(pattern[i])) {
-             console.warn(`calculatePattern: Found non-finite value at index ${i}, setting to 0.`);
-            pattern[i] = 0; // Replace invalid numbers with zero
+            pattern[i] = 0;
         }
     }
-
     return pattern;
 }
-
-
 
 // --- Le Bail Intensity Extraction 
 function leBailIntensityExtraction(expData, hklList, params) {
@@ -880,89 +922,110 @@ function leBailIntensityExtraction(expData, hklList, params) {
     const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
     const lambdaRatio = doubletEnabled ? lambda2 / lambda1 : 1.0;
 
-    // Use a temporary array to store calculated intensities for this cycle
-    const currentCycleIntensities = new Array(hklList.length).fill(0.0);
+    // --- 1. Pre-calculate the theoretical shape (profile) for every peak ---
+    const peak_profiles = new Array(hklList.length);
+    const total_profile_sum = new Float64Array(n_points).fill(0);
 
-    for (let i = 0; i < n_points; i++) {
-        let totalProfileAtPoint = 0;
-        const contributingPeaks = []; // Stores { peakIndex: index, profileValue: value }
+    hklList.forEach((peak, j) => {
+        const current_peak_profile = new Float64Array(n_points).fill(0);
+        if (!peak || !peak.tth || peak.tth <= 0 || peak.tth >= 180) {
+            peak_profiles[j] = current_peak_profile;
+            return;
+        }
+        
+        // --- K-alpha 1 profile pre-calculation ---
+        const basePos1 = peak.tth + zeroShift;
+        const shift1 = calculatePeakShift(basePos1, params);
+        const peakPos1 = basePos1 + shift1;
+        const { gamma_G, gamma_L } = calculateProfileWidths(basePos1, peak, params);
+        const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
+        const window1 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx1); // Use slightly larger window
 
-        const current_tth = expData.tth[i];
+        // --- K-alpha 2 profile pre-calculation ---
+        let tth2 = null, basePos2 = null, peakPos2 = null, window2 = 0;
+        if (doubletEnabled) {
+             const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
+             const sinTheta2 = sinTheta1 * lambdaRatio;
+             if (Math.abs(sinTheta2) < 1) {
+                 tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                 basePos2 = tth2 + zeroShift;
+                 const shift2 = calculatePeakShift(basePos2, params);
+                 peakPos2 = basePos2 + shift2;
+                 const widths2 = calculateProfileWidths(basePos2, peak, params);
+                 const fwhm_approx2 = getPeakFWHM(widths2.gamma_G, widths2.gamma_L);
+                 window2 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx2);
+             }
+        }
 
-        // --- Calculate contributions from ALL peaks (Ka1 and Ka2) at this point ---
-        hklList.forEach((peak, peakIdx) => {
-            // --- Ka1 contribution ---
-            if (peak && peak.tth && peak.tth > 0 && peak.tth < 180) {
-                 const basePos1 = peak.tth + zeroShift;
-                 const shift1 = calculatePeakShift(basePos1, params);
-                 const peakPos1 = basePos1 + shift1;
-                 const { gamma_G, gamma_L } = calculateProfileWidths(basePos1, peak, params);
-                 const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
-                 // Use a slightly larger window maybe for extraction robustness?
-                 const window1 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx1);
+        // --- Loop over data points to build this peak's combined (Ka1+Ka2) profile ---
+        for (let i = 0; i < n_points; i++) {
+            const current_tth = expData.tth[i];
+            let total_val_for_peak = 0;
 
-                if (Math.abs(current_tth - peakPos1) < window1) {
-                    const profileVal1 = pseudoVoigt(current_tth, peakPos1, basePos1, gamma_G, gamma_L, params);
-                    // Use a lower cutoff for contributions?
-                    if (profileVal1 > PEAK_HEIGHT_CUTOFF / 10) {
-                        totalProfileAtPoint += profileVal1;
-                        contributingPeaks.push({ idx: peakIdx, val: profileVal1 });
-                    }
+            // Ka1 contribution
+            if (Math.abs(current_tth - peakPos1) < window1) {
+                const profileVal1 = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params);
+                if (profileVal1 > PEAK_HEIGHT_CUTOFF / 10) {
+                    total_val_for_peak += profileVal1;
                 }
             }
-
-            // --- Ka2 contribution ---
-            if (doubletEnabled && peak && peak.tth && peak.tth > 0 && peak.tth < 180) {
-                 const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
-                 const sinTheta2 = sinTheta1 * lambdaRatio;
-
-                 if (Math.abs(sinTheta2) < 1) {
-                      const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                      const basePos2 = tth2 + zeroShift;
-                      const shift2 = calculatePeakShift(basePos2, params);
-                      const peakPos2 = basePos2 + shift2;
-                      const { gamma_G: gamma_G2, gamma_L: gamma_L2 } = calculateProfileWidths(basePos2, peak, params);
-                      const fwhm_approx2 = getPeakFWHM(gamma_G2, gamma_L2);
-                      const window2 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx2);
-
-                     if (Math.abs(current_tth - peakPos2) < window2) {
-                         const profileVal2 = pseudoVoigt(current_tth, peakPos2, basePos2, gamma_G2, gamma_L2, params);
-                         if (profileVal2 > PEAK_HEIGHT_CUTOFF / 10) { // Lower cutoff?
-                             const weightedProfileVal2 = profileVal2 * ratio21;
-                             totalProfileAtPoint += weightedProfileVal2;
-                             contributingPeaks.push({ idx: peakIdx, val: weightedProfileVal2 });
-                          }
-                     }
-                 }
+            
+            // Ka2 contribution
+            if (tth2 && Math.abs(current_tth - peakPos2) < window2) {
+                const profileVal2 = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
+                if (profileVal2 > PEAK_HEIGHT_CUTOFF / 10) {
+                    total_val_for_peak += profileVal2 * ratio21;
+                }
             }
-        }); // End hklList.forEach
-
-        // --- Distribute observed intensity ---
-        if (totalProfileAtPoint > 1e-9 && contributingPeaks.length > 0) {
-            const obsIntensityNet = expData.intensity[i] - (expData.background[i] || 0);
-
-            if (obsIntensityNet > 0) {
-                // Distribute intensity based on relative profile contribution at this point
-                contributingPeaks.forEach(contribution => {
-                    if (contribution.idx >= 0 && contribution.idx < currentCycleIntensities.length) {
-                        currentCycleIntensities[contribution.idx] += obsIntensityNet * (contribution.val / totalProfileAtPoint);
-                    }
-                });
-            }
+            
+            current_peak_profile[i] = total_val_for_peak;
+            total_profile_sum[i] += total_val_for_peak;
         }
-    } // End loop over data points
+        peak_profiles[j] = current_peak_profile;
+    }); // End hklList.forEach (pre-calculation)
 
+    
+    // --- 2. Partition the experimental intensity and integrate ---
+    const currentCycleIntensities = new Array(hklList.length).fill(0.0);
+
+    for (let i = 1; i < n_points; i++) { // Start from 1 for trapezoid
+        const step_width = expData.tth[i] - expData.tth[i-1];
+        if (step_width <= 0) continue; // Skip duplicate or disordered points
+
+        // Get net intensity at this point and the previous point
+        const prev_y_obs_net = Math.max(0, expData.intensity[i-1] - (expData.background[i-1] || 0));
+        const current_y_obs_net = Math.max(0, expData.intensity[i] - (expData.background[i] || 0));
+
+        // Partition the intensity for each peak
+        hklList.forEach((peak, j) => {
+            if (!peak) return;
+
+            // Find what fraction of the total calculated profile this peak represents
+            const prev_fraction = total_profile_sum[i-1] > 1e-9 ? peak_profiles[j][i-1] / total_profile_sum[i-1] : 0;
+            const current_fraction = total_profile_sum[i] > 1e-9 ? peak_profiles[j][i] / total_profile_sum[i] : 0;
+            
+            // Apply that fraction to the net observed intensity
+            const prev_partitioned_I = prev_y_obs_net * prev_fraction;
+            const current_partitioned_I = current_y_obs_net * current_fraction;
+            
+            // Calculate the area of this trapezoid slice and add it to the peak's total
+            const trapezoid_area = (prev_partitioned_I + current_partitioned_I) / 2 * step_width;
+            
+            currentCycleIntensities[j] += trapezoid_area;
+        });
+    } // End loop over data points (integration)
+
+    // --- 3. Assign the final integrated intensities to the HKL list ---
     hklList.forEach((peak, idx) => {
-        if (!peak) return; // Safety check
-        // Directly assign the calculated intensity for this cycle
-        const newIntensity = Math.max(0, currentCycleIntensities[idx] || 0); // Ensure non-negative and handle undefined
-        peak.intensity = newIntensity;
-
+        if (!peak) return;
+        // Assign the calculated integrated area
+        peak.intensity = Math.max(0, currentCycleIntensities[idx] || 0); // Ensure non-negative
+        
         // Ensure intensity_previous is removed if it exists
         delete peak.intensity_previous;
     });
 
-} 
+}
 
 
 // --- Statistics ---
@@ -1689,7 +1752,6 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
 
 
 // --- Parameter Mapping (Helper) ---
-
 function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     const mappings = [];
 
@@ -1751,7 +1813,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
 
 
     // --- Other Parameters ---
-    const profileType = String(initialParams.profileType || "4");
+    const profileType = String(initialParams.profileType || "simple_pvoigt"); // Use default
 
     // Lattice Parameters
     mappings.push(createMapping(fitFlags.a, 'a', 4.0, 0.1, Infinity, 0.01));
@@ -1764,8 +1826,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     // Instrumental
     mappings.push(createMapping(fitFlags.zeroShift, 'zeroShift', 0.01, -Infinity, Infinity, 0.1));
 
-    // Profile Parameters
-    if (profileType === "4") { // Simple pVoigt
+    if (profileType === "simple_pvoigt") {
         mappings.push(createMapping(fitFlags.GU, 'GU', 0.01, 0, Infinity, 0.05));
         mappings.push(createMapping(fitFlags.GV, 'GV', 0.01, -Infinity, Infinity, 0.05));
         mappings.push(createMapping(fitFlags.GW, 'GW', 0.01, 1e-6, Infinity, 0.05));
@@ -1774,7 +1835,8 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
         mappings.push(createMapping(fitFlags.eta, 'eta', 0.5, 0, 1, 0.1));
         mappings.push(createMapping(fitFlags.shft, 'shft', 0.01, -Infinity, Infinity, 0.1));
         mappings.push(createMapping(fitFlags.trns, 'trns', 0.01, -Infinity, Infinity, 0.1));
-    } else { // TCH (Profile 3)
+    } 
+    else if (profileType === "tch_aniso") { // TCH
         mappings.push(createMapping(fitFlags.U, 'U', 0.01, 0, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.V, 'V', 0.01, -Infinity, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.W, 'W', 0.01, 1e-6, Infinity, 0.2));
@@ -1782,15 +1844,30 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
         mappings.push(createMapping(fitFlags.Y, 'Y', 0.01, 1e-6, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.SL, 'SL', 0.001, -Infinity, Infinity, 0.1));
         mappings.push(createMapping(fitFlags.HL, 'HL', 0.001, -Infinity, Infinity, 0.1));
-         if (profileType === "3") {
-            mappings.push(createMapping(fitFlags.S400, 'S400', 0.1, -Infinity, Infinity, 0.2));
-            mappings.push(createMapping(fitFlags.S040, 'S040', 0.1, -Infinity, Infinity, 0.2));
-            mappings.push(createMapping(fitFlags.S004, 'S004', 0.1, -Infinity, Infinity, 0.2));
-            mappings.push(createMapping(fitFlags.S220, 'S220', 0.1, -Infinity, Infinity, 0.2));
-            mappings.push(createMapping(fitFlags.S202, 'S202', 0.1, -Infinity, Infinity, 0.2));
-            mappings.push(createMapping(fitFlags.S022, 'S022', 0.1, -Infinity, Infinity, 0.2));
-        }
+        // Aniso parameters are part of TCH
+        mappings.push(createMapping(fitFlags.S400, 'S400', 0.1, -Infinity, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.S040, 'S040', 0.1, -Infinity, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.S004, 'S004', 0.1, -Infinity, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.S220, 'S220', 0.1, -Infinity, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.S202, 'S202', 0.1, -Infinity, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.S022, 'S022', 0.1, -Infinity, Infinity, 0.2));
     }
+    else if (profileType === "split_pvoigt") {
+        // new profile, après le 25 oct 2025
+        mappings.push(createMapping(fitFlags.GU_L, 'GU_L', 0.01, 0, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.GV_L, 'GV_L', 0.01, -Infinity, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.GW_L, 'GW_L', 0.01, 1e-6, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.LX_L, 'LX_L', 0.01, 1e-6, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.GU_R, 'GU_R', 0.01, 0, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.GV_R, 'GV_R', 0.01, -Infinity, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.GW_R, 'GW_R', 0.01, 1e-6, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.LX_R, 'LX_R', 0.01, 1e-6, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.eta_split, 'eta_split', 0.5, 0, 1, 0.1));
+        mappings.push(createMapping(fitFlags.shft_split, 'shft_split', 0.01, -Infinity, Infinity, 0.1));
+        mappings.push(createMapping(fitFlags.trns_split, 'trns_split', 0.01, -Infinity, Infinity, 0.1));
+    }
+   
+
 
     // Background Parameters
     for (let i = 0; i < NUM_BACKGROUND_PARAMS; i++) {
@@ -1804,7 +1881,6 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     const paramMapping = mappings.filter(Boolean);
     return { paramMapping };
 }
-
 
 
 // --- 4. Worker Message Handler ---
@@ -1845,7 +1921,7 @@ self.onmessage = async function(e) {
             let currentParams = initialParams; // Start with initial params
 
             for (let cycle = 0; cycle < LE_BAIL_CYCLES; cycle++) {
-                // --- REMOVED intermediate progress post ---
+                // 
                 // postMessage({ type: 'progress', value: (cycle + 0.5) / LE_BAIL_CYCLES, message: `Le Bail Cycle ${cycle + 1}/${LE_BAIL_CYCLES}` });
 
                 let refinementResults;
@@ -1956,7 +2032,7 @@ self.onmessage = async function(e) {
     } finally {
 
          workerWorkingData = null;
-         hklIndexCache = {}; // Clear HKL cache after run? Maybe keep it?
+         hklIndexCache = {}; // Clear HKL cache after run? Maybe keep it? changé avec la version 113
     }
 }; 
 

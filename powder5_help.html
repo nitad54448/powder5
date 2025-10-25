@@ -203,8 +203,9 @@
             <li><a href="#parameters-crystal" class="sub-link">Crystal & Space Group</a></li>
             <li><a href="#parameters-instrumental" class="sub-link">Instrumental</a></li>
             <li><a href="#parameters-background" class="sub-link">Background</a></li>
-            <li><a href="#parameters-profile4" class="sub-link">Profile Function #4</a></li>
-            <li><a href="#parameters-profile3" class="sub-link">Profile Function #3</a></li>
+            <li><a href="#parameters-profile4" class="sub-link">Simple pVoigt</a></li>
+            <li><a href="#parameters-profile3" class="sub-link">TCH (Anisotropic)</a></li>
+            <li><a href="#parameters-profile-split" class="sub-link">Split pVoigt (Asymmetric)</a></li>
             <li><a href="#strategy">Refinement Strategy</a></li>
             <li><a href="#results">Interpreting Results</a></li>
             <blockquote>
@@ -222,7 +223,7 @@
                 This document serves as a scientific and technical guide for the <strong>powder5</strong> web application, a tool for the analysis of powder X-ray diffraction (PXRD) data via whole-pattern fitting. This technique, also known as pattern decomposition, is a crucial method in materials science and crystallography for refining structural and microstructural parameters when a complete structural model is either unknown or unnecessary.
             </p>
             <p>
-                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for rigorous, unbiased intensity extraction. Peak profiles are modeled using phenomenological functions adapted from the GSAS software package, including a versatile <strong>Simple pseudo-Voigt (Profile Function #4)</strong> and a more physically rigorous <strong>Anisotropic model (Profile Function #3)</strong> based on the Thompson-Cox-Hastings (TCH) formulation with a Stephens model for anisotropic line broadening.
+                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for rigorous, unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and a physically rigorous <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening.
             </p>
         </section>
 
@@ -292,13 +293,11 @@
                 <li><b>Advantages:</b> The Pawley method is considered more rigorous as it avoids the iterative bias of the Le Bail method, particularly in cases of severe peak overlap. It can yield more accurate and statistically sound integrated intensities and parameter uncertainties.</li>
                 <li><b>Disadvantages:</b> The inclusion of hundreds or thousands of intensity variables significantly increases the computational complexity and memory requirements. The refinement is also more susceptible to instability and parameter correlation, especially if the initial model is poor or if stochastic optimization algorithms are used.</li>
             </ul>
-             <!-- ## ADDED WARNING NOTE ## -->
-            <div class="warning-note">
+             <div class="warning-note">
                 <strong>Algorithm Recommendation for Pawley Method:</strong><br>
                 Due to the high dimensionality and potential for parameter correlation when refining individual intensities, the Pawley method is significantly more stable when used with the <strong>Levenberg-Marquardt (LM)</strong> algorithm. The stochastic algorithms (Simulated Annealing and Parallel Tempering) can struggle to converge reliably in Pawley mode. <strong>It is strongly recommended to use only the LM algorithm for Pawley refinements, preferably after obtaining a good initial model using the Le Bail method.</strong> The user interface enforces this by disabling the "Run Pawley" button when SA or PT is selected.
             </div>
-             <!-- ## END WARNING NOTE ## -->
-        </section>
+             </section>
 
         <hr>
 
@@ -381,9 +380,9 @@
             </ul>
 
 
-            <h3 id="parameters-profile4">Profile Function #4 (Simple pseudo-Voigt)</h3>
+            <h3 id="parameters-profile4">Simple pVoigt</h3>
             <p>
-                This function models the peak shape as a linear combination of a Gaussian and a Lorentzian function: $pV(x) = \eta L(x) + (1-\eta)G(x)$. The angular dependence of the Full Width at Half Maximum (FWHM) for each component is modeled empirically.
+                This function (formerly Profile #4) models the peak shape as a linear combination of a Gaussian and a Lorentzian function: $pV(x) = \eta L(x) + (1-\eta)G(x)$. The angular dependence of the Full Width at Half Maximum (FWHM) for each component is modeled empirically.
                 $$H_G^2 = GU \tan^2\theta + GV \tan\theta + GW + GP / \cos^2\theta$$
                 $$H_L = LX / \cos\theta$$
             </p>
@@ -406,9 +405,9 @@
                 </li>
             </ul>
 
-            <h3 id="parameters-profile3">Profile Function #3 (Anisotropic TCH)</h3>
+            <h3 id="parameters-profile3">TCH (Size/Strain/Aniso)</h3>
             <p>
-                This is a physically rigorous profile function adapted from GSAS, convoluting a <strong>Thompson-Cox-Hastings (TCH) pseudo-Voigt</strong> with a <strong>Stephens model</strong> for anisotropic strain broadening.
+                This is a physically rigorous profile function (formerly Profile #3) adapted from GSAS, convoluting a <strong>Thompson-Cox-Hastings (TCH) pseudo-Voigt</strong> with a <strong>Stephens model</strong> for anisotropic strain broadening.
             </p>
 
             <h4>Isotropic Broadening (TCH Model)</h4>
@@ -440,6 +439,50 @@
             </div>
         </section>
 
+        <section id="parameters-profile-split">
+            <h3 id="parameters-profile-split">Split pVoigt (Asymmetric)</h3>
+            <p>
+                This profile function is a modification of the Simple pseudo-Voigt designed to model asymmetric peaks (e.g., from axial divergence or stacking faults). It achieves this by defining independent sets of profile width parameters for the left side (at $2\theta$ values less than the peak center) and the right side of the peak.
+            </p>
+            <p>
+                The shape is still a linear combination $pV(x) = \eta L(x) + (1-\eta)G(x)$, but the $H_G$ and $H_L$ parameters used in the calculation depend on whether $x$ is to the left or right of the peak center.
+            </p>
+            
+            <h4>Gaussian Broadening (Left & Right)</h4>
+            <p>The Gaussian FWHM ($H_G$) for each side is modeled as:</p>
+            <p>$$H_{G, \text{side}}^2 = GU_{\text{side}} \tan^2\theta + GV_{\text{side}} \tan\theta + GW_{\text{side}}$$</p>
+            <p>(Note: This model does not use the $GP$ term used in the Simple pVoigt profile.)</p>
+            <ul>
+                <li><code>GU-L, GV-L, GW-L</code>: Parameters describing the Gaussian FWHM for the <strong>left side</strong> of the peak.</li>
+                <li><code>GU-R, GV-R, GW-R</code>: Parameters describing the Gaussian FWHM for the <strong>right side</strong> of the peak.</li>
+            </ul>
+
+            <h4>Lorentzian Broadening (Left & Right)</h4>
+            <p>The Lorentzian FWHM ($H_L$) for each side is modeled as:</p>
+            <p>$$H_{L, \text{side}} = LX_{\text{side}} / \cos\theta$$</p>
+            <ul>
+                <li><code>LX-L</code>: Describes the Lorentzian FWHM for the <strong>left side</strong>, primarily associated with size broadening.</li>
+                <li><code>LX-R</code>: Describes the Lorentzian FWHM for the <strong>right side</strong>, primarily associated with size broadening.</li>
+            </ul>
+
+            <h4>Peak Shape & Position</h4>
+            <ul>
+                <li><code>eta (Mixing)</code> (param: <code>eta_split</code>): A simple linear mixing parameter ($0 \le \eta \le 1$; $\eta=0$ for pure Gaussian, $\eta=1$ for pure Lorentzian). This single value is used for both sides of the peak.</li>
+                <li><code>shft (Displ.)</code> (param: <code>shft_split</code>): Corrects for peak position shifts due to sample displacement.</li>
+                <li><code>trns (Transp.)</code> (param: <code>trns_split</code>): Corrects for peak position shifts due to transparency.
+                    <div class="note" style="margin-top: 1em; margin-bottom: 0;">
+                        <strong>Unit and Scaling for the <code>shft_split</code> parameter:</strong><br>
+                        This parameter is a <strong>dimensionless, scaled coefficient</strong>, identical in function to the <code>shft</code> parameter in the Simple pVoigt profile.
+                        <ul>
+                            <li>The physical peak shift in radians is: $\Delta(2\theta)_{\text{rad}} = -2 \frac{s}{R} \cos(\theta)$</li>
+                            <li>The program calculates this shift (in degrees) using the formula: $\Delta(2\theta)_{\text{deg}} = -(\text{shft\_split} / 1000) \times \cos(\theta) \times (180 / \pi)$</li>
+                            <li>Therefore, the relationship is: $\frac{\text{shft\_split}}{1000} = \frac{2s}{R}$</li>
+                            <li>To find the physical displacement $s$ from the refined parameter, use: $s = R \times (\text{shft\_split} / 2000)$.</li>
+                        </ul>
+                    </div>
+                </li>
+            </ul>
+        </section>
         <hr>
 
         <section id="strategy">
@@ -457,18 +500,16 @@
 
             <h3>Phase 2: Peak Profile Refinement</h3>
             <ol start="4">
-                <li><b>Isotropic Broadening:</b> Once positions are correct, refine the primary isotropic peak shape parameters (e.g., <strong>W, Y, U, X</strong> in Profile #3, or <strong>GW, GP, LX</strong> in Profile #4). This will account for the dominant size and strain contributions.</li>
-                <li><b>Asymmetry and Shape:</b> Introduce asymmetry parameters (<strong>S/L</strong> in Profile #3, <strong>shft/trns</strong> in Profile #4) if there is a clear misfit, particularly at low angles. Refine the mixing parameter (<strong>eta</strong> in Profile #4) if needed.</li>
-                <li><b>Anisotropic Broadening (Profile #3 only):</b> If systematic misfits remain (e.g., some peaks are consistently broader than the model), introduce the anisotropic Stephens parameters (e.g., <strong>S400</strong>). Refine only the symmetry-independent terms.</li>
+                <li><b>Isotropic Broadening:</b> Once positions are correct, refine the primary isotropic peak shape parameters (e.g., <strong>W, Y, U, X</strong> in TCH, or <strong>GW, LX</strong> in Simple/Split pVoigt). This will account for the dominant size and strain contributions.</li>
+                <li><b>Asymmetry and Shape:</b> Introduce asymmetry parameters (<strong>S/L</strong> in TCH, <strong>shft/trns</strong> in Simple/Split pVoigt) if there is a clear misfit, particularly at low angles. Refine the mixing parameter (<strong>eta</strong>) if needed.</li>
+                <li><b>Anisotropic Broadening (TCH only):</b> If systematic misfits remain (e.g., some peaks are consistently broader than the model), introduce the anisotropic Stephens parameters (e.g., <strong>S400</strong>). Refine only the symmetry-independent terms.</li>
             </ol>
 
             <h3>Phase 3: Finalization and Intensity Extraction</h3>
             <ol start="7">
                  <li><b>Global Optimization (Optional):</b> If the LM algorithm converges to a poor solution during the Le Bail steps, switch to <strong>Parallel Tempering</strong> or <strong>Simulated Annealing</strong> for one or more Le Bail cycles to perform a global search. Afterwards, switch back to LM for a final, precise local minimization.</li>
-                 <!-- ## UPDATED PAWLEY STEP ## -->
-                <li><b>Pawley Refinement (LM Only):</b> With a stable and well-refined model from the Le Bail method, perform a final refinement using the <strong>Pawley method</strong> with the <strong>Levenberg-Marquardt (LM)</strong> algorithm. This will provide the most statistically robust set of integrated intensities, suitable for subsequent structure solution. <strong>Using SA or PT for Pawley is not recommended due to potential instability.</strong></li>
-                 <!-- ## END UPDATE ## -->
-            </ol>
+                 <li><b>Pawley Refinement (LM Only):</b> With a stable and well-refined model from the Le Bail method, perform a final refinement using the <strong>Pawley method</strong> with the <strong>Levenberg-Marquardt (LM)</strong> algorithm. This will provide the most statistically robust set of integrated intensities, suitable for subsequent structure solution. <strong>Using SA or PT for Pawley is not recommended due to potential instability.</strong></li>
+                 </ol>
 
                         <div class="note">
                 <h4>Technical Note on Calculation Parameters</h4>
@@ -601,7 +642,7 @@
             </p>
       
             <p>
-                Version: 1.10 | Last Updated: 24 October 2025.<br>This document was updated with the assistance of an AI.
+                Version: 1.13 | Last Updated: 25 October 2025.<br>This document was updated with the assistance of an AI.
             </p>
             <div class="note">
                 <strong>Disclaimer:</strong> This application is provided for educational and research purposes. While it implements standard and robust algorithms, it is not a substitute for fully validated, peer-reviewed software packages (e.g., GSAS-II, FullProf, TOPAS) for analyses intended for publication.
@@ -666,4 +707,3 @@
 
 </body>
 </html>
-
