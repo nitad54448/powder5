@@ -16,8 +16,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
         <script src="rules_spaceGroups.js"></script>
-        <script src="numeric.min.js"></script>
-
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js"></script>
     <style>
         :root {
             --system-blue: #007AFF;
@@ -2995,11 +2994,10 @@ function calculateWilliamsonHall(params, hklList) {
                 
                 const background_sliced = calculateTotalBackground(workingData.tth, params);
                 const unscaledPeakPattern_sliced = calculatePattern(workingData.tth, fitResults.hklList, params);
-                
-                const totalCalcPattern = numeric.add(numeric.mul(unscaledPeakPattern_sliced, scaleFactor), background_sliced);
 
-                
-    const diff = numeric.sub(workingData.intensity, totalCalcPattern);
+                const totalCalcPattern = math.add(math.multiply(Array.from(unscaledPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
+            
+const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
                 workingData.lastRawDifference = diff;
                 
@@ -3086,10 +3084,11 @@ function estimateBackgroundParameters(tth, intensity) {
 
     try {
 
-        const At = numeric.transpose(A);
-    const AtA = numeric.dot(At, A);
-    const Atb = numeric.dot(At, b);
-    const coeffs = numeric.solve(AtA, Atb);
+        const At = math.transpose(A);
+        const AtA = math.multiply(At, A);
+        const Atb = math.multiply(At, b);
+        const coeffs_matrix = math.lusolve(AtA, Atb);
+        const coeffs = math.flatten(coeffs_matrix);  //math.js ...different de numeric.js
 
         if (coeffs && coeffs.length === N) {
             const bgParams = {};
@@ -3409,13 +3408,12 @@ function debounce(func, wait) {
                 y_obs_net_sliced[i] = Math.max(0, workingData.intensity[i] - background_sliced[i]);
             }
             
-            const sum_obs_calc = numeric.dot(y_obs_net_sliced, unscaledPeakPattern_sliced);
-    const sum_calc_sq = numeric.dot(unscaledPeakPattern_sliced, unscaledPeakPattern_sliced);
+            const sum_obs_calc = math.dot(Array.from(y_obs_net_sliced), Array.from(unscaledPeakPattern_sliced));
+const sum_calc_sq = math.dot(Array.from(unscaledPeakPattern_sliced), Array.from(unscaledPeakPattern_sliced));
             const scaleFactor = (sum_calc_sq > 1e-9) ? sum_obs_calc / sum_calc_sq : 1.0;
 
-            const totalCalcPattern = numeric.add(numeric.mul(unscaledPeakPattern_sliced, scaleFactor), background_sliced);
-            
-    const diff = numeric.sub(workingData.intensity, totalCalcPattern);
+            const totalCalcPattern = math.add(math.multiply(Array.from(unscaledPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
+const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
             workingData.lastRawDifference = diff;
 
@@ -3577,9 +3575,8 @@ function debounce(func, wait) {
             findDataset('Simulation (Manual)').data = [];
 
             // 2. Calculate the total pattern and the raw difference array
-            const totalCalcPattern = numeric.add(numeric.mul(netPeakPattern_sliced, scaleFactor), background_sliced);
-            
-            const diff = numeric.sub(workingData.intensity, totalCalcPattern);
+            const totalCalcPattern = math.add(math.multiply(Array.from(netPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
+const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
             // This global variable is now ready for rescalePlot to use
             workingData.lastRawDifference = diff; 
@@ -4024,9 +4021,9 @@ function debounce(func, wait) {
                           let cov_matrix = null;
                           try {
                                if (Array.isArray(JtJ) && JtJ.length === P && Array.isArray(JtJ[0]) && JtJ[0].length === P) {
-                                   const H_inv = numeric.inv(JtJ);
+                                   const H_inv = math.inv(JtJ);
                                    if (H_inv) {
-                                        cov_matrix = numeric.mul(H_inv, reduced_chi_sq);
+                                        cov_matrix = math.multiply(H_inv, reduced_chi_sq);
                                    } else {
                                         throw new Error("Matrix inversion returned null.");
                                    }
@@ -4236,7 +4233,8 @@ function debounce(func, wait) {
                  try {
                      const finalBkg = calculateTotalBackground(workerWorkingData.tth, finalParams);
                      const finalNetPattern = calculatePattern(workerWorkingData.tth, hklList, finalParams);
-                     const finalCalcPattern = numeric.add(numeric.mul(finalNetPattern, mainScaleFactor), finalBkg);
+
+                    const finalCalcPattern = math.add(math.multiply(Array.from(finalNetPattern), mainScaleFactor), Array.from(finalBkg));
 
                      for (let i = 0; i < workerWorkingData.tth.length; i++) {
                          const i_obs = workerWorkingData.intensity[i];
@@ -4588,7 +4586,6 @@ controls.mainChartCanvas.addEventListener('contextmenu', e => {
             if (fullExperimentalData.tth.length > 0) updatePreviewPattern(); 
         });
         
-        // This now uses the new helper function
         controls.bravaisLattice.addEventListener('change', updateUIForSystemChange);
         
         controls.paramS400.addEventListener('input', updateStephensAnisotropyUI); controls.fitS400.addEventListener('change', updateStephensAnisotropyUI); controls.paramS220.addEventListener('input', updateStephensAnisotropyUI); controls.fitS220.addEventListener('change', updateStephensAnisotropyUI); controls.paramS202.addEventListener('input', updateStephensAnisotropyUI); controls.fitS202.addEventListener('change', updateStephensAnisotropyUI);

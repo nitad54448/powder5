@@ -1,17 +1,16 @@
 // refinement_worker.js
 // version 113, 25 oct 2025
 try {
-    importScripts('numeric.min.js', 'rules_spaceGroups.js');
-} catch (e) {
+importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js', 'rules_spaceGroups.js');} catch (e) {
     console.error("Worker Error: Failed to import scripts.", e);
     // Post an error back immediately if scripts fail to load
     postMessage({ type: 'error', message: `Worker failed to load scripts: ${e.message}` });
     self.close(); // Terminate the worker if essential scripts are missing
 }
 
-// Check if numeric library loaded
-if (typeof numeric === 'undefined') {
-    postMessage({ type: 'error', message: 'Worker Error: numeric.min.js did not load correctly.' });
+// Check if math library loaded
+if (typeof math === 'undefined') {
+   postMessage({ type: 'error', message: 'Worker Error: math.js did not load correctly.' });
     self.close();
 }
 // Check if spaceGroups data loaded
@@ -1153,7 +1152,7 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
     }
 
     // Calculate total calculated pattern y_calc = scale * net + background
-    const y_calc = numeric.add(numeric.mul(netCalcPattern, scaleFactor), y_bkg);
+    const y_calc = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
 
     let sum_w_res_sq = 0, sum_w_obs_sq = 0, sum_abs_res = 0, sum_abs_obs_net = 0; // Use net observed for Rp
     for (let i = 0; i < N; i++) {
@@ -1270,8 +1269,8 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  if (!isFinite(scaleFactor)) scaleFactor = 1.0;
             }
 
-             const totalPattern = numeric.add(numeric.mul(netCalcPattern, scaleFactor), y_bkg);
-             for (let i = 0; i < n_points; i++) {
+const totalPattern = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
+            for (let i = 0; i < n_points; i++) {
                  targetArray[i] = totalPattern[i]; // Copy result to targetArray
              }
             return scaleFactor; // Return scale factor used
@@ -1333,9 +1332,9 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  }
 
                  // Calculate JtJ and Jtr
-                 const jacobian = numeric.transpose(jacobian_T);
-                 const JtJ = numeric.dot(jacobian_T, jacobian);
-                 const Jtr = numeric.dot(jacobian_T, residuals);
+                 const jacobian = math.transpose(jacobian_T);
+                 const JtJ = math.multiply(jacobian_T, jacobian);
+               const Jtr = math.multiply(jacobian_T, Array.from(residuals));
 
                  // --- Ensure JtJ is Correct Format ---
                   if (n_params === 1 && typeof JtJ === 'number' && isFinite(JtJ)) {
@@ -1353,7 +1352,7 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  // --- End Format Check ---
 
                  // Apply Levenberg-Marquardt damping
-                 const A_lm = numeric.clone(finalJtJ);
+                 const A_lm = math.clone(finalJtJ);
                  for (let i = 0; i < n_params; i++) {
                      A_lm[i][i] += lambda * (finalJtJ[i][i] || 1e-6);
                  }
@@ -1361,7 +1360,10 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  // Solve for parameter step
                  let p_step;
                  try {
-                     p_step = numeric.solve(A_lm, Jtr);
+                    
+                    const p_step_matrix = math.lusolve(A_lm, Jtr);
+p_step = math.flatten(p_step_matrix); // math.js
+
                  } catch (solveError) {
                       console.warn(`LM iter ${iter}: Solve failed: ${solveError.message}. Increasing lambda.`);
                       lambda = Math.min(1e9, lambda * 10);
@@ -1388,7 +1390,7 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
 
                  // Apply step to get new parameters
                  const p_current = paramMapping.map(m => m.get(params, workingHklList));
-                 const p_new = numeric.add(p_current, p_step);
+                 const p_new = math.add(p_current, p_step);
                  paramMapping.forEach((m, i) => m.set(params, workingHklList, p_new[i]));
 
                  // Calculate new cost
@@ -1488,8 +1490,7 @@ async function refineParametersSA(initialParams, fitFlags, maxIter, hklList, sys
                   if (!isFinite(scaleFactor)) scaleFactor = 1.0;
              }
 
-             const y_calc_total = numeric.add(numeric.mul(netCalcPattern, scaleFactor), y_bkg);
-
+             const y_calc_total = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
              let sum_w_res_sq = 0;
              for (let i = 0; i < workerWorkingData.tth.length; i++) {
                   const w_i = workerWorkingData.weights[i];
@@ -1673,7 +1674,7 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
                   if (!isFinite(scaleFactor)) scaleFactor = 1.0;
              }
 
-             const y_calc_total = numeric.add(numeric.mul(netCalcPattern, scaleFactor), y_bkg);
+             const y_calc_total = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
 
              let sum_w_res_sq = 0;
              for (let i = 0; i < workerWorkingData.tth.length; i++) {
