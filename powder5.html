@@ -1057,7 +1057,7 @@
     </div>
 
     <div style="position: absolute; bottom: 6px; right: 12px; font-size: 10px; color: var(--system-secondary-label);">
-        Powder 5, version 113, 25 Oct 2025
+        Powder 5, version 114, 26 Oct 2025
     </div>
 </div>
 
@@ -1189,7 +1189,6 @@ const bgContainer = document.getElementById('background-params-container');
         }
 
 
-        // --- Global State ---
         // --- Global State ---
         let profileParamCache = { "simple_pvoigt": {}, "tch_aniso": {}, "split_pvoigt": {} };
         let currentProfile = "simple_pvoigt";
@@ -2788,6 +2787,10 @@ function evaluateExpression(h, k, l, expr) {
          * Calculates the overall diffraction pattern. Runs in main thread for previews.
          */
 
+        /**
+         * Calculates the overall diffraction pattern. Runs in main thread for previews.
+         * [CORRECTED FOR PAWLEY STABILITY]
+         */
         function calculatePattern(tthAxis, hklList, params) {
             const n_points = tthAxis ? tthAxis.length : 0;
             if (n_points === 0 || !hklList || hklList.length === 0 || !params) {
@@ -2811,9 +2814,7 @@ function evaluateExpression(h, k, l, expr) {
                 const shift1 = calculatePeakShift(basePos1, params);
                 const peakPos1 = basePos1 + shift1;
 
-                // NEW: Get area and widths for window calculation
-                const shapeArea1 = getPseudoVoigtArea(peak.tth, peak, params);
-                if (shapeArea1 <= 1e-9 || !isFinite(shapeArea1)) return;
+                // REMOVED shapeArea1 calculation.
                 
                 // Get widths just for the window approximation
                 const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
@@ -2830,10 +2831,11 @@ function evaluateExpression(h, k, l, expr) {
                 for (let i = startIndex; i < n_points; i++) {
                     const current_tth = tthAxis[i];
                     if (current_tth > max_tth1) break;
-                    // NEW: Call pseudoVoigt with hkl object
+                    
                     const intensityAtPoint = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params); 
                     if (intensityAtPoint > HEIGHT_CUTOFF) {
-                        pattern[i] += peak.intensity * (intensityAtPoint / shapeArea1);
+                        // CHANGED: Use peak.intensity directly as Height, v 114
+                        pattern[i] += peak.intensity * intensityAtPoint;
                     }
                 }
             });
@@ -2854,9 +2856,7 @@ function evaluateExpression(h, k, l, expr) {
                     const shift2 = calculatePeakShift(basePos2, params);
                     const peakPos2 = basePos2 + shift2;
                     
-                    // NEW: Get area and widths for window
-                    const shapeArea2 = getPseudoVoigtArea(tth2, peak, params);
-                    if (shapeArea2 <= 1e-9 || !isFinite(shapeArea2)) return;
+                    // REMOVED shapeArea2 calculation.
 
                     const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
                     const fwhm_approx2 = getPeakFWHM(gG2, gL2);
@@ -2872,10 +2872,11 @@ function evaluateExpression(h, k, l, expr) {
                     for (let i = startIndex2; i < n_points; i++) {
                         const current_tth = tthAxis[i];
                         if (current_tth > max_tth2) break;
-                        // NEW: Call pseudoVoigt
+                        
                         const intensityAtPoint = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
                         if (intensityAtPoint > HEIGHT_CUTOFF) {
-                            pattern[i] += peak.intensity * ratio21 * (intensityAtPoint / shapeArea2);
+                            // CHANGED: Use peak.intensity directly as Height, problem Pawley unstable
+                            pattern[i] += peak.intensity * ratio21 * intensityAtPoint;
                         }
                     }
                 });
@@ -3921,12 +3922,11 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
             }, duration);
         }
 
-
         /**
          * Calculates the observed integrated intensity for all peaks by partitioning the net
-         * experimental intensity at each point according to the calculated profile shapes.
-         * This correctly handles overlapping reflections.
-         * @param {Array<object>} hklList - The list of HKL reflections.
+         * experimental intensity at each point according to the *full calculated (Ka1+Ka2) profile*.
+         * This correctly handles overlapping reflections for Pawley reports.
+         * @param {Array<object>} hklList - The list of HKL reflections (with .intensity as Height).
          * @param {object} params - The final refined parameters object.
          * @param {object} expData - The working experimental data {tth, intensity}.
          * @returns {Map<string, number>} A map where keys are HKL strings and values are the calculated I_obs.
@@ -3935,40 +3935,80 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
             const n_points = expData.tth.length;
             if (n_points === 0) return new Map();
 
-            const peak_profiles = new Array(hklList.length);
-            const total_profile_sum = new Array(n_points).fill(0);
+            // This array will hold the (Height * (Shape_Ka1 + ratio * Shape_Ka2)) value
+            const peak_profiles_scaled = new Array(hklList.length);
+            
+            // This will be the sum of all scaled profiles, i.e., the net calculated pattern
+            const total_profile_sum_scaled = new Array(n_points).fill(0);
 
-            // 1. Pre-calculate the theoretical shape (profile) for every peak
+            // 1. Pre-calculate the theoretical (Height * [Shape_Ka1 + ratio*Shape_Ka2]) profile for every peak
+            const deg2rad = Math.PI / 180;
+            const lambda1 = params.lambda || 1.54056;
+            const lambda2 = params.lambda2 || 0;
+            const ratio21 = params.ratio || 0;
+            const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
+
             hklList.forEach((peak, j) => {
                 const current_peak_profile = new Array(n_points).fill(0);
-                if (!peak.tth) {
-                    peak_profiles[j] = current_peak_profile;
+                const refined_height = peak.intensity || 0; 
+
+                if (!peak.tth || refined_height <= 1e-9) { // Skip if peak has no height
+                    peak_profiles_scaled[j] = current_peak_profile;
                     return;
                 }
                 
-                const basePos = peak.tth + params.zeroShift;
-                const shift = calculatePeakShift(basePos, params);
-                const peakPos = basePos + shift;
-                const { gamma_G, gamma_L } = calculateProfileWidths(basePos, peak, params);
+                // --- Get Ka1 info ---
+                const basePos1 = peak.tth + params.zeroShift;
+                const shift1 = calculatePeakShift(basePos1, params);
+                const peakPos1 = basePos1 + shift1;
+                const { gamma_G: gG1, gamma_L: gL1 } = calculateProfileWidths(basePos1, peak, params);
+                const window1 = CALCULATION_WINDOW_MULTIPLIER * Math.max(0.01, gG1 + gL1);
+                const min_tth1 = peakPos1 - window1;
+                const max_tth1 = peakPos1 + window1;
 
-                const window = CALCULATION_WINDOW_MULTIPLIER * Math.max(0.01, gamma_G + gamma_L);
-                const min_tth = peakPos - window;
-                const max_tth = peakPos + window;
-
-                let startIndex = 0;
-                while(startIndex < n_points && expData.tth[startIndex] < min_tth) startIndex++;
-
-                for (let i = startIndex; i < n_points; i++) {
-                    const current_tth = expData.tth[i];
-                    if (current_tth > max_tth) break;
-                    
-                    const profile_val = pseudoVoigt(current_tth, peakPos, basePos, peak, params);
-                    if (profile_val > PEAK_HEIGHT_CUTOFF) {
-                        current_peak_profile[i] = profile_val;
-                        total_profile_sum[i] += profile_val;
+                // --- Get Ka2 info ---
+                let tth2 = null, basePos2 = null, peakPos2 = null, min_tth2 = 0, max_tth2 = 0;
+                if (doubletEnabled) {
+                    const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
+                    const sinTheta2 = sinTheta1 * (lambda1 > 1e-6 ? (lambda2 / lambda1) : 1.0);
+                    if (Math.abs(sinTheta2) < 1) {
+                        tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                        basePos2 = tth2 + params.zeroShift;
+                        const shift2 = calculatePeakShift(basePos2, params);
+                        peakPos2 = basePos2 + shift2;
+                        const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(basePos2, peak, params);
+                        const window2 = CALCULATION_WINDOW_MULTIPLIER * Math.max(0.01, gG2 + gL2);
+                        min_tth2 = peakPos2 - window2;
+                        max_tth2 = peakPos2 + window2;
+                    } else {
+                        tth2 = null; // Ka2 not calculable
                     }
                 }
-                peak_profiles[j] = current_peak_profile;
+                
+                // --- Loop over data points to build the full (Ka1+Ka2) scaled profile ---
+                for (let i = 0; i < n_points; i++) {
+                    const current_tth = expData.tth[i];
+                    let total_scaled_val = 0;
+
+                    // Ka1 contribution
+                    if (current_tth >= min_tth1 && current_tth <= max_tth1) {
+                        const shape_val1 = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params);
+                        total_scaled_val += refined_height * shape_val1;
+                    }
+                    
+                    // Ka2 contribution
+                    if (tth2 && current_tth >= min_tth2 && current_tth <= max_tth2) {
+                        const shape_val2 = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
+                        total_scaled_val += refined_height * ratio21 * shape_val2;
+                    }
+
+                    // Use a small cutoff to store the value
+                    if (total_scaled_val > 1e-5 * refined_height) {
+                         current_peak_profile[i] = total_scaled_val;
+                         total_profile_sum_scaled[i] += total_scaled_val;
+                    }
+                }
+                peak_profiles_scaled[j] = current_peak_profile;
             });
 
             // 2. Partition the experimental intensity and integrate
@@ -3977,8 +4017,10 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
             for (let i = 1; i < n_points; i++) {
                 const step_width = expData.tth[i] - expData.tth[i-1];
-                const prev_y_obs_net = expData.intensity[i-1] - finalBkg[i-1];
-                const current_y_obs_net = expData.intensity[i] - finalBkg[i];
+                if (step_width <= 0) continue;
+
+                const prev_y_obs_net = Math.max(0, expData.intensity[i-1] - finalBkg[i-1]);
+                const current_y_obs_net = Math.max(0, expData.intensity[i] - finalBkg[i]);
 
                 hklList.forEach((peak, j) => {
                     const hkl_string = peak.hkl_list[0];
@@ -3986,21 +4028,22 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                         i_obs_map.set(hkl_string, 0);
                     }
 
-                    const prev_fraction = total_profile_sum[i-1] > 1e-9 ? peak_profiles[j][i-1] / total_profile_sum[i-1] : 0;
-                    const current_fraction = total_profile_sum[i] > 1e-9 ? peak_profiles[j][i] / total_profile_sum[i] : 0;
+                    // The fraction is now based on the full (Ka1+Ka2) scaled profile
+                    const prev_fraction = total_profile_sum_scaled[i-1] > 1e-9 ? peak_profiles_scaled[j][i-1] / total_profile_sum_scaled[i-1] : 0;
+                    const current_fraction = total_profile_sum_scaled[i] > 1e-9 ? peak_profiles_scaled[j][i] / total_profile_sum_scaled[i] : 0;
                     
                     const prev_partitioned_I = prev_y_obs_net * prev_fraction;
                     const current_partitioned_I = current_y_obs_net * current_fraction;
                     
                     const trapezoid_area = (prev_partitioned_I + current_partitioned_I) / 2 * step_width;
-                    if (trapezoid_area > 0) {
+                    
+                    if (isFinite(trapezoid_area) && trapezoid_area > 0) {
                         i_obs_map.set(hkl_string, i_obs_map.get(hkl_string) + trapezoid_area);
                     }
                 });
             }
             return i_obs_map;
         }
-
 
         function generateReportContent(format = 'summary') {
             // Ensure fit results and necessary data are available
@@ -4027,7 +4070,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                 `${modeName} Refinement Report`,
                 '========================================================================',
                 '',
-                `Powder5, version 112, 25 Oct 2025`, 
+                `Powder5, version 114, 26 Oct 2025`, 
                 `Report Generated: ${now.toLocaleString()}`,
                 `Data File: ${controls.fileName.textContent || 'N/A'}`,
                 ''
@@ -4272,6 +4315,8 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                 const fitted_tth_min = workerWorkingData.tth[0];
                 const fitted_tth_max = workerWorkingData.tth[workerWorkingData.tth.length - 1];
 
+
+
                 hklList.filter(hkl => hkl && hkl.tth && hkl.tth >= fitted_tth_min && hkl.tth <= fitted_tth_max)
                     .forEach(hkl => {
                          let tthCorr = hkl.tth;
@@ -4280,30 +4325,70 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                              tthCorr += calculatePeakShift(hkl.tth, finalParams);
                          } catch { /* ignore shift error */ }
 
-                        const i_calc_area = hkl.intensity || 0; 
+                        // [CORRECTED LOGIC]
+                        
+                        // 1. Get the stored Height (which is correct for both Pawley and Le Bail now)
+                        const i_calc_height = hkl.intensity || 0; 
+                        
+                        // 2. Convert this Height back into a Total Area (Ka1 + Ka2)
+                        const shapeArea_Ka1 = getPseudoVoigtArea(hkl.tth, hkl, finalParams);
+                        let total_calc_area = i_calc_height * shapeArea_Ka1;
+                        let total_esd_factor = shapeArea_Ka1; // Used for scaling Pawley ESDs
+
+                        const lambda1 = finalParams.lambda;
+                        const lambda2 = finalParams.lambda2;
+                        const ratio21 = finalParams.ratio;
+                        const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
+
+                        if (doubletEnabled && i_calc_height > 0) {
+                            const deg2rad = Math.PI / 180;
+                            const sinTheta1 = Math.sin(hkl.tth * deg2rad / 2.0);
+                            const sinTheta2 = sinTheta1 * (lambda1 > 1e-6 ? (lambda2 / lambda1) : 1.0);
+                            
+                            if (Math.abs(sinTheta2) < 1) {
+                                const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                                const shapeArea_Ka2 = getPseudoVoigtArea(tth2, hkl, finalParams);
+                                
+                                total_calc_area += i_calc_height * ratio21 * shapeArea_Ka2;
+                                total_esd_factor += ratio21 * shapeArea_Ka2;
+                            }
+                        }
+                        
+                        // 3. Get the observed area (calculated independently)
                         const i_obs = i_obs_map.get(hkl.hkl_list[0]) || 0;
                         let esd_I_str = '';
 
+                        // 4. Calculate Pawley ESDs (Le Bail has no ESDs)
                         if (refinementMode === 'pawley') {
                              const hkl_name = `I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`;
-                             const esd_I_val = esds[hkl_name];
-                             if (typeof esd_I_val === 'number' && isFinite(esd_I_val)) {
-                                 esd_I_str = `(${esd_I_val.toFixed(1)})`;
-                             } else if (isNaN(esd_I_val)) {
+                             const esd_I_val_height = esds[hkl_name]; // ESD(Height)
+                             
+                             if (typeof esd_I_val_height === 'number' && isFinite(esd_I_val_height)) {
+                                 const esd_I_val_area = esd_I_val_height * total_esd_factor;
+                                 esd_I_str = `(${esd_I_val_area.toFixed(1)})`;
+                             } else if (isNaN(esd_I_val_height)) {
                                  esd_I_str = '(NaN)';
                              }
                         }
 
-                        if (i_obs > 0.01 || i_calc_area > 0.01) {
+                        // 5. Print the line
+                        // I_extracted/I_refined will come from total_calc_area
+                        // I_obs (Area) will come from i_obs
+                        // These two should now be almost identical.
+                        if (i_obs > 0.01 || total_calc_area > 0.01) {
                             reflectionsSection.push(formatLine([
                                 hkl.hkl_list[0],
                                 tthCorr.toFixed(4),
-                                i_calc_area.toFixed(1),
+                                total_calc_area.toFixed(1), // This is I_extracted or I_refined
                                 esd_I_str,
-                                i_obs.toFixed(1)
+                                i_obs.toFixed(1)            // This is I_obs (Area)
                             ], reflWidths));
                         }
                     });
+
+
+
+
             }
 
             // --- Point Data Section (No change needed, logic is sound) ---
@@ -4686,7 +4771,7 @@ controls.mainChartCanvas.addEventListener('contextmenu', e => {
         const textContent = generateReportContent('full');
         const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
         
-        // FIX: Determine the filename based on the refinement mode from the results
+        // Determine the filename based on the refinement mode from the results
         const modeName = fitResults.refinementMode === 'pawley' ? 'Pawley' : 'LeBail';
         downloadTextFile(textContent, `${modeName}-Data-${timestamp}.txt`);
 
@@ -4759,7 +4844,7 @@ controls.reportButton.addEventListener('click', async () => {
         const mainImgHeight = Math.min((mainImgProps.height * contentWidth) / mainImgProps.width, 250); 
         doc.addImage(mainImgData, 'PNG', margin, 20, contentWidth, mainImgHeight);
         
-        // FIX: Determine the filename based on the refinement mode from the results
+        // Determine the filename based on the refinement mode from the results
         const { refinementMode } = fitResults;
         const modeName = refinementMode === 'pawley' ? 'Pawley' : 'LeBail';
         doc.save(`${modeName}-Report-${new Date().toISOString().slice(0, 10)}.pdf`);

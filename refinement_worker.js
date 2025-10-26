@@ -1,5 +1,5 @@
 // refinement_worker.js
-// version 113, 25 oct 2025
+// version 114, 26 oct 2025
 try {
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js', 'rules_spaceGroups.js');} catch (e) {
     console.error("Worker Error: Failed to import scripts.", e);
@@ -909,6 +909,7 @@ function _pseudoVoigt_TCH(corrected_delta, tth_peak, hkl, params) {
 
 /**
  * Calculates the overall diffraction pattern.
+ * [CORRECTED FOR PAWLEY STABILITY]
  */
 function calculatePattern(tthAxis, hklList, params) {
     const n_points = tthAxis ? tthAxis.length : 0;
@@ -933,8 +934,7 @@ function calculatePattern(tthAxis, hklList, params) {
         const shift1 = calculatePeakShift(basePos1, params);
         const peakPos1 = basePos1 + shift1;
         
-        const shapeArea1 = getPseudoVoigtArea(peak.tth, peak, params);
-        if (shapeArea1 <= 1e-9 || !isFinite(shapeArea1)) return;
+        // REMOVED shapeArea1 calculation. peak.intensity is now treated as HEIGHT, version 114
         
         const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
         const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
@@ -952,7 +952,8 @@ function calculatePattern(tthAxis, hklList, params) {
             if (current_tth > max_tth1) break;
             const intensityAtPoint = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params); 
             if (intensityAtPoint > HEIGHT_CUTOFF) {
-                pattern[i] += peak.intensity * (intensityAtPoint / shapeArea1);
+                // CHANGED: Use peak.intensity directly as Height, v114, Pawley unstable
+                pattern[i] += peak.intensity * intensityAtPoint;
             }
         }
     });
@@ -973,9 +974,8 @@ function calculatePattern(tthAxis, hklList, params) {
             const shift2 = calculatePeakShift(basePos2, params);
             const peakPos2 = basePos2 + shift2;
             
-            const shapeArea2 = getPseudoVoigtArea(tth2, peak, params);
-            if (shapeArea2 <= 1e-9 || !isFinite(shapeArea2)) return;
-
+            // REMOVED shapeArea2 calculation.
+            
             const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
             const fwhm_approx2 = getPeakFWHM(gG2, gL2);
 
@@ -992,7 +992,8 @@ function calculatePattern(tthAxis, hklList, params) {
                 if (current_tth > max_tth2) break;
                 const intensityAtPoint = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
                 if (intensityAtPoint > HEIGHT_CUTOFF) {
-                    pattern[i] += peak.intensity * ratio21 * (intensityAtPoint / shapeArea2);
+                    //  CHANGED: Use peak.intensity directly as Height
+                    pattern[i] += peak.intensity * ratio21 * intensityAtPoint;
                 }
             }
         });
@@ -1005,6 +1006,8 @@ function calculatePattern(tthAxis, hklList, params) {
     }
     return pattern;
 }
+
+
 
 // --- Le Bail Intensity Extraction 
 function leBailIntensityExtraction(expData, hklList, params) {
@@ -1029,6 +1032,8 @@ function leBailIntensityExtraction(expData, hklList, params) {
     // --- 1. Pre-calculate the theoretical shape (profile) for every peak ---
     const peak_profiles = new Array(hklList.length);
     const total_profile_sum = new Float64Array(n_points).fill(0);
+
+
 
     hklList.forEach((peak, j) => {
         const current_peak_profile = new Float64Array(n_points).fill(0);
@@ -1120,16 +1125,53 @@ function leBailIntensityExtraction(expData, hklList, params) {
     } // End loop over data points (integration)
 
     // --- 3. Assign the final integrated intensities to the HKL list ---
+
+    // --- 3. Assign the final integrated intensities to the HKL list ---
     hklList.forEach((peak, idx) => {
         if (!peak) return;
-        // Assign the calculated integrated area
-        peak.intensity = Math.max(0, currentCycleIntensities[idx] || 0); // Ensure non-negative
+        const extracted_area = Math.max(0, currentCycleIntensities[idx] || 0);
         
-        // Ensure intensity_previous is removed if it exists
+        // Convert extracted TOTAL area to peak HEIGHT
+        let peak_height = 0;
+        if (extracted_area > 0 && peak.tth) {
+            
+            // 1. Get Area for Ka1
+            const shapeArea_Ka1 = getPseudoVoigtArea(peak.tth, peak, params);
+            let total_area_factor = shapeArea_Ka1; // This is (Area_Ka1 + ratio * Area_Ka2)
+
+            // 2. Add Area for Ka2 if it exists
+            const lambda1 = params.lambda;
+            const lambda2 = params.lambda2;
+            const ratio21 = params.ratio;
+            const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
+
+            if (doubletEnabled) {
+                const deg2rad = Math.PI / 180;
+                const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
+                const sinTheta2 = sinTheta1 * (lambda1 > 1e-6 ? (lambda2 / lambda1) : 1.0);
+                
+                if (Math.abs(sinTheta2) < 1) {
+                    const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                    const shapeArea_Ka2 = getPseudoVoigtArea(tth2, peak, params);
+                    total_area_factor += ratio21 * shapeArea_Ka2;
+                }
+            }
+            
+            // 3. Correctly calculate height
+            // Height = Total_Area / (Area_Ka1 + ratio * Area_Ka2)
+            if (total_area_factor > 1e-9) {
+                peak_height = extracted_area / total_area_factor;
+            }
+        }
+        
+        peak.intensity = peak_height; // Now peak.intensity stores HEIGHT
         delete peak.intensity_previous;
     });
-
 }
+
+
+
+
 
 
 // --- Statistics ---
