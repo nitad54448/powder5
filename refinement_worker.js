@@ -35,74 +35,176 @@ let hklIndexCache = {}; // Cache for HKL indices within the worker
 let workerBackgroundAnchors = []; // <-- ADDED: To store spline points from main thread
 
 
+// --- START: Monotonic Cubic Spline Helper Functions ---
+
 /**
- * Calculates the total background contribution from a Linear Spline and an Amorphous Hump.
- * @param {Float64Array} tthAxis - The array of 2-theta values.
- * @param {object} params - The object containing all refinement parameters.
- * @param {Array<object>} splinePoints - The array of {tth, y} anchor points.
- * @returns {Float64Array} A new array containing the calculated background intensity at each point.
+ * Creates a monotonic cubic Hermite spline interpolation function.
+ * Uses the Fritsch-Carlson method to determine tangents.
+ * @param {Array<object>} points - Array of {tth, y} points, must be sorted by tth.
+ * @returns {function(number): number | null} - A function that takes a tth value and returns the interpolated y value, or null if spline calculation fails.
  */
-function calculateTotalBackground(tthAxis, params, splinePoints) {
-    const n = tthAxis.length;
-    if (n === 0) {
-        return new Float64Array();
-    }
+function createMonotonicCubicSplineInterpolator(points) {
+    const n = points.length;
+    if (n < 2) return null;
 
-    const background = new Float64Array(n); // Allocate the typed array upfront
-
-    // --- 1. Calculate Linear Spline Background ---
-    if (splinePoints && splinePoints.length > 1) {
-        // Ensure points are sorted by tth (they should be, but for safety)
-        const sortedPoints = [...splinePoints].sort((a, b) => a.tth - b.tth);
-        const numSplinePoints = sortedPoints.length;
-        
-        let p_idx = 0; // Current spline point segment index
-
-        for (let i = 0; i < n; i++) {
-            const tth = tthAxis[i];
-
-            // Find the segment [p1, p2] that brackets tth
-            while (p_idx < numSplinePoints - 2 && sortedPoints[p_idx + 1].tth < tth) {
-                p_idx++;
-            }
-
-            const p1 = sortedPoints[p_idx];
-            const p2 = sortedPoints[p_idx + 1];
-
-            let y_spline = 0;
-            if (tth <= p1.tth) {
-                // Before the first point, extrapolate flat
-                y_spline = p1.y;
-            } else if (tth >= p2.tth) {
-                // After the second-to-last point, check if we're past the end
-                if (p_idx === numSplinePoints - 2 && tth >= sortedPoints[numSplinePoints - 1].tth) {
-                    // After the last point, extrapolate flat
-                    y_spline = sortedPoints[numSplinePoints - 1].y;
-                } else {
-                    y_spline = p2.y; // This case should be handled by the 'while' loop
-                }
-            } else {
-                // We are between p1 and p2, interpolate
-                const tth_diff = p2.tth - p1.tth;
-                if (tth_diff > 1e-9) {
-                    y_spline = p1.y + (p2.y - p1.y) * (tth - p1.tth) / tth_diff;
-                } else {
-                    y_spline = p1.y; // Points are too close
-                }
-            }
-            background[i] = y_spline;
+    // Step 1: Calculate interval widths (h) and slopes (delta)
+    const h = new Array(n - 1);
+    const delta = new Array(n - 1);
+    for (let i = 0; i < n - 1; i++) {
+        h[i] = points[i + 1].tth - points[i].tth;
+        if (h[i] <= 0) {
+            console.error("Monotonic spline failed: Points must have strictly increasing tth values.");
+            return null;
         }
-    } else if (splinePoints && splinePoints.length === 1) {
-        // Only one point, make background flat
-        const y_flat = splinePoints[0].y;
-        for(let i=0; i<n; i++) background[i] = y_flat;
+        delta[i] = (points[i + 1].y - points[i].y) / h[i];
     }
-    // else: No points, background is zero (array is already zero-filled)
 
- 
+    // Step 2: Calculate tangents (m) using Fritsch-Carlson method
+    const m = new Array(n);
+    // Endpoint tangents (can be simple estimates)
+    m[0] = delta[0];
+    m[n - 1] = delta[n - 2];
+    // Internal tangents
+    for (let i = 1; i < n - 1; i++) {
+        if (delta[i - 1] * delta[i] <= 0) {
+            m[i] = 0; // Slope changes sign, force tangent to 0
+        } else {
+            // Weighted average, biased towards shorter interval
+             m[i] = (h[i] * delta[i - 1] + h[i-1] * delta[i]) / (h[i-1] + h[i]);
+            // Alternative simple average: m[i] = (delta[i - 1] + delta[i]) / 2;
+        }
+    }
 
-    return background;
+    // Step 3: Enforce monotonicity constraint on tangents
+    for (let i = 0; i < n - 1; i++) {
+        if (delta[i] === 0) { // Flat segment
+            m[i] = 0;
+            m[i + 1] = 0;
+        } else {
+            const alpha = m[i] / delta[i];
+            const beta = m[i + 1] / delta[i];
+            const tau = alpha * alpha + beta * beta;
+            // If condition violated, scale tangents to preserve monotonicity
+            if (tau > 9) { // Fritsch & Carlson condition
+                const factor = 3.0 / Math.sqrt(tau);
+                m[i] = alpha * delta[i] * factor;
+                m[i + 1] = beta * delta[i] * factor;
+            }
+        }
+    }
+
+    // Step 4: Return the interpolation function using Hermite basis functions
+    return function(tthValue) {
+        // Find the interval [i, i+1] that contains tthValue
+        let i = 0;
+        if (tthValue >= points[n - 1].tth) {
+            i = n - 2; // Handle edge case: exactly the last point or beyond
+        } else {
+            while (i < n - 1 && points[i + 1].tth <= tthValue) { // Find segment where tthValue >= start
+                i++;
+            }
+        }
+         // Handle edge case: before the first point
+         if (i < 0) i = 0;
+         if (i >= n - 1) i = n - 2; // Should not happen with above checks, but safety
+
+        const x_i = points[i].tth;
+        const x_ip1 = points[i + 1].tth;
+        const y_i = points[i].y;
+        const y_ip1 = points[i + 1].y;
+        const h_i = h[i]; // Use pre-calculated h[i] = x_ip1 - x_i
+        const m_i = m[i];
+        const m_ip1 = m[i + 1];
+
+        // Normalized position within interval [0, 1]
+        const t = (h_i > 1e-9) ? (tthValue - x_i) / h_i : 0; // Avoid division by zero
+
+        // Cubic Hermite spline basis functions
+        const h00 = 2 * t * t * t - 3 * t * t + 1;
+        const h10 = t * t * t - 2 * t * t + t;
+        const h01 = -2 * t * t * t + 3 * t * t;
+        const h11 = t * t * t - t * t;
+
+        // Interpolation formula
+        const interpolatedY = h00 * y_i + h10 * h_i * m_i + h01 * y_ip1 + h11 * h_i * m_ip1;
+
+         // Extrapolation: use flat extrapolation outside the defined range
+         if (tthValue < points[0].tth) return points[0].y;
+         if (tthValue > points[n-1].tth) return points[n-1].y;
+
+        return interpolatedY;
+    };
 }
+
+
+
+/**
+     * Calculates the total background contribution using monotonic cubic spline interpolation.
+     * @param {Float64Array} tthAxis - The array of 2-theta values.
+     * @param {object} params - The object containing refinement parameters (currently unused by spline).
+     * @param {Array<object>} splinePoints - The array of {tth, y} anchor points.
+     * @returns {Float64Array} A new array containing the calculated background intensity at each point.
+     */
+    function calculateTotalBackground(tthAxis, params, splinePoints) {
+        const n = tthAxis.length;
+        // Require at least 2 points for monotonic spline
+        if (n === 0 || !splinePoints || splinePoints.length < 2) {
+            return new Float64Array(n); // Return zero background
+        }
+
+        const background = new Float64Array(n);
+        // Ensure points are sorted for spline calculation
+        const sortedPoints = [...splinePoints].sort((a, b) => a.tth - b.tth);
+
+        let interpolate = null;
+        try {
+            // Attempt to create the monotonic cubic spline interpolator
+            interpolate = createMonotonicCubicSplineInterpolator(sortedPoints);
+            if (!interpolate) throw new Error("Interpolator creation returned null."); // Explicitly check
+        } catch (splineError) {
+             console.error("Failed to create monotonic cubic spline, falling back to linear:", splineError);
+             interpolate = null; // Ensure it's null if creation failed
+        }
+
+        // If spline creation failed, use linear interpolation as fallback
+        if (!interpolate) {
+            console.warn("Using linear interpolation for background (Monotonic spline failed).");
+            let p_idx = 0;
+            const numSplinePoints = sortedPoints.length; // Use length of sortedPoints
+            for (let i = 0; i < n; i++) {
+                const tth = tthAxis[i];
+                 // Find segment using linear scan
+                 while (p_idx < numSplinePoints - 2 && sortedPoints[p_idx + 1].tth < tth) {
+                     p_idx++;
+                 }
+                const p1 = sortedPoints[p_idx];
+                const p2 = sortedPoints[Math.min(p_idx + 1, numSplinePoints - 1)]; // Ensure p2 index is valid
+
+                if (tth <= p1.tth) {
+                    background[i] = p1.y;
+                } else if (tth >= p2.tth) {
+                    background[i] = p2.y;
+                } else {
+                    const tth_diff = p2.tth - p1.tth;
+                    background[i] = (tth_diff > 1e-9) ? p1.y + (p2.y - p1.y) * (tth - p1.tth) / tth_diff : p1.y;
+                }
+                // Ensure non-negative background
+                if (background[i] < 0) background[i] = 0;
+            }
+        } else {
+            // Use the monotonic cubic spline interpolator
+            for (let i = 0; i < n; i++) {
+                background[i] = interpolate(tthAxis[i]);
+                 // Ensure non-negative background
+                 if (background[i] < 0) background[i] = 0;
+            }
+        }
+
+        // --- Amorphous Hump logic was previously removed ---
+
+        return background;
+    }
+
 
 
 // --- Space Group / HKL Functions (from rules_spaceGroups.js, now assumed global) ---
@@ -323,35 +425,62 @@ function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
 }
 
 
+/**
+ * Generates the list of raw HKL indices {h, k, l, multiplicity} for PREVIEW/REFINEMENT.
+ * Checks cache first in the worker context.
+ * @param {object} spaceGroup - The space group object containing rules, system, laue_class.
+ * @param {number} maxTth - The maximum 2-theta angle for generation.
+ * @param {object} params - Object containing lattice parameters (a, b, c) and wavelength (lambda).
+ * @returns {Array} A list of raw HKL reflection objects {h_orig, k_orig, l_orig, hkl_list, multiplicity}.
+ */
 function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
-    const sgNumber = spaceGroup.number;
-    // 1. Check the cache first!
-    if (hklIndexCache[sgNumber]) {
-        return hklIndexCache[sgNumber];
+    // --- Worker Cache Check (only runs in worker context) ---
+    // Note: 'self' is defined in workers, but not in the main window context.
+    // 'hklIndexCache' is defined globally in both contexts.
+    let sgNumber = null;
+    if (spaceGroup && typeof spaceGroup.number === 'number') {
+        sgNumber = spaceGroup.number;
+        // Check worker cache *only if* in worker and cache exists for this SG
+        if (typeof self !== 'undefined' && typeof importScripts === 'function' && hklIndexCache[sgNumber]) {
+             return hklIndexCache[sgNumber]; // Return cached version from worker
+        }
     }
+    // --- End Worker Cache Check ---
 
-    // 2. If not in cache, perform the expensive generation.
+    // --- Parameter Validation ---
     const { a, b, c, lambda } = params;
-    const { system, laue_class } = spaceGroup;
+    const sgSystem = spaceGroup ? spaceGroup.system : null;
+    const sgLaueClass = spaceGroup ? spaceGroup.laue_class : null;
 
-    if (!lambda || lambda <= 0 || !laue_class || !a || a <= 0) {
-         console.error("Cannot generate HKL: Missing lambda, laue_class or invalid 'a'.");
-         return [];
-    }
+    // Check specifically for valid numbers and non-empty strings
+    if (!lambda || typeof lambda !== 'number' || lambda <= 0 ||
+        !sgLaueClass || typeof sgLaueClass !== 'string' || sgLaueClass.length === 0 ||
+        !a || typeof a !== 'number' || a <= 0 ||
+        !sgSystem || typeof sgSystem !== 'string' || sgSystem.length === 0 ) { // Added check for system
+         console.error(`HKL Gen Error: Invalid parameters provided. Lambda: ${lambda}, Laue Class: ${sgLaueClass}, System: ${sgSystem}, a: ${a}`);
+         return []; // Return empty if any crucial parameter is invalid
+     }
+    // --- End Validation ---
+
     const maxDim = Math.max(a || 0, b || a || 0, c || a || 0);
     if (maxDim <= 0) return [];
 
     // --- OPTIMIZATION: Calculate max 1/d^2 for pruning ---
     const sinThetaMax = Math.sin(maxTth * Math.PI / 360);
-    if (sinThetaMax <= 0) return []; 
+    if (sinThetaMax <= 0) return [];
     const dMin = lambda / (2 * sinThetaMax);
+    if (dMin <= 0) return []; // Safety check for dMin
     const inv_d_sq_max = 1.0 / (dMin * dMin);
-    const maxIndex = Math.ceil(maxDim / dMin) + 5; // Generous max index
-    
+    // Be more conservative with maxIndex if maxDim is very large, prevent huge loops
+    const baseMaxIndex = Math.ceil(maxDim / dMin) + 5;
+    const maxIndex = Math.min(baseMaxIndex, 50); // Set an absolute max index limit (e.g., 50)
+
+
     // Pre-calculate params squared
     const a_sq = a * a;
-    const b_sq = (b && b > 0) ? b * b : a_sq;
-    const c_sq = (c && c > 0) ? c * c : a_sq;
+    // Handle cases where b or c might not be relevant for the system but are passed in params
+    const b_sq = (sgSystem === 'orthorhombic' || sgSystem === 'monoclinic' || sgSystem === 'triclinic') ? ((b && b > 0) ? b * b : a_sq) : a_sq;
+    const c_sq = (sgSystem !== 'cubic') ? ((c && c > 0) ? c * c : a_sq) : a_sq;
     // --- End Optimization Setup ---
 
     let rawReflections = [];
@@ -363,8 +492,9 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
         const key = getKey(h, k, l);
         if (addedHKLs.has(key)) return;
 
+        // Pass the full spaceGroup object to isReflectionAllowed
         if (isReflectionAllowed(h, k, l, spaceGroup)) {
-            const { multiplicity } = getMultiplicityAndCanonicalHKL(h, k, l, laue_class);
+            const { multiplicity } = getMultiplicityAndCanonicalHKL(h, k, l, sgLaueClass);
              if (multiplicity > 0) {
                  rawReflections.push({
                     h_orig: h, k_orig: k, l_orig: l,
@@ -378,99 +508,134 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
 
     const maxI = maxIndex;
 
-    if (system === 'monoclinic' || system === 'triclinic') {
-        // Pruning is too complex due to h*l term, use original loop ranges
-        // This is the correct asymmetric unit for 2/m (unique axis b)
+    // Use sgSystem consistently
+    if (sgSystem === 'monoclinic' || sgSystem === 'triclinic') {
+        // Asymmetric unit for 2/m (unique axis b) - k>=0, l>=0. h can be +/-.
+        // For -1 (triclinic), asymmetric unit is more complex, usually h>=0 or covering half sphere.
+        // Let's stick to the 2/m unit for simplicity here, might overgenerate slightly for triclinic.
         for (let h = -maxI; h <= maxI; h++) {
             for (let k = 0; k <= maxI; k++) {
                 for (let l = 0; l <= maxI; l++) {
+                     if (k === 0 && l === 0 && h <= 0) continue; // Avoid double counting h00/-h00, and origin
+                     if (k === 0 && h === 0 && l === 0) continue; // Origin
+                     // Further monoclinic constraints might apply depending on unique axis, assuming 'b' here
                     loopAndAdd(h, k, l);
                 }
             }
         }
-    } else if (system === 'orthorhombic') {
-        if (b_sq <= 0 || c_sq <= 0) return []; // Need all params
+    } else if (sgSystem === 'orthorhombic') {
+        if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0) return []; // Need valid params
         for (let h = 0; h <= maxI; h++) {
             const h_term = (h*h) / a_sq;
-            if (h_term > inv_d_sq_max && h > 0) break; // Prune
+            if (h_term > inv_d_sq_max && h > 0) break; // Prune h loop
 
             for (let k = 0; k <= maxI; k++) {
                 const hk_term = h_term + (k*k) / b_sq;
-                if (hk_term > inv_d_sq_max && k > 0) break; // Prune
+                if (hk_term > inv_d_sq_max && k > 0) break; // Prune k loop
 
                 for (let l = 0; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue;
+                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
                     const hkl_term = hk_term + (l*l) / c_sq;
                     if (hkl_term > inv_d_sq_max) {
-                         if (l === 0) break; // Reached limit even for l=0
-                         break; // Prune
+                         // If l=0 fails, all higher l will fail for this h,k. Break inner loop.
+                         // If l>0 fails, move to next k.
+                         break; // Prune l loop
                     }
                     loopAndAdd(h, k, l);
                 }
             }
         }
-    } else if (system === 'hexagonal' || system === 'trigonal' || system === 'rhombohedral') {
-        if (c_sq <= 0) return []; // Need a and c
+    } else if (sgSystem === 'hexagonal' || sgSystem === 'trigonal' || sgSystem === 'rhombohedral') {
+        if (a_sq <= 0 || c_sq <= 0) return []; // Need a and c
         const a_term_prefactor = 4.0 / (3.0 * a_sq);
+        // Asymmetric unit for hexagonal Laue groups (6/m, 6/mmm): h>=k>=0, l>=0
+        // For trigonal Laue groups (-3, -3m), depends on centering if R.
+        // Let's use h>=k>=0, l can be +/- for -3, -3m for broader coverage initially
+        const l_limit = (sgLaueClass === '6/m' || sgLaueClass === '6/mmm') ? 0 : -maxI;
+
         for (let h = 0; h <= maxI; h++) {
             const h_term_only = a_term_prefactor * (h*h);
-            if (h_term_only > inv_d_sq_max && h > 0) break;
+            // Optimization: if even h=1 is too large, break early (check h > 0)
+             if (h_term_only > inv_d_sq_max && h > 0) break;
 
-            for (let k = 0; k <= h; k++) { // Use h >= k >= 0
+            for (let k = 0; k <= h; k++) { // Use h >= k >= 0 convention
                 const hk_term = a_term_prefactor * (h*h + h*k + k*k);
-                if (hk_term > inv_d_sq_max && k > 0) break; 
+                 // Optimization: if hk term exceeds limit, increasing k further won't help
+                 if (hk_term > inv_d_sq_max && k > 0) break;
 
-                for (let l = 0; l <= maxI; l++) { // Use l >= 0
-                    if (h === 0 && k === 0 && l === 0) continue;
+                for (let l = l_limit; l <= maxI; l++) { // Use l>=0 or l+/- depending on Laue group
+                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
                     const hkl_term = hk_term + (l*l) / c_sq;
                     if (hkl_term > inv_d_sq_max) {
-                        if (l === 0) break;
-                        break;
+                        // If l is increasing and positive, break loop for this h,k
+                        if (l >= 0) break;
+                         // If l is negative and increasing towards 0, continue until l>=0 check fails
                     }
+                     // Specific check for hexagonal 000 point which is not allowed
+                     if (h === 0 && k === 0 && l === 0) continue;
                     loopAndAdd(h, k, l);
                 }
             }
         }
     } else { // Cubic, Tetragonal
-        const isTetragonal = (system === 'tetragonal');
-        if (isTetragonal && c_sq <= 0) return []; // Tet needs c
+        // Asymmetric unit h>=k>=l>=0
+        const isTetragonal = (sgSystem === 'tetragonal');
+        if (a_sq <= 0 || (isTetragonal && c_sq <= 0)) return [];
 
         for (let h = 0; h <= maxI; h++) {
-            const h_term = (h*h) / a_sq;
-            if (h_term > inv_d_sq_max && h > 0) break;
+            const h_term_factor = (h*h); // Calculate h^2 once
 
             for (let k = 0; k <= h; k++) { // Use h >= k
-                const hk_term_base = (h*h + k*k);
-                if (isTetragonal) {
-                     if (hk_term_base / a_sq > inv_d_sq_max && k > 0) break;
-                } else {
-                     if (hk_term_base / a_sq > inv_d_sq_max && k > 0) break;
-                }
+                const hk_term_factor = h_term_factor + (k*k); // Calculate h^2+k^2 once
 
                 for (let l = 0; l <= k; l++) { // Use k >= l
-                    if (h === 0 && k === 0 && l === 0) continue;
-                    
-                    let hkl_term;
+                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
+
+                    let inv_d_sq_term;
                     if (isTetragonal) {
-                        hkl_term = (h*h + k*k) / a_sq + (l*l) / c_sq;
+                        inv_d_sq_term = hk_term_factor / a_sq + (l*l) / c_sq;
                     } else { // Cubic
-                        hkl_term = (h*h + k*k + l*l) / a_sq;
+                        inv_d_sq_term = (hk_term_factor + l*l) / a_sq;
                     }
 
-                    if (hkl_term > inv_d_sq_max) {
-                        if (l === 0) break;
-                        break;
+                    if (inv_d_sq_term > inv_d_sq_max) {
+                         // Since l increases, if l fails, all larger l for this h,k will fail
+                         break; // Break l loop
                     }
                     loopAndAdd(h, k, l);
-                }
-            }
-        }
+                } // end l loop
+                 // Optimization: If the loop broke with l=0, then increasing k won't help either
+                 // This requires careful check: test hk term with l=0.
+                 let l0_term;
+                 if(isTetragonal) l0_term = hk_term_factor / a_sq;
+                 else l0_term = hk_term_factor / a_sq;
+                 if (l0_term > inv_d_sq_max && k > 0) {
+                     break; // Break k loop if even l=0 exceeds limit
+                 }
+
+            } // end k loop
+             // Optimization: If the k loop broke with k=0, then increasing h won't help either
+             // Test h term with k=0, l=0
+             let k0l0_term;
+             if(isTetragonal) k0l0_term = h_term_factor / a_sq; // l=0, k=0
+             else k0l0_term = h_term_factor / a_sq; // l=0, k=0
+             if (k0l0_term > inv_d_sq_max && h > 0) {
+                 break; // Break h loop if even k=0, l=0 exceeds limit
+             }
+        } // end h loop
     }
 
-    // 3. Store in cache
-    hklIndexCache[sgNumber] = rawReflections;
+
+    // --- Worker Cache Update ---
+    // Only update cache if in worker context and sgNumber is valid
+    if (sgNumber !== null && typeof self !== 'undefined' && typeof importScripts === 'function') {
+         hklIndexCache[sgNumber] = rawReflections;
+    }
+    // --- End Worker Cache Update ---
+
     return rawReflections;
 }
+
 
 
 /**
