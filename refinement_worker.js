@@ -1,5 +1,6 @@
 // refinement_worker.js
 // version 114, 26 oct 2025
+// MODIFIED to use Spline Background
 try {
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js', 'rules_spaceGroups.js');} catch (e) {
     console.error("Worker Error: Failed to import scripts.", e);
@@ -24,26 +25,24 @@ if (typeof spaceGroups === 'undefined') {
  // Make sure this matches the main script
 const CALCULATION_WINDOW_MULTIPLIER = 6.0;
 const PEAK_HEIGHT_CUTOFF = 0.002;
-const NUM_BACKGROUND_PARAMS = 9;
+// const NUM_BACKGROUND_PARAMS = 9; // <-- REMOVED (Chebyshev)
 const HIGH_WEIGHT_MULTIPLIER = 50.0;
 
 
 
 let workerWorkingData = null; // To store the sliced data sent from the main thread
 let hklIndexCache = {}; // Cache for HKL indices within the worker
-
-
-
+let workerBackgroundAnchors = []; // <-- ADDED: To store spline points from main thread
 
 
 /**
- * Calculates the total background contribution from Chebyshev polynomials and an amorphous hump.
+ * Calculates the total background contribution from a Linear Spline and an Amorphous Hump.
  * @param {Float64Array} tthAxis - The array of 2-theta values.
  * @param {object} params - The object containing all refinement parameters.
+ * @param {Array<object>} splinePoints - The array of {tth, y} anchor points.
  * @returns {Float64Array} A new array containing the calculated background intensity at each point.
  */
-function calculateTotalBackground(tthAxis, params) {
-    // --- 1. Pre-computation and setup ---
+function calculateTotalBackground(tthAxis, params, splinePoints) {
     const n = tthAxis.length;
     if (n === 0) {
         return new Float64Array();
@@ -51,80 +50,60 @@ function calculateTotalBackground(tthAxis, params) {
 
     const background = new Float64Array(n); // Allocate the typed array upfront
 
-    // Extract and check Chebyshev parameters
-    const chebyshevCoefficients = [];
-    let hasChebyshev = false;
-    for (let i = 0; i < NUM_BACKGROUND_PARAMS; i++) {
-        const coeff = params[`B${i}`] || 0;
-        chebyshevCoefficients[i] = coeff;
-        if (Math.abs(coeff) > 1e-9) hasChebyshev = true;
-    }
+    // --- 1. Calculate Linear Spline Background ---
+    if (splinePoints && splinePoints.length > 1) {
+        // Ensure points are sorted by tth (they should be, but for safety)
+        const sortedPoints = [...splinePoints].sort((a, b) => a.tth - b.tth);
+        const numSplinePoints = sortedPoints.length;
+        
+        let p_idx = 0; // Current spline point segment index
 
-    // Extract and pre-calculate for Amorphous Hump
-    const humpHeight = params.hump_H || 0;
-    let hasHump = humpHeight > 1e-9;
-    let humpPosition, hwhm_sq;
-    if (hasHump) {
-        humpPosition = params.hump_P || 0;
-        const fwhm = params.hump_W || 1;
-        hwhm_sq = (fwhm / 2) * (fwhm / 2);
-        if (hwhm_sq < 1e-9) hasHump = false; // Avoid division by zero
-    }
+        for (let i = 0; i < n; i++) {
+            const tth = tthAxis[i];
 
-    // Pre-calculate scaling factors for Chebyshev
-    let tthMin, tthRange;
-    if (hasChebyshev && n > 0) { // Check length
-        tthMin = tthAxis[0];
-        tthRange = tthAxis[tthAxis.length - 1] - tthMin;
-        if (tthRange <= 0) hasChebyshev = false; // Avoid division by zero
-    } else {
-        hasChebyshev = false;
-    }
-
-
-    // Early exit if there's nothing to calculate
-    if (!hasChebyshev && !hasHump) {
-        return background; // Return the zero-filled Float64Array
-    }
-
-    // --- 2. Single loop calculation ---
-    for (let i = 0; i < n; i++) {
-        const tth = tthAxis[i];
-        let totalBackgroundValue = 0;
-
-        // Calculate Chebyshev part if needed
-        if (hasChebyshev) {
-            const x_prime = (2 * (tth - tthMin) / tthRange) - 1;
-
-            let t_n_minus_1 = 1; // T_0(x)
-            let t_n = x_prime; // T_1(x)
-
-            let chebyshevValue = chebyshevCoefficients[0] * t_n_minus_1;
-            if (chebyshevCoefficients.length > 1) {
-                chebyshevValue += (chebyshevCoefficients[1] || 0) * t_n;
+            // Find the segment [p1, p2] that brackets tth
+            while (p_idx < numSplinePoints - 2 && sortedPoints[p_idx + 1].tth < tth) {
+                p_idx++;
             }
 
-            for (let n = 2; n < chebyshevCoefficients.length; n++) {
-                const t_n_plus_1 = 2 * x_prime * t_n - t_n_minus_1;
-                chebyshevValue += (chebyshevCoefficients[n] || 0) * t_n_plus_1;
-                t_n_minus_1 = t_n;
-                t_n = t_n_plus_1;
+            const p1 = sortedPoints[p_idx];
+            const p2 = sortedPoints[p_idx + 1];
+
+            let y_spline = 0;
+            if (tth <= p1.tth) {
+                // Before the first point, extrapolate flat
+                y_spline = p1.y;
+            } else if (tth >= p2.tth) {
+                // After the second-to-last point, check if we're past the end
+                if (p_idx === numSplinePoints - 2 && tth >= sortedPoints[numSplinePoints - 1].tth) {
+                    // After the last point, extrapolate flat
+                    y_spline = sortedPoints[numSplinePoints - 1].y;
+                } else {
+                    y_spline = p2.y; // This case should be handled by the 'while' loop
+                }
+            } else {
+                // We are between p1 and p2, interpolate
+                const tth_diff = p2.tth - p1.tth;
+                if (tth_diff > 1e-9) {
+                    y_spline = p1.y + (p2.y - p1.y) * (tth - p1.tth) / tth_diff;
+                } else {
+                    y_spline = p1.y; // Points are too close
+                }
             }
-            totalBackgroundValue += chebyshevValue;
+            background[i] = y_spline;
         }
-
-        // Calculate Amorphous Hump part if needed
-        if (hasHump) {
-            const diff = tth - humpPosition;
-            const humpValue = humpHeight / (1 + (diff * diff) / hwhm_sq);
-            totalBackgroundValue += humpValue;
-        }
-
-        background[i] = totalBackgroundValue;
+    } else if (splinePoints && splinePoints.length === 1) {
+        // Only one point, make background flat
+        const y_flat = splinePoints[0].y;
+        for(let i=0; i<n; i++) background[i] = y_flat;
     }
+    // else: No points, background is zero (array is already zero-filled)
+
+ 
 
     return background;
 }
+
 
 // --- Space Group / HKL Functions (from rules_spaceGroups.js, now assumed global) ---
 // These functions like isReflectionAllowed, evaluateRuleTree, etc.,
@@ -1306,7 +1285,7 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
 
         const calculateTotalPattern = (targetArray) => {
             updateHklPositions(workingHklList, params, system);
-            const y_bkg = calculateTotalBackground(workerWorkingData.tth, params);
+            const y_bkg = calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors); // <-- MODIFIED
             const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, params);
 
             let scaleFactor = 1.0;
@@ -1346,8 +1325,8 @@ const totalPattern = math.add(math.multiply(Array.from(netCalcPattern), scaleFac
                      if (isFinite(residuals[i])) { // Check for NaN/Infinity
                           cost += residuals[i] * residuals[i];
                      } else {
-                         // If cost calculation fails early, try increasing lambda? Or break?
-                         // Let's try increasing lambda and retrying this iter
+                        // If cost calculation fails early, try increasing lambda? Or break?
+                        // Let's try increasing lambda and retrying this iter
                           lambda = Math.min(1e9, lambda * 10);
                           console.warn(`LM iter ${iter}: Residual calculation failed. Increased lambda to ${lambda}.`);
                           if(oldParams) { // Rollback if we have a previous state
@@ -1528,7 +1507,7 @@ async function refineParametersSA(initialParams, fitFlags, maxIter, hklList, sys
          try {
              updateHklPositions(hkl_list_obj, p_obj, system);
              const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj);
-             const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj);
+             const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors); // <-- MODIFIED
 
              let scaleFactor = 1.0;
              if (refinementMode === 'le-bail') {
@@ -1647,7 +1626,7 @@ async function refineParametersSA(initialParams, fitFlags, maxIter, hklList, sys
      // --- Finalization ---
      updateHklPositions(bestHklList, bestParams, system);
      const finalNetCalcPattern = calculatePattern(workerWorkingData.tth, bestHklList, bestParams);
-     const finalY_bkg = calculateTotalBackground(workerWorkingData.tth, bestParams);
+     const finalY_bkg = calculateTotalBackground(workerWorkingData.tth, bestParams, workerBackgroundAnchors); // <-- MODIFIED
      let finalScaleFactor = 1.0;
      if (refinementMode === 'le-bail') {
           let num = 0, den = 0;
@@ -1712,7 +1691,7 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
          try {
              updateHklPositions(hkl_list_obj, p_obj, system);
              const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj);
-             const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj);
+             const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors); // <-- MODIFIED
 
              let scaleFactor = 1.0;
              if (refinementMode === 'le-bail') {
@@ -1853,7 +1832,7 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
     // --- Finalization ---
      updateHklPositions(bestOverallHklList, bestOverallParams, system);
      const finalNetCalcPattern = calculatePattern(workerWorkingData.tth, bestOverallHklList, bestOverallParams);
-     const finalY_bkg = calculateTotalBackground(workerWorkingData.tth, bestOverallParams);
+     const finalY_bkg = calculateTotalBackground(workerWorkingData.tth, bestOverallParams, workerBackgroundAnchors); // <-- MODIFIED
      let finalScaleFactor = 1.0;
      if (refinementMode === 'le-bail') {
           let num = 0, den = 0;
@@ -2016,15 +1995,6 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     }
    
 
-
-    // Background Parameters
-    for (let i = 0; i < NUM_BACKGROUND_PARAMS; i++) {
-        mappings.push(createMapping(fitFlags[`B${i}`], `B${i}`, i === 0 ? 100 : 1.0, -Infinity, Infinity, 0.3));
-    }
-    mappings.push(createMapping(fitFlags.hump_H, 'hump_H', 100.0, 0, Infinity, 0.2));
-    mappings.push(createMapping(fitFlags.hump_P, 'hump_P', 30.0, -Infinity, Infinity, 0.1));
-    mappings.push(createMapping(fitFlags.hump_W, 'hump_W', 5.0, 0.01, Infinity, 0.1));
-
     // Filter out null mappings (where flag was false)
     const paramMapping = mappings.filter(Boolean);
     return { paramMapping };
@@ -2043,11 +2013,13 @@ self.onmessage = async function(e) {
         system,
         maxIterations,
         algorithm,
-        refinementMode
+        refinementMode,
+        backgroundAnchors // <-- ADDED
     } = e.data;
 
      // Store working data globally in the worker
      workerWorkingData = workingData;
+     workerBackgroundAnchors = backgroundAnchors; // <-- ADDED
      // If spaceGroups data is passed, potentially assign it globally if needed
      // self.spaceGroups = spaceGroupsData; // Uncomment if needed globally
 
@@ -2093,7 +2065,7 @@ self.onmessage = async function(e) {
                 }
 
                 // --- Intensity Extraction Step ---
-                const backgroundForExtraction = calculateTotalBackground(workerWorkingData.tth, currentParams);
+                const backgroundForExtraction = calculateTotalBackground(workerWorkingData.tth, currentParams, workerBackgroundAnchors); // <-- MODIFIED
                 const expDataForExtraction = {
                     tth: workerWorkingData.tth,
                     intensity: workerWorkingData.intensity,
@@ -2143,7 +2115,7 @@ self.onmessage = async function(e) {
 
         // Calculate final stats using the results from the refinement
         const finalNetPatternForStats = calculatePattern(workerWorkingData.tth, finalHklList, finalParams);
-        const finalBackgroundForStats = calculateTotalBackground(workerWorkingData.tth, finalParams);
+        const finalBackgroundForStats = calculateTotalBackground(workerWorkingData.tth, finalParams, workerBackgroundAnchors); // <-- MODIFIED
 
         // Pass workerWorkingData to calculateStatistics
         const finalStats = calculateStatistics(
@@ -2180,6 +2152,7 @@ self.onmessage = async function(e) {
     } finally {
 
          workerWorkingData = null;
+         workerBackgroundAnchors = []; // <-- ADDED
          hklIndexCache = {}; // Clear HKL cache after run? Maybe keep it? changé avec la version 113
     }
 }; 
@@ -2189,4 +2162,3 @@ self.onerror = function(event) {
      console.error("Unhandled Worker Error:", event.message, event);
      postMessage({ type: 'error', message: `Unhandled Worker Error: ${event.message}` });
 };
-

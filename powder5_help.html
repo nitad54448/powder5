@@ -202,8 +202,7 @@
             <li><a href="#parameters">Parameter Guide</a></li>
             <li><a href="#parameters-crystal" class="sub-link">Crystal & Space Group</a></li>
             <li><a href="#parameters-instrumental" class="sub-link">Instrumental</a></li>
-            <li><a href="#parameters-background" class="sub-link">Background</a></li>
-            <li><a href="#parameters-profile4" class="sub-link">Simple pVoigt</a></li>
+            <li><a href="#parameters-background" class="sub-link">Background (Spline)</a></li> <li><a href="#parameters-profile4" class="sub-link">Simple pVoigt</a></li>
             <li><a href="#parameters-profile3" class="sub-link">TCH (Anisotropic)</a></li>
             <li><a href="#parameters-profile-split" class="sub-link">Split pVoigt (Asymmetric)</a></li>
             <li><a href="#strategy">Refinement Strategy</a></li>
@@ -223,7 +222,7 @@
                 This document serves as a scientific and technical guide for the <strong>powder5</strong> web application, a tool for the analysis of powder X-ray diffraction (PXRD) data via whole-pattern fitting. This technique, also known as pattern decomposition, is a crucial method in materials science and crystallography for refining structural and microstructural parameters when a complete structural model is either unknown or unnecessary.
             </p>
             <p>
-                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for rigorous, unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and a physically rigorous <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening.
+                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for rigorous, unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and a physically rigorous <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using linear interpolation between user-defined points.
             </p>
         </section>
 
@@ -257,8 +256,7 @@
                 </li>
                 <li><b>Reset View:</b> A <strong>right-click</strong> on the chart resets the zoom and pan to the range currently defined by the <strong>2θ Min/Max sliders</strong>.</li>
                 <li><b>Reflection Data:</b> Hovering the cursor near a Bragg reflection marker (tick mark) displays a tooltip containing the corresponding Miller indices ($hkl$).</li>
-                <li><b>Background Anchor Points:</b> To impose constraints on the background model, hold down the <strong>Ctrl</strong> key and <strong>click</strong> on a point in the pattern. This designates the nearest experimental data point as an anchor, a point that is given a significantly higher weight during refinement, thereby compelling the background function to pass through its vicinity.</li>
-            </ul>
+                <li><b>Add Background Spline Point:</b> To add a point defining the background shape, hold down the <strong>Ctrl</strong> key and <strong>click</strong> on a point in the pattern. This adds the nearest experimental data point to the background spline list. Points cannot be added outside the current <strong>2θ Min/Max slider</strong> range, nor can they be added exactly at the edge point indices.</li> </ul>
         </section>
 
         <hr>
@@ -276,10 +274,8 @@
                 The Le Bail method is an iterative, sequential algorithm known for its computational efficiency and robust convergence. The process is as follows:
             </p>
             <ol>
-                <li><b>Initialization:</b> A theoretical pattern is calculated from the user-supplied lattice, profile, and background parameters. The integrated intensities of all reflections ($I_{hkl}$) are initially assumed to be equal.</li>
-                <li><b>Intensity Extraction:</b> The observed intensity at each data point ($y_{i,obs}$) is partitioned among the calculated Bragg peaks that contribute to that point. The contribution of each peak is proportional to its profile function value at that point. Summing these partitioned intensities for each reflection yields a new set of "observed" integrated intensities.</li>
-                <li><b>Parameter Refinement:</b> These newly extracted intensities are held constant, and a non-linear least-squares refinement is performed on the lattice, background, and profile parameters to minimize the difference between the calculated and observed patterns.</li>
-                <li><b>Iteration:</b> The refined parameters from Step 3 are used to restart the process from Step 1. This cycle repeats until the parameters and R-factors converge.</li>
+                <li><b>Initialization:</b> A theoretical pattern is calculated from the user-supplied lattice, profile, and background parameters (defined by the spline points). The integrated intensities of all reflections ($I_{hkl}$) are initially assumed to be equal.</li> <li><b>Intensity Extraction:</b> The observed intensity at each data point ($y_{i,obs}$) is partitioned among the calculated Bragg peaks that contribute to that point. The contribution of each peak is proportional to its profile function value at that point. Summing these partitioned intensities for each reflection yields a new set of "observed" integrated intensities.</li>
+                <li><b>Parameter Refinement:</b> These newly extracted intensities are held constant, and a non-linear least-squares refinement is performed on the lattice and profile parameters (the background is fixed by the spline points) to minimize the difference between the calculated and observed patterns.</li> <li><b>Iteration:</b> The refined parameters from Step 3 are used to restart the process from Step 1. This cycle repeats until the parameters and R-factors converge.</li>
             </ol>
 
             <h3 id="pawley-method">The Pawley Method</h3>
@@ -287,8 +283,7 @@
                 The Pawley method employs a simultaneous, non-iterative approach. It treats the integrated intensity ($I_{hkl}$) of each Bragg reflection as an independent, refinable variable within a single, large-scale least-squares minimization.
             </p>
             <p>
-                This means that all parameters—lattice, profile, background, and all individual integrated intensities—are refined concurrently.
-            </p>
+                This means that all parameters—lattice, profile, and all individual integrated intensities—are refined concurrently. The background shape is fixed by the user-defined spline points and is not refined. </p>
             <ul>
                 <li><b>Advantages:</b> The Pawley method is considered more rigorous as it avoids the iterative bias of the Le Bail method, particularly in cases of severe peak overlap. It can yield more accurate and statistically sound integrated intensities and parameter uncertainties.</li>
                 <li><b>Disadvantages:</b> The inclusion of hundreds or thousands of intensity variables significantly increases the computational complexity and memory requirements. The refinement is also more susceptible to instability and parameter correlation, especially if the initial model is poor or if stochastic optimization algorithms are used.</li>
@@ -371,18 +366,30 @@
                 <li><code>2θ Min / Max</code>: These sliders define the refinement range. It is standard practice to exclude regions of low signal-to-noise or known artifacts from the calculation.</li>
             </ul>
 
-            <h3 id="parameters-background">Background Modeling</h3>
-            <p>The background is modeled as a superposition of empirical functions on the "Background" tab.</p>
+            <h3 id="parameters-background">Background Modeling (Spline Interpolation)</h3>
+            <p>
+                The background contribution is modeled using linear interpolation between a series of user-defined points (spline points or knots). This approach provides flexibility without introducing refinable background parameters into the least-squares minimization. The background shape is therefore considered <strong>fixed</strong> during the refinement process.
+            </p>
+            <p>
+                Control of the background spline is located under the "Background" tab:
+            </p>
              <ul>
-                <li><b>Chebyshev Polynomial:</b> A flexible Chebyshev polynomial of the first kind (up to 9 terms, <code>B0</code>-<code>B8</code>) provides a flexible and orthogonal basis for modeling slowly varying background features. It is recommended to refine coefficients sequentially, starting with the lowest-order terms.</li>
-                <li><b>Amorphous Hump:</b> A single Lorentzian function (defined by <code>Hump Height</code>, <code>Position</code>, <code>FWHM</code>) can be added to the background model to account for broad scattering features, such as from a glass capillary or an amorphous sample component.</li>
-                <li><b>Anchor Points:</b> Manual anchor points can be added by <strong>Ctrl+Clicking</strong> on the chart. These points are assigned a high weight in the least-squares minimization, effectively constraining the background function to pass through specified regions.</li>
-            </ul>
-
-
+                <li><b>Auto-generation:</b> Use the <strong>Auto-points slider</strong> (10-40 points) and the <strong>Generate Spline Points</strong> button to automatically populate the list. The algorithm selects points corresponding to local intensity minima within intervals distributed across the current <strong>2θ Min/Max slider</strong> range. The points at the exact 2θ Min and Max slider positions are always included and fixed to these $2\theta$ values.</li>
+                <li><b>Manual Addition:</b> Add individual points by holding <strong>Ctrl</strong> and clicking on the chart. The closest experimental point will be added to the list, provided it's within the current slider range and not an edge point.</li>
+                <li><b>Editable List:</b> The generated and manually added points appear in a list below the controls.
+                    <ul>
+                        <li>You can directly edit the <strong>$2\theta$</strong> and <strong>Intensity</strong> values for any point, except for the $2\theta$ values of the first (Min) and last (Max) points, which are fixed by the sliders.</li>
+                        <li>Points can be deleted using the <strong>&times;</strong> button, except for the first and last points.</li>
+                    </ul>
+                </li>
+                 <li><b>Chart Display:</b> The spline points can be toggled on/off on the chart using the "Show Points on Chart" checkbox. The calculated spline curve is always shown.</li>
+             </ul>
+             <div class="note">
+                 <strong>Important:</strong> Define the background points carefully <strong>before</strong> starting the Le Bail or Pawley refinement. Since these points are not refined parameters, their positions directly determine the background shape subtracted during the fit.
+             </div>
             <h3 id="parameters-profile4">Simple pVoigt</h3>
             <p>
-                This function (formerly Profile #4) models the peak shape as a linear combination of a Gaussian and a Lorentzian function: $pV(x) = \eta L(x) + (1-\eta)G(x)$. The angular dependence of the Full Width at Half Maximum (FWHM) for each component is modeled empirically.
+                This function models the peak shape as a linear combination of a Gaussian and a Lorentzian function: $pV(x) = \eta L(x) + (1-\eta)G(x)$. The angular dependence of the Full Width at Half Maximum (FWHM) for each component is modeled empirically.
                 $$H_G^2 = GU \tan^2\theta + GV \tan\theta + GW + GP / \cos^2\theta$$
                 $$H_L = LX / \cos\theta$$
             </p>
@@ -407,7 +414,7 @@
 
             <h3 id="parameters-profile3">TCH (Size/Strain/Aniso)</h3>
             <p>
-                This is a physically rigorous profile function (formerly Profile #3) adapted from GSAS, convoluting a <strong>Thompson-Cox-Hastings (TCH) pseudo-Voigt</strong> with a <strong>Stephens model</strong> for anisotropic strain broadening.
+                This is a physically rigorous profile function adapted from GSAS, convoluting a <strong>Thompson-Cox-Hastings (TCH) pseudo-Voigt</strong> with a <strong>Stephens model</strong> for anisotropic strain broadening.
             </p>
 
             <h4>Isotropic Broadening (TCH Model)</h4>
@@ -437,17 +444,14 @@
                 $$H_L(\text{total}) = H_L(\text{isotropic}) + \frac{|H_{aniso}|}{1000}$$
                 This scaling allows the user to refine values in a manageable range (e.g., -10 to +10) rather than requiring input of very small decimals (e.g., 1e-4), a convention common in other refinement software.
             </div>
-        </section>
-
-        <section id="parameters-profile-split">
-            <h3 id="parameters-profile-split">Split pVoigt (Asymmetric)</h3>
+        </section> <section id="parameters-profile-split"> <h3 id="parameters-profile-split">Split pVoigt (Asymmetric)</h3>
             <p>
                 This profile function is a modification of the Simple pseudo-Voigt designed to model asymmetric peaks (e.g., from axial divergence or stacking faults). It achieves this by defining independent sets of profile width parameters for the left side (at $2\theta$ values less than the peak center) and the right side of the peak.
             </p>
             <p>
                 The shape is still a linear combination $pV(x) = \eta L(x) + (1-\eta)G(x)$, but the $H_G$ and $H_L$ parameters used in the calculation depend on whether $x$ is to the left or right of the peak center.
             </p>
-            
+
             <h4>Gaussian Broadening (Left & Right)</h4>
             <p>The Gaussian FWHM ($H_G$) for each side is modeled as:</p>
             <p>$$H_{G, \text{side}}^2 = GU_{\text{side}} \tan^2\theta + GV_{\text{side}} \tan\theta + GW_{\text{side}}$$</p>
@@ -494,7 +498,7 @@
             <h3>Phase 1: Initial Model Setup</h3>
             <ol>
                 <li><b>Define the Model:</b> Load data, select the crystal system and space group, and define the refinement range using the <strong>$2\theta$ sliders</strong>.</li>
-                <li><b>Background Refinement:</b> Model the background by refining the first few Chebyshev terms (e.g., <code>B0</code>, <code>B1</code>, <code>B2</code>). Add the Hump parameters if needed. Use anchor points if necessary to constrain complex background shapes.</li>
+                <li><b>Set Background Points:</b> Use the controls under the "Background" tab (<strong>Generate Spline Points</strong>, <strong>Ctrl+Click</strong> on chart, or manual editing of the list) to define a set of points that reasonably follow the experimental background. This background shape is fixed during refinement.</li>
                 <li><b>Peak Position Refinement:</b> Using the <strong>Le Bail</strong> and <strong>LM</strong> algorithms, refine only the <strong>Lattice Parameter(s)</strong> and, if necessary, the instrumental <strong>Zero Shift</strong>. The goal is to align the calculated Bragg positions with the observed peak maxima.</li>
             </ol>
 
@@ -563,9 +567,7 @@
                     <b>The Difference Plot:</b> A successful refinement should yield a difference plot that consists of random, uncorrelated noise centered on zero. The plot is scaled relative to the main pattern for visibility.
                 </li>
                 <li>
-                    <b>Systematic Residuals:</b> The presence of structured, non-random features in the difference plot (e.g., "M-shaped" residuals around peaks, broad humps, or un-indexed peaks) is a clear indication of systematic errors in the model. These may arise from an incorrect peak shape, unmodeled anisotropy or asymmetry, an inadequate background model, or the presence of an unaccounted-for impurity phase.
-                </li>
-            </ul>
+                    <b>Systematic Residuals:</b> The presence of structured, non-random features in the difference plot (e.g., "M-shaped" residuals around peaks, broad humps where the spline is inadequate, or un-indexed peaks) is a clear indication of systematic errors in the model. These may arise from an incorrect peak shape, unmodeled anisotropy or asymmetry, an inadequate background model (requiring adjustment of spline points), or the presence of an unaccounted-for impurity phase.</li> </ul>
 
             <blockquote>
             <h3 id="results-wh">Williamson-Hall Size-Strain Analysis</h3>
@@ -590,8 +592,7 @@
 
             <h3>Data Export</h3>
             <ul>
-                <li><b>Save Report:</b> Generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), the Williamson-Hall analysis results (if applicable), a list of reflections with calculated and observed intensities, and (optionally) a point-by-point list of observed, calculated, background, and difference intensities.</li>
-                <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters and statistics, suitable for archival or reporting.</li>
+                <li><b>Save Report:</b> Generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), the Williamson-Hall analysis results (if applicable), the list of background spline points used, a list of reflections with calculated and observed intensities, and (optionally) a point-by-point list of observed, calculated, background, and difference intensities.</li> <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters and statistics, suitable for archival or reporting.</li>
             </ul>
         </section>
 
@@ -636,13 +637,13 @@
             <p>
                 The <strong>powder5</strong> toolkit was developed by Nita Dragoe from Université Paris-Saclay as a simple browser-based implementation of powder pattern decomposition methods. It is a long-time successor of PowderV2 (Dragoe, N. (2001). <em>J. Appl. Cryst.</em>, 34, 535) and has been updated to include the Pawley method and modern global optimization algorithms.
             </p>
-            
+
             <p>
                 Numerical calculations, including matrix operations and optimization routines, are performed using the <a href="https://mathjs.org/" target="_blank">math.js</a> library, which is distributed under the Apache 2.0 license.
             </p>
-      
+
             <p>
-                Version: 1.13 | Last Updated: 25 October 2025.<br>This document was updated with the assistance of an AI.
+                Version: 1.15 | Last Updated: 27 October 2025.<br> This document was updated with the assistance of an AI.
             </p>
             <div class="note">
                 <strong>Disclaimer:</strong> This application is provided for educational and research purposes. While it implements standard and robust algorithms, it is not a substitute for fully validated, peer-reviewed software packages (e.g., GSAS-II, FullProf, TOPAS) for analyses intended for publication.
