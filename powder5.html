@@ -957,7 +957,6 @@
                      <label for="algorithm-select" class="control-label">Method</label>
                      <select id="algorithm-select" class="control-select">
                         <option value="lm">Levenberg-Marquardt</option>
-                        <option value="sa" selected>Simulated Annealing</option>
                         <option value="pt" selected>Parallel Tempering</option> </select>
                      </select>
                      
@@ -3667,20 +3666,24 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
     const pawleyButton = document.getElementById('pawley-button');
     const fileLoaded = fullExperimentalData && fullExperimentalData.tth.length > 0;
 
-    // Disable Pawley if algorithm is SA or PT, OR if no file is loaded, OR if currently fitting
-    if (selectedAlgorithm === 'sa' || selectedAlgorithm === 'pt' || !fileLoaded || isFitting) {
-        pawleyButton.disabled = true;
-        if (selectedAlgorithm === 'sa' || selectedAlgorithm === 'pt') {
-             // Optionally add a title to explain why it's disabled
-             pawleyButton.title = "Pawley refinement is recommended only with Levenberg-Marquardt.";
-        } else {
-             pawleyButton.title = ""; // Clear title if disabled for other reasons
-        }
-    } else {
-        // Enable Pawley only for LM when a file is loaded and not fitting
-        pawleyButton.disabled = false;
-        pawleyButton.title = ""; // Clear title
-    }
+
+            if (!fileLoaded || isFitting) {
+                pawleyButton.disabled = true;
+                pawleyButton.title = ""; // Clear title
+            } else if (selectedAlgorithm === 'lm') {
+                 // Enable Pawley for LM
+                pawleyButton.disabled = false;
+                pawleyButton.title = "Run Pawley refinement with Levenberg-Marquardt.";
+            } else if (selectedAlgorithm === 'pt') {
+                // Enable Pawley for PT
+                pawleyButton.disabled = false;
+                pawleyButton.title = "Run Pawley refinement with Parallel Tempering.";
+            } else {
+                // Disable for any other case
+                 pawleyButton.disabled = true;
+                 pawleyButton.title = "Select a valid algorithm.";
+            }
+
 }
 
 
@@ -4225,7 +4228,6 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
             const algorithmNames = {
                 lm: 'Levenberg-Marquardt',
-                sa: 'Simulated Annealing',
                 pt: 'Parallel Tempering'
             };
             const algorithmName = algorithmNames[algorithm] || 'Unknown';

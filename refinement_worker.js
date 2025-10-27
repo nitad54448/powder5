@@ -1,6 +1,7 @@
 // refinement_worker.js
 // version 114, 26 oct 2025
 // MODIFIED to use Spline Background
+// MODIFIED to remove Simulated Annealing (SA)
 try {
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js', 'rules_spaceGroups.js');} catch (e) {
     console.error("Worker Error: Failed to import scripts.", e);
@@ -25,7 +26,6 @@ if (typeof spaceGroups === 'undefined') {
  // Make sure this matches the main script
 const CALCULATION_WINDOW_MULTIPLIER = 6.0;
 const PEAK_HEIGHT_CUTOFF = 0.002;
-// const NUM_BACKGROUND_PARAMS = 9; // <-- REMOVED (Chebyshev)
 const HIGH_WEIGHT_MULTIPLIER = 50.0;
 
 
@@ -200,16 +200,12 @@ function createMonotonicCubicSplineInterpolator(points) {
             }
         }
 
-        // --- Amorphous Hump logic was previously removed ---
-
         return background;
     }
 
 
 
 // --- Space Group / HKL Functions (from rules_spaceGroups.js, now assumed global) ---
-// These functions like isReflectionAllowed, evaluateRuleTree, etc.,
-// are expected to be available globally because rules_spaceGroups.js was imported... see script in powder5.html
 
 // --- HKL List Generation & Position Update ---
 function updateHklPositions(hklList, params, system) {
@@ -278,8 +274,6 @@ function updateHklPositions(hklList, params, system) {
                      if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0 || a <= 0 || c <= 0) throw new Error("Invalid lattice param");
                     inv_d_sq = (1/sin_beta_sq) * (h2/a_sq + k2*sin_beta_sq/b_sq + l2/c_sq - (2*h*l*cos_beta)/(a*c));
                     break;
-                 // Add triclinic if needed, complex formula
-                 // case 'triclinic': ...
                 default:
                     throw new Error(`Unknown system: ${system}`);
             }
@@ -300,7 +294,6 @@ function updateHklPositions(hklList, params, system) {
                 }
             }
         } catch (error) {
-             // console.error(`Error calculating d-spacing for HKL (${h},${k},${l}) in ${system}: ${error.message}`);
              peak.tth = null;
              peak.d = null;
         }
@@ -315,112 +308,101 @@ function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
     }
 
     let m = 0;
-     // Use absolute values for comparisons to handle negative indices correctly
      const abs_h = Math.abs(h);
      const abs_k = Math.abs(k);
      const abs_l = Math.abs(l);
-
-     // Sort absolute values: h' >= k' >= l'
      let [h_p, k_p, l_p] = [abs_h, abs_k, abs_l].sort((a, b) => b - a);
-
 
     switch (laue_class) {
          case 'm-3m':
-             if (h_p > k_p && k_p > l_p && l_p >= 0) m = 48;        // h > k > l > 0
-             else if (h_p === k_p && k_p > l_p && l_p >= 0) m = 24;  // h = k > l >= 0
-             else if (h_p > k_p && k_p === l_p && l_p >= 0) m = 24;  // h > k = l >= 0
-             // else if (h_p > l_p && k_p > l_p && h_p === k_p) m = 24; // Redundant with h=k>l
-             else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;   // h = k = l > 0
-             else if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;       // h00
-             else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;      // hh0
-             else if (h_p > k_p && k_p > 0 && l_p === 0) m = 24;      // hk0 (h>k>0)
-             else m = 1; // Should not happen for non-zero hkl
+             if (h_p > k_p && k_p > l_p && l_p >= 0) m = 48;
+             else if (h_p === k_p && k_p > l_p && l_p >= 0) m = 24;
+             else if (h_p > k_p && k_p === l_p && l_p >= 0) m = 24;
+             else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;
+             else if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;
+             else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;
+             else if (h_p > k_p && k_p > 0 && l_p === 0) m = 24;
+             else m = 1;
              break;
          case 'm-3':
-              if (h_p > k_p && k_p > l_p && l_p >= 0) m = 24;        // h > k > l >= 0
-              else if ((h_p === k_p && k_p > l_p && l_p >= 0) || (h_p > k_p && k_p === l_p && l_p >= 0)) m = 12; // h=k>l>=0 or h>k=l>=0
-              else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;   // h=k=l>0
-              else if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;       // h00
-              else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;      // hh0 - Correction: m-3 has 12 for hh0
-              else if (h_p > k_p && k_p > 0 && l_p === 0) m = 12;      // hk0 (h>k>0) - Correction: m-3 has 12 for hk0
+              if (h_p > k_p && k_p > l_p && l_p >= 0) m = 24;
+              else if ((h_p === k_p && k_p > l_p && l_p >= 0) || (h_p > k_p && k_p === l_p && l_p >= 0)) m = 12;
+              else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;
+              else if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;
+              else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;
+              else if (h_p > k_p && k_p > 0 && l_p === 0) m = 12;
               else m = 1;
               break;
          case '6/mmm':
-             if (l_p > 0) { // l != 0
-                  if (abs_h === 0 && abs_k === 0) m = 2; // 00l
-                  else if (abs_h > 0 && abs_k === 0) m = 12; // h0l
-                  else if (abs_h === abs_k && abs_k > 0) m = 12; // hhl
-                  else if (abs_h > abs_k && abs_k >= 0) m = 24; // hkl, h>k>=0
-                   // Need to consider 2hk.l, h h 2h .l etc for hexagonal? Usually handled by checking h,k,i=-h-k
-                   // Assuming standard 3-index notation for now.
-                  else m = 24; // Fallback general
-              } else { // l=0 plane
-                  if (abs_h === 0 && abs_k === 0) m = 1; // Origin
-                  else if (abs_h > 0 && abs_k === 0) m = 6; // h00
-                  else if (abs_h === abs_k && abs_k > 0) m = 6; // hh0
-                  else if (abs_h > abs_k && abs_k >= 0) m = 12; // hk0, h>k>=0
-                  else m = 12; // Fallback general hk0
+             if (l_p > 0) {
+                  if (abs_h === 0 && abs_k === 0) m = 2;
+                  else if (abs_h > 0 && abs_k === 0) m = 12;
+                  else if (abs_h === abs_k && abs_k > 0) m = 12;
+                  else if (abs_h > abs_k && abs_k >= 0) m = 24;
+                  else m = 24;
+              } else {
+                  if (abs_h === 0 && abs_k === 0) m = 1;
+                  else if (abs_h > 0 && abs_k === 0) m = 6;
+                  else if (abs_h === abs_k && abs_k > 0) m = 6;
+                  else if (abs_h > abs_k && abs_k >= 0) m = 12;
+                  else m = 12;
               }
               break;
          case '6/m':
-              if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 12 : 2; // 00l vs hkl/h0l/hhl etc.
-              else m = (abs_h > 0 || abs_k > 0) ? 6 : 1; // Origin vs hk0/h00/hh0
+              if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 12 : 2;
+              else m = (abs_h > 0 || abs_k > 0) ? 6 : 1;
               break;
-        case '-3m': // Needs careful check for rhombohedral vs hexagonal indexing if applicable
-             // Using hexagonal axes convention
-             if (l_p !== 0) { // l != 0
-                 if (abs_h === 0 && abs_k === 0) { m = 2; } // 00l
-                 // Special conditions like h-k+l = 3n or -h+k+l = 3n might matter for R centering, handled by isReflectionAllowed
-                 // Multiplicity based purely on Laue group symmetry:
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) { m = 12; } // h0l, hhl, 0kl forms
-                 else { m = 24; } // General hkl
-             } else { // l=0 plane
-                 if (abs_h === 0 && abs_k === 0) { m = 1; } // Origin
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) { m = 6; } // h00, hh0 forms
-                 else { m = 12; } // General hk0
+        case '-3m':
+             if (l_p !== 0) {
+                 if (abs_h === 0 && abs_k === 0) { m = 2; }
+                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) { m = 12; }
+                 else { m = 24; }
+             } else {
+                 if (abs_h === 0 && abs_k === 0) { m = 1; }
+                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) { m = 6; }
+                 else { m = 12; }
              }
              break;
          case '-3':
-             if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1; // Origin
-             else if (abs_h === 0 && abs_k === 0) m = 2; // 00l
-             else m = 6; // General hkl and hk0
+             if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1;
+             else if (abs_h === 0 && abs_k === 0) m = 2;
+             else m = 6;
              break;
          case '4/mmm':
-             if (l_p > 0) { // l != 0
-                 if (abs_h === 0 && abs_k === 0) m = 2; // 00l
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 8; // h0l, hhl forms
-                 else m = 16; // General hkl
-             } else { // l=0 plane
-                 if (abs_h === 0 && abs_k === 0) m = 1; // Origin
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 4; // h00, hh0 forms
-                 else m = 8; // General hk0
+             if (l_p > 0) {
+                 if (abs_h === 0 && abs_k === 0) m = 2;
+                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 8;
+                 else m = 16;
+             } else {
+                 if (abs_h === 0 && abs_k === 0) m = 1;
+                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 4;
+                 else m = 8;
              }
              break;
          case '4/m':
-              if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 8 : 2; // 00l vs hkl/h0l/hhl
-              else m = (abs_h > 0 || abs_k > 0) ? 4 : 1; // Origin vs hk0/h00/hh0
+              if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 8 : 2;
+              else m = (abs_h > 0 || abs_k > 0) ? 4 : 1;
               break;
          case 'mmm':
-              if (abs_h > 0 && abs_k > 0 && l_p > 0) m = 8; // hkl
-              else if ((abs_h > 0 && abs_k > 0 && l_p === 0) || (abs_h > 0 && abs_k === 0 && l_p > 0) || (abs_h === 0 && abs_k > 0 && l_p > 0)) m = 4; // hk0, h0l, 0kl
-              else if (abs_h > 0 || abs_k > 0 || l_p > 0) m = 2; // h00, 0k0, 00l
-              else m = 1; // Origin
+              if (abs_h > 0 && abs_k > 0 && l_p > 0) m = 8;
+              else if ((abs_h > 0 && abs_k > 0 && l_p === 0) || (abs_h > 0 && abs_k === 0 && l_p > 0) || (abs_h === 0 && abs_k > 0 && l_p > 0)) m = 4;
+              else if (abs_h > 0 || abs_k > 0 || l_p > 0) m = 2;
+              else m = 1;
               break;
-         case '2/m': // Assumes unique axis b
-              if (abs_k > 0) m = 4; // hkl, 0kl
-              else if (abs_k === 0 && (abs_h !== 0 || l_p !== 0)) m = 2; // h0l (including h00, 00l)
-              else m = 1; // Origin
+         case '2/m':
+              if (abs_k > 0) m = 4;
+              else if (abs_k === 0 && (abs_h !== 0 || l_p !== 0)) m = 2;
+              else m = 1;
               break;
          case '-1':
-              if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1; // Origin
-              else m = 2; // General hkl
+              if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1;
+              else m = 2;
               break;
         default:
             console.warn("Unknown Laue class:", laue_class, "- assuming multiplicity 1");
             m = 1;
             break;
     }
-    // Simple canonical: return original h,k,l for now
     return { multiplicity: m, canonical_hkl_obj: [h, k, l] };
 }
 
@@ -428,60 +410,42 @@ function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
 /**
  * Generates the list of raw HKL indices {h, k, l, multiplicity} for PREVIEW/REFINEMENT.
  * Checks cache first in the worker context.
- * @param {object} spaceGroup - The space group object containing rules, system, laue_class.
- * @param {number} maxTth - The maximum 2-theta angle for generation.
- * @param {object} params - Object containing lattice parameters (a, b, c) and wavelength (lambda).
- * @returns {Array} A list of raw HKL reflection objects {h_orig, k_orig, l_orig, hkl_list, multiplicity}.
  */
 function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
-    // --- Worker Cache Check (only runs in worker context) ---
-    // Note: 'self' is defined in workers, but not in the main window context.
-    // 'hklIndexCache' is defined globally in both contexts.
     let sgNumber = null;
     if (spaceGroup && typeof spaceGroup.number === 'number') {
         sgNumber = spaceGroup.number;
-        // Check worker cache *only if* in worker and cache exists for this SG
         if (typeof self !== 'undefined' && typeof importScripts === 'function' && hklIndexCache[sgNumber]) {
-             return hklIndexCache[sgNumber]; // Return cached version from worker
+             return hklIndexCache[sgNumber];
         }
     }
-    // --- End Worker Cache Check ---
 
-    // --- Parameter Validation ---
     const { a, b, c, lambda } = params;
     const sgSystem = spaceGroup ? spaceGroup.system : null;
     const sgLaueClass = spaceGroup ? spaceGroup.laue_class : null;
 
-    // Check specifically for valid numbers and non-empty strings
     if (!lambda || typeof lambda !== 'number' || lambda <= 0 ||
         !sgLaueClass || typeof sgLaueClass !== 'string' || sgLaueClass.length === 0 ||
         !a || typeof a !== 'number' || a <= 0 ||
-        !sgSystem || typeof sgSystem !== 'string' || sgSystem.length === 0 ) { // Added check for system
+        !sgSystem || typeof sgSystem !== 'string' || sgSystem.length === 0 ) {
          console.error(`HKL Gen Error: Invalid parameters provided. Lambda: ${lambda}, Laue Class: ${sgLaueClass}, System: ${sgSystem}, a: ${a}`);
-         return []; // Return empty if any crucial parameter is invalid
+         return [];
      }
-    // --- End Validation ---
 
     const maxDim = Math.max(a || 0, b || a || 0, c || a || 0);
     if (maxDim <= 0) return [];
 
-    // --- OPTIMIZATION: Calculate max 1/d^2 for pruning ---
     const sinThetaMax = Math.sin(maxTth * Math.PI / 360);
     if (sinThetaMax <= 0) return [];
     const dMin = lambda / (2 * sinThetaMax);
-    if (dMin <= 0) return []; // Safety check for dMin
+    if (dMin <= 0) return [];
     const inv_d_sq_max = 1.0 / (dMin * dMin);
-    // Be more conservative with maxIndex if maxDim is very large, prevent huge loops
     const baseMaxIndex = Math.ceil(maxDim / dMin) + 5;
-    const maxIndex = Math.min(baseMaxIndex, 50); // Set an absolute max index limit (e.g., 50)
+    const maxIndex = Math.min(baseMaxIndex, 50);
 
-
-    // Pre-calculate params squared
     const a_sq = a * a;
-    // Handle cases where b or c might not be relevant for the system but are passed in params
     const b_sq = (sgSystem === 'orthorhombic' || sgSystem === 'monoclinic' || sgSystem === 'triclinic') ? ((b && b > 0) ? b * b : a_sq) : a_sq;
     const c_sq = (sgSystem !== 'cubic') ? ((c && c > 0) ? c * c : a_sq) : a_sq;
-    // --- End Optimization Setup ---
 
     let rawReflections = [];
     const addedHKLs = new Set();
@@ -492,7 +456,6 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
         const key = getKey(h, k, l);
         if (addedHKLs.has(key)) return;
 
-        // Pass the full spaceGroup object to isReflectionAllowed
         if (isReflectionAllowed(h, k, l, spaceGroup)) {
             const { multiplicity } = getMultiplicityAndCanonicalHKL(h, k, l, sgLaueClass);
              if (multiplicity > 0) {
@@ -508,88 +471,72 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
 
     const maxI = maxIndex;
 
-    // Use sgSystem consistently
     if (sgSystem === 'monoclinic' || sgSystem === 'triclinic') {
-        // Asymmetric unit for 2/m (unique axis b) - k>=0, l>=0. h can be +/-.
-        // For -1 (triclinic), asymmetric unit is more complex, usually h>=0 or covering half sphere.
-        // Let's stick to the 2/m unit for simplicity here, might overgenerate slightly for triclinic.
         for (let h = -maxI; h <= maxI; h++) {
             for (let k = 0; k <= maxI; k++) {
                 for (let l = 0; l <= maxI; l++) {
-                     if (k === 0 && l === 0 && h <= 0) continue; // Avoid double counting h00/-h00, and origin
-                     if (k === 0 && h === 0 && l === 0) continue; // Origin
-                     // Further monoclinic constraints might apply depending on unique axis, assuming 'b' here
+                     if (k === 0 && l === 0 && h <= 0) continue;
+                     if (k === 0 && h === 0 && l === 0) continue;
                     loopAndAdd(h, k, l);
                 }
             }
         }
     } else if (sgSystem === 'orthorhombic') {
-        if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0) return []; // Need valid params
+        if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0) return [];
         for (let h = 0; h <= maxI; h++) {
             const h_term = (h*h) / a_sq;
-            if (h_term > inv_d_sq_max && h > 0) break; // Prune h loop
+            if (h_term > inv_d_sq_max && h > 0) break;
 
             for (let k = 0; k <= maxI; k++) {
                 const hk_term = h_term + (k*k) / b_sq;
-                if (hk_term > inv_d_sq_max && k > 0) break; // Prune k loop
+                if (hk_term > inv_d_sq_max && k > 0) break;
 
                 for (let l = 0; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
+                    if (h === 0 && k === 0 && l === 0) continue;
                     const hkl_term = hk_term + (l*l) / c_sq;
                     if (hkl_term > inv_d_sq_max) {
-                         // If l=0 fails, all higher l will fail for this h,k. Break inner loop.
-                         // If l>0 fails, move to next k.
-                         break; // Prune l loop
+                         break;
                     }
                     loopAndAdd(h, k, l);
                 }
             }
         }
     } else if (sgSystem === 'hexagonal' || sgSystem === 'trigonal' || sgSystem === 'rhombohedral') {
-        if (a_sq <= 0 || c_sq <= 0) return []; // Need a and c
+        if (a_sq <= 0 || c_sq <= 0) return [];
         const a_term_prefactor = 4.0 / (3.0 * a_sq);
-        // Asymmetric unit for hexagonal Laue groups (6/m, 6/mmm): h>=k>=0, l>=0
-        // For trigonal Laue groups (-3, -3m), depends on centering if R.
-        // Let's use h>=k>=0, l can be +/- for -3, -3m for broader coverage initially
         const l_limit = (sgLaueClass === '6/m' || sgLaueClass === '6/mmm') ? 0 : -maxI;
 
         for (let h = 0; h <= maxI; h++) {
             const h_term_only = a_term_prefactor * (h*h);
-            // Optimization: if even h=1 is too large, break early (check h > 0)
              if (h_term_only > inv_d_sq_max && h > 0) break;
 
-            for (let k = 0; k <= h; k++) { // Use h >= k >= 0 convention
+            for (let k = 0; k <= h; k++) {
                 const hk_term = a_term_prefactor * (h*h + h*k + k*k);
-                 // Optimization: if hk term exceeds limit, increasing k further won't help
                  if (hk_term > inv_d_sq_max && k > 0) break;
 
-                for (let l = l_limit; l <= maxI; l++) { // Use l>=0 or l+/- depending on Laue group
-                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
+                for (let l = l_limit; l <= maxI; l++) {
+                    if (h === 0 && k === 0 && l === 0) continue;
                     const hkl_term = hk_term + (l*l) / c_sq;
                     if (hkl_term > inv_d_sq_max) {
-                        // If l is increasing and positive, break loop for this h,k
                         if (l >= 0) break;
-                         // If l is negative and increasing towards 0, continue until l>=0 check fails
                     }
-                     // Specific check for hexagonal 000 point which is not allowed
                      if (h === 0 && k === 0 && l === 0) continue;
                     loopAndAdd(h, k, l);
                 }
             }
         }
     } else { // Cubic, Tetragonal
-        // Asymmetric unit h>=k>=l>=0
         const isTetragonal = (sgSystem === 'tetragonal');
         if (a_sq <= 0 || (isTetragonal && c_sq <= 0)) return [];
 
         for (let h = 0; h <= maxI; h++) {
-            const h_term_factor = (h*h); // Calculate h^2 once
+            const h_term_factor = (h*h);
 
-            for (let k = 0; k <= h; k++) { // Use h >= k
-                const hk_term_factor = h_term_factor + (k*k); // Calculate h^2+k^2 once
+            for (let k = 0; k <= h; k++) {
+                const hk_term_factor = h_term_factor + (k*k);
 
-                for (let l = 0; l <= k; l++) { // Use k >= l
-                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
+                for (let l = 0; l <= k; l++) {
+                    if (h === 0 && k === 0 && l === 0) continue;
 
                     let inv_d_sq_term;
                     if (isTetragonal) {
@@ -599,40 +546,30 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                     }
 
                     if (inv_d_sq_term > inv_d_sq_max) {
-                         // Since l increases, if l fails, all larger l for this h,k will fail
-                         break; // Break l loop
+                         break;
                     }
                     loopAndAdd(h, k, l);
-                } // end l loop
-                 // Optimization: If the loop broke with l=0, then increasing k won't help either
-                 // This requires careful check: test hk term with l=0.
+                }
                  let l0_term;
                  if(isTetragonal) l0_term = hk_term_factor / a_sq;
                  else l0_term = hk_term_factor / a_sq;
                  if (l0_term > inv_d_sq_max && k > 0) {
-                     break; // Break k loop if even l=0 exceeds limit
+                     break;
                  }
 
-            } // end k loop
-             // Optimization: If the k loop broke with k=0, then increasing h won't help either
-             // Test h term with k=0, l=0
+            }
              let k0l0_term;
-             if(isTetragonal) k0l0_term = h_term_factor / a_sq; // l=0, k=0
-             else k0l0_term = h_term_factor / a_sq; // l=0, k=0
+             if(isTetragonal) k0l0_term = h_term_factor / a_sq;
+             else k0l0_term = h_term_factor / a_sq;
              if (k0l0_term > inv_d_sq_max && h > 0) {
-                 break; // Break h loop if even k=0, l=0 exceeds limit
+                 break;
              }
-        } // end h loop
+        }
     }
 
-
-    // --- Worker Cache Update ---
-    // Only update cache if in worker context and sgNumber is valid
     if (sgNumber !== null && typeof self !== 'undefined' && typeof importScripts === 'function') {
          hklIndexCache[sgNumber] = rawReflections;
     }
-    // --- End Worker Cache Update ---
-
     return rawReflections;
 }
 
@@ -806,7 +743,6 @@ function calculateProfileWidths(tth, hkl, params, side = 'center') {
 
 /**
  * Calculates the total FWHM of a TCH/Split peak from its Gaussian and Lorentzian components.
- * (This is only used by TCH and can remain as-is)
  */
 function getPeakFWHM(gamma_G, gamma_L) {
     const gG = Math.max(1e-9, gamma_G || 1e-9);
@@ -914,7 +850,6 @@ function getPseudoVoigtArea(tth_peak, hkl, params) {
 
 /**
  * Applies asymmetry correction (FCJ model for TCH).
- * [REFACTORED] Simplified logic.
  */
 function applyAsymmetry(x, x0, tth_peak, params) {
     // Only apply for TCH profile, and only if params are set
@@ -969,7 +904,6 @@ function pseudoVoigt(x, x0, tth_peak, hkl, params) {
                 break;
         }
     } catch (calcError) {
-         // console.warn("Error in pseudoVoigt calculation:", calcError);
          return 0.0;
     }
      return (isFinite(result) && result >= 0) ? result : 0.0;
@@ -1053,7 +987,6 @@ function _pseudoVoigt_TCH(corrected_delta, tth_peak, hkl, params) {
 
 /**
  * Calculates the overall diffraction pattern.
- * [CORRECTED FOR PAWLEY STABILITY]
  */
 function calculatePattern(tthAxis, hklList, params) {
     const n_points = tthAxis ? tthAxis.length : 0;
@@ -1078,8 +1011,6 @@ function calculatePattern(tthAxis, hklList, params) {
         const shift1 = calculatePeakShift(basePos1, params);
         const peakPos1 = basePos1 + shift1;
         
-        // REMOVED shapeArea1 calculation. peak.intensity is now treated as HEIGHT, version 114
-        
         const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
         const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
         
@@ -1096,7 +1027,6 @@ function calculatePattern(tthAxis, hklList, params) {
             if (current_tth > max_tth1) break;
             const intensityAtPoint = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params); 
             if (intensityAtPoint > HEIGHT_CUTOFF) {
-                // CHANGED: Use peak.intensity directly as Height, v114, Pawley unstable
                 pattern[i] += peak.intensity * intensityAtPoint;
             }
         }
@@ -1118,8 +1048,6 @@ function calculatePattern(tthAxis, hklList, params) {
             const shift2 = calculatePeakShift(basePos2, params);
             const peakPos2 = basePos2 + shift2;
             
-            // REMOVED shapeArea2 calculation.
-            
             const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
             const fwhm_approx2 = getPeakFWHM(gG2, gL2);
 
@@ -1136,7 +1064,6 @@ function calculatePattern(tthAxis, hklList, params) {
                 if (current_tth > max_tth2) break;
                 const intensityAtPoint = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
                 if (intensityAtPoint > HEIGHT_CUTOFF) {
-                    //  CHANGED: Use peak.intensity directly as Height
                     pattern[i] += peak.intensity * ratio21 * intensityAtPoint;
                 }
             }
@@ -1155,25 +1082,22 @@ function calculatePattern(tthAxis, hklList, params) {
 
 // --- Le Bail Intensity Extraction 
 function leBailIntensityExtraction(expData, hklList, params) {
-    // Basic validation
     if (!expData || !expData.tth || !expData.intensity || !expData.background || !hklList ||
         expData.tth.length !== expData.intensity.length || expData.tth.length !== expData.background.length) {
         console.error("leBailIntensityExtraction: Invalid input data.");
-        if (hklList) hklList.forEach(p => { if(p) p.intensity = 0; }); // Reset intensities on error
+        if (hklList) hklList.forEach(p => { if(p) p.intensity = 0; });
         return;
     }
      const n_points = expData.tth.length;
-     if (n_points === 0) return; // Nothing to do
+     if (n_points === 0) return;
 
     const deg2rad = Math.PI / 180;
     const lambda1 = params.lambda || 1.54056;
     const lambda2 = params.lambda2 || 0;
     const ratio21 = params.ratio || 0;
-    const zeroShift = params.zeroShift || 0;
     const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
     const lambdaRatio = doubletEnabled ? lambda2 / lambda1 : 1.0;
 
-    // --- 1. Pre-calculate the theoretical shape (profile) for every peak ---
     const peak_profiles = new Array(hklList.length);
     const total_profile_sum = new Float64Array(n_points).fill(0);
 
@@ -1186,15 +1110,13 @@ function leBailIntensityExtraction(expData, hklList, params) {
             return;
         }
         
-        // --- K-alpha 1 profile pre-calculation ---
         const basePos1 = peak.tth + zeroShift;
         const shift1 = calculatePeakShift(basePos1, params);
         const peakPos1 = basePos1 + shift1;
         const { gamma_G, gamma_L } = calculateProfileWidths(basePos1, peak, params);
         const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
-        const window1 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx1); // Use slightly larger window
+        const window1 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx1);
 
-        // --- K-alpha 2 profile pre-calculation ---
         let tth2 = null, basePos2 = null, peakPos2 = null, window2 = 0;
         if (doubletEnabled) {
              const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
@@ -1210,12 +1132,10 @@ function leBailIntensityExtraction(expData, hklList, params) {
              }
         }
 
-        // --- Loop over data points to build this peak's combined (Ka1+Ka2) profile ---
         for (let i = 0; i < n_points; i++) {
             const current_tth = expData.tth[i];
             let total_val_for_peak = 0;
 
-            // Ka1 contribution
             if (Math.abs(current_tth - peakPos1) < window1) {
                 const profileVal1 = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params);
                 if (profileVal1 > PEAK_HEIGHT_CUTOFF / 10) {
@@ -1223,7 +1143,6 @@ function leBailIntensityExtraction(expData, hklList, params) {
                 }
             }
             
-            // Ka2 contribution
             if (tth2 && Math.abs(current_tth - peakPos2) < window2) {
                 const profileVal2 = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
                 if (profileVal2 > PEAK_HEIGHT_CUTOFF / 10) {
@@ -1235,55 +1154,43 @@ function leBailIntensityExtraction(expData, hklList, params) {
             total_profile_sum[i] += total_val_for_peak;
         }
         peak_profiles[j] = current_peak_profile;
-    }); // End hklList.forEach (pre-calculation)
+    });
 
     
-    // --- 2. Partition the experimental intensity and integrate ---
     const currentCycleIntensities = new Array(hklList.length).fill(0.0);
 
-    for (let i = 1; i < n_points; i++) { // Start from 1 for trapezoid
+    for (let i = 1; i < n_points; i++) {
         const step_width = expData.tth[i] - expData.tth[i-1];
-        if (step_width <= 0) continue; // Skip duplicate or disordered points
+        if (step_width <= 0) continue;
 
-        // Get net intensity at this point and the previous point
         const prev_y_obs_net = Math.max(0, expData.intensity[i-1] - (expData.background[i-1] || 0));
         const current_y_obs_net = Math.max(0, expData.intensity[i] - (expData.background[i] || 0));
 
-        // Partition the intensity for each peak
         hklList.forEach((peak, j) => {
             if (!peak) return;
 
-            // Find what fraction of the total calculated profile this peak represents
             const prev_fraction = total_profile_sum[i-1] > 1e-9 ? peak_profiles[j][i-1] / total_profile_sum[i-1] : 0;
             const current_fraction = total_profile_sum[i] > 1e-9 ? peak_profiles[j][i] / total_profile_sum[i] : 0;
             
-            // Apply that fraction to the net observed intensity
             const prev_partitioned_I = prev_y_obs_net * prev_fraction;
             const current_partitioned_I = current_y_obs_net * current_fraction;
             
-            // Calculate the area of this trapezoid slice and add it to the peak's total
             const trapezoid_area = (prev_partitioned_I + current_partitioned_I) / 2 * step_width;
             
             currentCycleIntensities[j] += trapezoid_area;
         });
-    } // End loop over data points (integration)
+    }
 
-    // --- 3. Assign the final integrated intensities to the HKL list ---
-
-    // --- 3. Assign the final integrated intensities to the HKL list ---
     hklList.forEach((peak, idx) => {
         if (!peak) return;
         const extracted_area = Math.max(0, currentCycleIntensities[idx] || 0);
         
-        // Convert extracted TOTAL area to peak HEIGHT
         let peak_height = 0;
         if (extracted_area > 0 && peak.tth) {
             
-            // 1. Get Area for Ka1
             const shapeArea_Ka1 = getPseudoVoigtArea(peak.tth, peak, params);
-            let total_area_factor = shapeArea_Ka1; // This is (Area_Ka1 + ratio * Area_Ka2)
+            let total_area_factor = shapeArea_Ka1;
 
-            // 2. Add Area for Ka2 if it exists
             const lambda1 = params.lambda;
             const lambda2 = params.lambda2;
             const ratio21 = params.ratio;
@@ -1301,18 +1208,156 @@ function leBailIntensityExtraction(expData, hklList, params) {
                 }
             }
             
-            // 3. Correctly calculate height
-            // Height = Total_Area / (Area_Ka1 + ratio * Area_Ka2)
             if (total_area_factor > 1e-9) {
                 peak_height = extracted_area / total_area_factor;
             }
         }
         
-        peak.intensity = peak_height; // Now peak.intensity stores HEIGHT
+        peak.intensity = peak_height;
         delete peak.intensity_previous;
     });
 }
 
+
+function leBailIntensityExtraction(expData, hklList, params) {
+    // Basic validation
+    if (!expData || !expData.tth || !expData.intensity || !expData.background || !hklList ||
+        expData.tth.length !== expData.intensity.length || expData.tth.length !== expData.background.length) {
+        console.error("leBailIntensityExtraction: Invalid input data.");
+        if (hklList) hklList.forEach(p => { if(p) p.intensity = 0; }); // Reset intensities on error
+        return;
+    }
+     const n_points = expData.tth.length;
+     if (n_points === 0) return; // Nothing to do
+
+    const deg2rad = Math.PI / 180;
+    const lambda1 = params.lambda || 1.54056;
+    const lambda2 = params.lambda2 || 0;
+    const ratio21 = params.ratio || 0;
+    const zeroShift = params.zeroShift || 0; // <-- ADDED THIS LINE
+    const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
+    const lambdaRatio = doubletEnabled ? lambda2 / lambda1 : 1.0;
+
+    // --- 1. Pre-calculate the theoretical shape (profile) for every peak ---
+    const peak_profiles = new Array(hklList.length);
+    const total_profile_sum = new Float64Array(n_points).fill(0);
+
+
+
+    hklList.forEach((peak, j) => {
+        const current_peak_profile = new Float64Array(n_points).fill(0);
+        if (!peak || !peak.tth || peak.tth <= 0 || peak.tth >= 180) {
+            peak_profiles[j] = current_peak_profile;
+            return;
+        }
+        
+        const basePos1 = peak.tth + zeroShift;
+        const shift1 = calculatePeakShift(basePos1, params);
+        const peakPos1 = basePos1 + shift1;
+        const { gamma_G, gamma_L } = calculateProfileWidths(basePos1, peak, params);
+        const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
+        const window1 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx1);
+
+        let tth2 = null, basePos2 = null, peakPos2 = null, window2 = 0;
+        if (doubletEnabled) {
+             const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
+             const sinTheta2 = sinTheta1 * lambdaRatio;
+             if (Math.abs(sinTheta2) < 1) {
+                 tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                 basePos2 = tth2 + zeroShift;
+                 const shift2 = calculatePeakShift(basePos2, params);
+                 peakPos2 = basePos2 + shift2;
+                 const widths2 = calculateProfileWidths(basePos2, peak, params);
+                 const fwhm_approx2 = getPeakFWHM(widths2.gamma_G, widths2.gamma_L);
+                 window2 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx2);
+             }
+        }
+
+        for (let i = 0; i < n_points; i++) {
+            const current_tth = expData.tth[i];
+            let total_val_for_peak = 0;
+
+            if (Math.abs(current_tth - peakPos1) < window1) {
+                const profileVal1 = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params);
+                if (profileVal1 > PEAK_HEIGHT_CUTOFF / 10) {
+                    total_val_for_peak += profileVal1;
+                }
+            }
+            
+            if (tth2 && Math.abs(current_tth - peakPos2) < window2) {
+                const profileVal2 = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
+                if (profileVal2 > PEAK_HEIGHT_CUTOFF / 10) {
+                    total_val_for_peak += profileVal2 * ratio21;
+                }
+            }
+            
+            current_peak_profile[i] = total_val_for_peak;
+            total_profile_sum[i] += total_val_for_peak;
+        }
+        peak_profiles[j] = current_peak_profile;
+    });
+
+    
+    const currentCycleIntensities = new Array(hklList.length).fill(0.0);
+
+    for (let i = 1; i < n_points; i++) {
+        const step_width = expData.tth[i] - expData.tth[i-1];
+        if (step_width <= 0) continue;
+
+        const prev_y_obs_net = Math.max(0, expData.intensity[i-1] - (expData.background[i-1] || 0));
+        const current_y_obs_net = Math.max(0, expData.intensity[i] - (expData.background[i] || 0));
+
+        hklList.forEach((peak, j) => {
+            if (!peak) return;
+
+            const prev_fraction = total_profile_sum[i-1] > 1e-9 ? peak_profiles[j][i-1] / total_profile_sum[i-1] : 0;
+            const current_fraction = total_profile_sum[i] > 1e-9 ? peak_profiles[j][i] / total_profile_sum[i] : 0;
+            
+            const prev_partitioned_I = prev_y_obs_net * prev_fraction;
+            const current_partitioned_I = current_y_obs_net * current_fraction;
+            
+            const trapezoid_area = (prev_partitioned_I + current_partitioned_I) / 2 * step_width;
+            
+            currentCycleIntensities[j] += trapezoid_area;
+        });
+    }
+
+    hklList.forEach((peak, idx) => {
+        if (!peak) return;
+        const extracted_area = Math.max(0, currentCycleIntensities[idx] || 0);
+        
+        let peak_height = 0;
+        if (extracted_area > 0 && peak.tth) {
+            
+            const shapeArea_Ka1 = getPseudoVoigtArea(peak.tth, peak, params);
+            let total_area_factor = shapeArea_Ka1;
+
+            const lambda1 = params.lambda;
+            const lambda2 = params.lambda2;
+            const ratio21 = params.ratio;
+            const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
+
+            if (doubletEnabled) {
+                const deg2rad = Math.PI / 180;
+                const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
+                const sinTheta2 = sinTheta1 * (lambda1 > 1e-6 ? (lambda2 / lambda1) : 1.0);
+                
+                if (Math.abs(sinTheta2) < 1) {
+                    const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                    const shapeArea_Ka2 = getPseudoVoigtArea(tth2, peak, params);
+                    total_area_factor += ratio21 * shapeArea_Ka2;
+                }
+            }
+            
+            if (total_area_factor > 1e-9) {
+                peak_height = extracted_area / total_area_factor;
+            }
+        }
+        
+        peak.intensity = peak_height;
+        delete peak.intensity_previous;
+    });
+}
 
 
 
@@ -1325,7 +1370,6 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
     const weights = localWorkingData.weights;
     const N = y_obs.length;
 
-    // Validate inputs
     if (!y_obs || !netCalcPattern || !y_bkg || !weights ||
         N === 0 || y_obs.length !== netCalcPattern.length || y_obs.length !== y_bkg.length || y_obs.length !== weights.length) {
         console.error("Statistics calculation error: Mismatched or invalid array inputs.");
@@ -1337,24 +1381,21 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
         let sum_w_y_net_y_calc = 0;
         let sum_w_y_calc_sq = 0;
         for (let i = 0; i < N; i++) {
-             // Ensure weights are valid numbers
              const w_i = (weights[i] !== undefined && isFinite(weights[i])) ? weights[i] : 1.0;
             const y_obs_net = y_obs[i] - y_bkg[i];
-            const y_calc_i = netCalcPattern[i] || 0; // Ensure y_calc is numeric
+            const y_calc_i = netCalcPattern[i] || 0;
              if (isFinite(y_obs_net) && isFinite(y_calc_i)) {
                 sum_w_y_net_y_calc += w_i * y_obs_net * y_calc_i;
                 sum_w_y_calc_sq += w_i * y_calc_i * y_calc_i;
              }
         }
-        // Avoid division by zero, ensure scale factor is positive and finite
         scaleFactor = (sum_w_y_calc_sq > 1e-12) ? Math.max(0, sum_w_y_net_y_calc / sum_w_y_calc_sq) : 1.0;
-         if (!isFinite(scaleFactor)) scaleFactor = 1.0; // Fallback
+         if (!isFinite(scaleFactor)) scaleFactor = 1.0;
     }
 
-    // Calculate total calculated pattern y_calc = scale * net + background
     const y_calc = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
 
-    let sum_w_res_sq = 0, sum_w_obs_sq = 0, sum_abs_res = 0, sum_abs_obs_net = 0; // Use net observed for Rp
+    let sum_w_res_sq = 0, sum_w_obs_sq = 0, sum_abs_res = 0, sum_abs_obs_net = 0;
     for (let i = 0; i < N; i++) {
         const obs_i = y_obs[i];
         const calc_i = y_calc[i];
@@ -1363,29 +1404,23 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
 
          if (isFinite(obs_i) && isFinite(calc_i)) {
             const res = obs_i - calc_i;
-            const obs_net = obs_i - y_bkg[i]; // Net observed intensity for Rp
+            const obs_net = obs_i - y_bkg[i];
 
             sum_w_res_sq += w_i * res * res;
-            sum_w_obs_sq += w_i * obs_i * obs_i; // Use gross observed for Rwp denominator
+            sum_w_obs_sq += w_i * obs_i * obs_i;
             sum_abs_res += Math.abs(res);
-            sum_abs_obs_net += Math.abs(obs_net); // Sum of |Yobs_net| for Rp
+            sum_abs_obs_net += Math.abs(obs_net);
          }
     }
 
-    // Calculate Rp using net intensities
     const Rp = (sum_abs_obs_net > 1e-9) ? 100 * (sum_abs_res / sum_abs_obs_net) : 0;
-
-    // Calculate Rwp using gross intensities
-    const Rwp = (sum_w_obs_sq > 1e-9) ? 100 * Math.sqrt(Math.max(0, sum_w_res_sq / sum_w_obs_sq)) : 0; // Ensure sqrt argument is non-negative
+    const Rwp = (sum_w_obs_sq > 1e-9) ? 100 * Math.sqrt(Math.max(0, sum_w_res_sq / sum_w_obs_sq)) : 0;
 
 
-    // --- Calculate Chi-squared (Goodness of Fit) , attention style GSAS---
-    // Count number of refined parameters (P)
      const { paramMapping } = getParameterMapping(fitFlags || {}, params || {}, hklList || [], refinementMode || 'le-bail');
-     const P_base = paramMapping.filter(m => !m.isIntensity).length; // Count non-intensity parameters
+     const P_base = paramMapping.filter(m => !m.isIntensity).length;
      let P = P_base;
-     if (refinementMode === 'pawley' && hklList && localWorkingData && localWorkingData.tth && localWorkingData.tth.length > 0) { // Check workingData
-         // Count intensities actually refined (within the working data range)
+     if (refinementMode === 'pawley' && hklList && localWorkingData && localWorkingData.tth && localWorkingData.tth.length > 0) {
           const tthMin = localWorkingData.tth[0];
           const tthMax = localWorkingData.tth[localWorkingData.tth.length - 1];
          const refinedIntensitiesCount = hklList.filter(hkl =>
@@ -1394,14 +1429,12 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
          P += refinedIntensitiesCount;
      }
 
-    // Degrees of freedom
     const degreesOfFreedom = N - P;
 
     let chi2 = 0;
     if (degreesOfFreedom > 0) {
-        // Chi^2 = Sum(w * (y_obs - y_calc)^2) / (N - P)
         chi2 = sum_w_res_sq / degreesOfFreedom;
-        if (!isFinite(chi2) || chi2 < 0) chi2 = 0; // Ensure valid value
+        if (!isFinite(chi2) || chi2 < 0) chi2 = 0;
     }
 
 
@@ -1415,42 +1448,39 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
 }
 
 
-// --- Refinement Algorithms (LM, SA, PT) ---
-// These need the worker's postMessage for progress updates
+// --- Refinement Algorithms (LM, PT) ---
+// (Simulated Annealing function removed)
+
 async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
         const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList, refinementMode);
         if (paramMapping.length === 0) {
              const finalProgress = (leBailCycle + 1) / totalLeBailCycles;
-             postMessage({ type: 'progress', value: Math.min(1.0, finalProgress) }); // Ensure 100% for this cycle
+             postMessage({ type: 'progress', value: Math.min(1.0, finalProgress) });
             return { params: initialParams, hklList: hklList, ss_res: 0 };
         }
 
         let params = initialParams;
-        let workingHklList = JSON.parse(JSON.stringify(hklList)); // Deep copy
+        let workingHklList = JSON.parse(JSON.stringify(hklList));
 
         let finalJtJ = null, ss_res = Infinity;
-        let lambda = 0.001; // LM damping parameter
+        let lambda = 0.001;
 
-        // Use the worker's workingData
         const y_obs = workerWorkingData.intensity;
-        const sqrt_weights = workerWorkingData.weights.map(w => Math.sqrt(w)); // Assumes weights is Float64Array or similar
+        const sqrt_weights = workerWorkingData.weights.map(w => Math.sqrt(w));
         const n_points = y_obs.length;
         const n_params = paramMapping.length;
 
-        // Pre-allocate arrays
         const residuals = new Float64Array(n_points);
         const y_calc_total = new Float64Array(n_points);
         const y_calc_baseline = new Float64Array(n_points);
         const jacobian_col = new Float64Array(n_points);
 
-        // --- Progress Scaling Setup ---
         const baseProgress = leBailCycle / totalLeBailCycles;
         const cycleProgressSpan = 1 / totalLeBailCycles;
-        // --- End Progress Scaling Setup ---
 
         const calculateTotalPattern = (targetArray) => {
             updateHklPositions(workingHklList, params, system);
-            const y_bkg = calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors); // <-- MODIFIED
+            const y_bkg = calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors);
             const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, params);
 
             let scaleFactor = 1.0;
@@ -1469,48 +1499,42 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  if (!isFinite(scaleFactor)) scaleFactor = 1.0;
             }
 
-const totalPattern = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
+            const totalPattern = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
             for (let i = 0; i < n_points; i++) {
-                 targetArray[i] = totalPattern[i]; // Copy result to targetArray
+                 targetArray[i] = totalPattern[i];
              }
-            return scaleFactor; // Return scale factor used
+            return scaleFactor;
         };
 
 
         for (let iter = 0; iter < maxIter; iter++) {
-             let oldParams = null;       // Store previous state only if needed for rollback
+             let oldParams = null;
              let oldHklList = null;
             try {
                  calculateTotalPattern(y_calc_baseline);
 
-                 // Calculate residuals and cost
                  let cost = 0;
                  for (let i = 0; i < n_points; i++) {
                      residuals[i] = (y_obs[i] - y_calc_baseline[i]) * sqrt_weights[i];
-                     if (isFinite(residuals[i])) { // Check for NaN/Infinity
+                     if (isFinite(residuals[i])) {
                           cost += residuals[i] * residuals[i];
                      } else {
-                        // If cost calculation fails early, try increasing lambda? Or break?
-                        // Let's try increasing lambda and retrying this iter
                           lambda = Math.min(1e9, lambda * 10);
                           console.warn(`LM iter ${iter}: Residual calculation failed. Increased lambda to ${lambda}.`);
-                          if(oldParams) { // Rollback if we have a previous state
+                          if(oldParams) {
                                params = oldParams;
                                workingHklList = oldHklList;
                           }
-                         continue; // Skip rest of iter, retry with higher damping
-                         // throw new Error(`Residual calculation failed at index ${i}`);
+                         continue;
                      }
                  }
 
-                 // Check convergence
                  if (iter > 0 && Math.abs(ss_res - cost) < 1e-9 * ss_res) {
-                     break; // Converged
+                     break;
                  }
                  ss_res = cost;
 
-                 // Calculate Jacobian using finite differences
-                 const jacobian_T = []; // Store as columns (transposed)
+                 const jacobian_T = [];
 
                  for (let p = 0; p < n_params; p++) {
                      const mapping = paramMapping[p];
@@ -1527,73 +1551,61 @@ const totalPattern = math.add(math.multiply(Array.from(netCalcPattern), scaleFac
                               jacobian_col[i] = (y_calc_total[i] - y_calc_baseline[i]) / fd_step * sqrt_weights[i];
                           }
                      }
-                     mapping.set(params, workingHklList, originalValue); // Restore
+                     mapping.set(params, workingHklList, originalValue);
                      jacobian_T.push([...jacobian_col]);
                  }
 
-                 // Calculate JtJ and Jtr
                  const jacobian = math.transpose(jacobian_T);
                  const JtJ = math.multiply(jacobian_T, jacobian);
-               const Jtr = math.multiply(jacobian_T, Array.from(residuals));
+                 const Jtr = math.multiply(jacobian_T, Array.from(residuals));
 
-                 // --- Ensure JtJ is Correct Format ---
                   if (n_params === 1 && typeof JtJ === 'number' && isFinite(JtJ)) {
                        finalJtJ = [[JtJ]];
                   } else if (n_params > 0 && Array.isArray(JtJ) && JtJ.length === n_params && Array.isArray(JtJ[0]) && JtJ[0].length === n_params) {
                        finalJtJ = JtJ;
                   } else {
                        console.warn("LM iter ${iter}: JtJ calculation failed or format invalid.");
-                       finalJtJ = null; // Mark as invalid
-                       // Try increasing lambda and continuing?
+                       finalJtJ = null;
                        lambda = Math.min(1e9, lambda * 5);
-                       continue; // Skip solve step for this iteration
-                       // throw new Error("JtJ calculation failed or format invalid.");
+                       continue;
                   }
-                 // --- End Format Check ---
 
-                 // Apply Levenberg-Marquardt damping
                  const A_lm = math.clone(finalJtJ);
                  for (let i = 0; i < n_params; i++) {
                      A_lm[i][i] += lambda * (finalJtJ[i][i] || 1e-6);
                  }
 
-                 // Solve for parameter step
                  let p_step;
                  try {
-                    
                     const p_step_matrix = math.lusolve(A_lm, Jtr);
-p_step = math.flatten(p_step_matrix); // math.js
-
+                    p_step = math.flatten(p_step_matrix);
                  } catch (solveError) {
                       console.warn(`LM iter ${iter}: Solve failed: ${solveError.message}. Increasing lambda.`);
                       lambda = Math.min(1e9, lambda * 10);
-                       if(oldParams) { // Rollback if possible
+                       if(oldParams) {
                             params = oldParams;
                             workingHklList = oldHklList;
                        }
-                      continue; // Retry iter with higher lambda
+                      continue;
                  }
 
                  if (!p_step || p_step.some(v => !isFinite(v))) {
                      console.warn(`LM iter ${iter}: Step calculation resulted in NaN/Infinity. Increasing lambda.`);
                      lambda = Math.min(1e9, lambda * 5);
-                     if(oldParams) { // Rollback if possible
+                     if(oldParams) {
                           params = oldParams;
                           workingHklList = oldHklList;
                      }
-                     continue; // Retry iter with higher lambda
+                     continue;
                  }
 
-                 // Store current state for potential rollback *before* applying step
                  oldParams = JSON.parse(JSON.stringify(params));
                  oldHklList = JSON.parse(JSON.stringify(workingHklList));
 
-                 // Apply step to get new parameters
                  const p_current = paramMapping.map(m => m.get(params, workingHklList));
                  const p_new = math.add(p_current, p_step);
                  paramMapping.forEach((m, i) => m.set(params, workingHklList, p_new[i]));
 
-                 // Calculate new cost
                  calculateTotalPattern(y_calc_total);
                  let new_cost = 0;
                  for (let i = 0; i < n_points; i++) {
@@ -1601,239 +1613,55 @@ p_step = math.flatten(p_step_matrix); // math.js
                       if (isFinite(res)) {
                           new_cost += res * res;
                       } else {
-                          new_cost = Infinity; // Invalid cost
+                          new_cost = Infinity;
                           break;
                       }
                  }
 
-                 // Accept or reject step
                  if (new_cost < cost && isFinite(new_cost)) {
-                     lambda = Math.max(1e-9, lambda / 3); // Decrease damping
-                     // Keep new params
+                     lambda = Math.max(1e-9, lambda / 3);
                  } else {
-                     // Restore old state
                      params = oldParams;
                      workingHklList = oldHklList;
-                     lambda = Math.min(1e9, lambda * 2); // Increase damping
-                     // ss_res remains the same as the previous iteration
+                     lambda = Math.min(1e9, lambda * 2);
                  }
 
-                 // --- MODIFIED PROGRESS UPDATE ---
                  const progressWithinCycle = (iter + 1) / maxIter;
                  const overallProgress = baseProgress + progressWithinCycle * cycleProgressSpan;
                  postMessage({ type: 'progress', value: Math.min(1.0, overallProgress) });
-                 // --- END MODIFICATION ---
 
 
              } catch (error) {
                   console.error("Error during LM iteration:", iter, error);
                   postMessage({ type: 'error', message: `Error in LM iter ${iter}: ${error.message}` });
-                   // Return the state before the error if possible
                   return { params: oldParams || initialParams, hklList: oldHklList || JSON.parse(JSON.stringify(hklList)), ss_res: ss_res, error: true, JtJ: finalJtJ, parameterInfo: parameterInfoForMainThread, algorithm: 'lm', fitFlags };
              }
 
-        } // End of iteration loop
+        }
 
-         // --- Ensure final progress update for the cycle ---
          const finalCycleProgress = (leBailCycle + 1) / totalLeBailCycles;
          postMessage({ type: 'progress', value: Math.min(1.0, finalCycleProgress) });
-         // --- End final progress update ---
 
-         // --- Create serializable parameter info ---
           const parameterInfoForMainThread = paramMapping.map(m => ({
                name: m.name,
                scale: m.scale,
                isIntensity: m.isIntensity
           }));
-          // --- End serializable info ---
 
 
         return {
              params,
              hklList: workingHklList,
              JtJ: finalJtJ,
-             parameterInfo: parameterInfoForMainThread, // Send serializable info
+             parameterInfo: parameterInfoForMainThread,
              ss_res,
              algorithm: 'lm',
              fitFlags
         };
-} // End refineParametersLM
+}
 
 
-async function refineParametersSA(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
-     const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList, refinementMode);
-     if (paramMapping.length === 0) {
-          const finalProgress = (leBailCycle + 1) / totalLeBailCycles;
-          postMessage({ type: 'progress', value: Math.min(1.0, finalProgress) });
-         return { params: initialParams, hklList: hklList, ss_res: 0 };
-     }
-
-     const objective = (p_obj, hkl_list_obj) => {
-         try {
-             updateHklPositions(hkl_list_obj, p_obj, system);
-             const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj);
-             const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors); // <-- MODIFIED
-
-             let scaleFactor = 1.0;
-             if (refinementMode === 'le-bail') {
-                  let num = 0, den = 0;
-                  for (let i = 0; i < workerWorkingData.tth.length; i++) {
-                       const w_i = workerWorkingData.weights[i];
-                       const y_obs_net_i = workerWorkingData.intensity[i] - y_bkg[i];
-                       const net_calc_i = netCalcPattern[i] || 0;
-                       if (isFinite(w_i) && isFinite(y_obs_net_i) && isFinite(net_calc_i)) {
-                            num += w_i * y_obs_net_i * net_calc_i;
-                            den += w_i * net_calc_i * net_calc_i;
-                       }
-                  }
-                  scaleFactor = (den > 1e-12) ? Math.max(0, num / den) : 1.0;
-                  if (!isFinite(scaleFactor)) scaleFactor = 1.0;
-             }
-
-             const y_calc_total = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
-             let sum_w_res_sq = 0;
-             for (let i = 0; i < workerWorkingData.tth.length; i++) {
-                  const w_i = workerWorkingData.weights[i];
-                  const res = workerWorkingData.intensity[i] - y_calc_total[i];
-                  if (isFinite(w_i) && isFinite(res)) {
-                      sum_w_res_sq += w_i * res * res;
-                  } else {
-                      return 1e12; // Return large cost if calculation fails
-                  }
-             }
-             return isFinite(sum_w_res_sq) ? sum_w_res_sq : 1e12; // Ensure finite cost
-         } catch (err) {
-              console.warn("SA objective function error:", err);
-              return 1e12; // Large cost on error
-         }
-     };
-
-     // SA parameters
-     let currentParams = JSON.parse(JSON.stringify(initialParams));
-     let currentHklList = JSON.parse(JSON.stringify(hklList));
-     let current_cost = objective(currentParams, currentHklList);
-
-     let bestParams = JSON.parse(JSON.stringify(currentParams));
-     let bestHklList = JSON.parse(JSON.stringify(currentHklList));
-     let best_cost = current_cost;
-
-     let T = (refinementMode === 'pawley') ? 0.1 : 1.0; // Start cooler for Pawley
-     const T_min = 1e-7;
-     const coolingRate = (maxIter > 1 && T > T_min) ? Math.pow(T_min / T, 1.0 / (maxIter -1)) : 0.99;
-
-     const baseProgress = leBailCycle / totalLeBailCycles;
-     const cycleProgressSpan = 1 / totalLeBailCycles;
-
-
-     for (let step = 0; step < maxIter; step++) {
-          try {
-              const originalParams = JSON.parse(JSON.stringify(currentParams));
-              const originalHklList = JSON.parse(JSON.stringify(currentHklList));
-
-              // Perturb a random subset of parameters
-              const paramsToChange = Math.max(1, Math.floor(paramMapping.length * 0.1));
-              const changedIndices = new Set();
-               while (changedIndices.size < paramsToChange && changedIndices.size < paramMapping.length) {
-                    changedIndices.add(Math.floor(Math.random() * paramMapping.length));
-               }
-
-               changedIndices.forEach(p_idx => {
-                    const mapping = paramMapping[p_idx];
-                    const original_val = mapping.get(currentParams, currentHklList);
-                    const step_scale = Math.max(0.01, T);
-                    // Use smaller steps for Pawley intensities
-                    const base_step_suggestion = (refinementMode === 'pawley' && mapping.isIntensity) ? 0.005 : 0.05;
-                    const step_size = (mapping.step || base_step_suggestion) * step_scale * mapping.scale;
-                    const random_step = (Math.random() - 0.5) * 2 * step_size;
-                    const new_val = original_val + random_step;
-                    mapping.set(currentParams, currentHklList, new_val);
-               });
-
-
-              const neighbor_cost = objective(currentParams, currentHklList);
-              const delta_cost = neighbor_cost - current_cost;
-
-              // Metropolis acceptance criterion
-              const acceptance_prob = (T > 1e-9 && current_cost > 0) ? Math.exp(-delta_cost / (current_cost * T)) : 0;
-              const should_accept = (delta_cost < 0) || (acceptance_prob > Math.random());
-
-              if (should_accept) {
-                  current_cost = neighbor_cost;
-              } else {
-                  currentParams = originalParams;
-                  currentHklList = originalHklList;
-              }
-
-              if (current_cost < best_cost) {
-                  best_cost = current_cost;
-                  bestParams = JSON.parse(JSON.stringify(currentParams));
-                  bestHklList = JSON.parse(JSON.stringify(currentHklList));
-              }
-
-              T = Math.max(T_min, T * coolingRate);
-
-              const progressWithinCycle = (step + 1) / maxIter;
-              const overallProgress = baseProgress + progressWithinCycle * cycleProgressSpan;
-              postMessage({ type: 'progress', value: Math.min(1.0, overallProgress) });
-
-
-          } catch (error) {
-               console.error("Error during SA iteration:", step, error);
-               postMessage({ type: 'error', message: `Error in SA iter ${step}: ${error.message}` });
-               currentParams = JSON.parse(JSON.stringify(bestParams)); // Revert to best known
-               currentHklList = JSON.parse(JSON.stringify(bestHklList));
-               current_cost = best_cost;
-               T = Math.max(T_min, T * coolingRate); // Still cool down
-          }
-
-     } // End of loop
-
-     // --- Finalization ---
-     updateHklPositions(bestHklList, bestParams, system);
-     const finalNetCalcPattern = calculatePattern(workerWorkingData.tth, bestHklList, bestParams);
-     const finalY_bkg = calculateTotalBackground(workerWorkingData.tth, bestParams, workerBackgroundAnchors); // <-- MODIFIED
-     let finalScaleFactor = 1.0;
-     if (refinementMode === 'le-bail') {
-          let num = 0, den = 0;
-          for (let i = 0; i < workerWorkingData.tth.length; i++) {
-               const w_i = workerWorkingData.weights[i];
-               const y_obs_net_i = workerWorkingData.intensity[i] - finalY_bkg[i];
-               const net_calc_i = finalNetCalcPattern[i] || 0;
-               if (isFinite(w_i) && isFinite(y_obs_net_i) && isFinite(net_calc_i)) {
-                    num += w_i * y_obs_net_i * net_calc_i;
-                    den += w_i * net_calc_i * net_calc_i;
-               }
-          }
-          finalScaleFactor = (den > 1e-12) ? Math.max(0, num / den) : 1.0;
-          if (!isFinite(finalScaleFactor)) finalScaleFactor = 1.0;
-           bestHklList.forEach(hkl => {
-               if (hkl) hkl.intensity *= finalScaleFactor;
-           });
-     }
-
-     // --- Ensure final progress update for the cycle ---
-     const finalCycleProgress = (leBailCycle + 1) / totalLeBailCycles;
-     postMessage({ type: 'progress', value: Math.min(1.0, finalCycleProgress) });
-     // --- End final progress update ---
-
-     // --- Create serializable parameter info ---
-      const parameterInfoForMainThread = paramMapping.map(m => ({
-           name: m.name,
-           scale: m.scale,
-           isIntensity: m.isIntensity
-      }));
-      // --- End serializable info ---
-
-
-     return {
-         params: bestParams,
-         hklList: bestHklList,
-         algorithm: 'sa',
-         parameterInfo: parameterInfoForMainThread, // Send serializable info
-         fitFlags,
-         ss_res: best_cost
-     };
-} // End refineParametersSA
+// --- (refineParametersSA function was here and is now REMOVED) ---
 
 
 // ---
@@ -1845,18 +1673,16 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
         return { params: initialParams, hklList: hklList, ss_res: 0 };
     }
 
-    // --- PT Configuration ---
     const numReplicas = 8;
     const maxTemp = 1.0;
     const minTemp = 1e-5;
     const swapInterval = 10;
 
-    // --- Objective function ---
     const objective = (p_obj, hkl_list_obj) => {
          try {
              updateHklPositions(hkl_list_obj, p_obj, system);
              const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj);
-             const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors); // <-- MODIFIED
+             const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors);
 
              let scaleFactor = 1.0;
              if (refinementMode === 'le-bail') {
@@ -1883,7 +1709,7 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
                    if (isFinite(w_i) && isFinite(res)) {
                         sum_w_res_sq += w_i * res * res;
                    } else {
-                       return 1e12; // High cost if calculation fails
+                       return 1e12;
                    }
              }
              return isFinite(sum_w_res_sq) ? sum_w_res_sq : 1e12;
@@ -1894,7 +1720,6 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
     };
 
 
-    // --- Initialization ---
     const temperatures = Array.from({ length: numReplicas }, (_, i) =>
         maxTemp * Math.pow(minTemp / maxTemp, i / (numReplicas - 1 || 1))
     );
@@ -1911,47 +1736,38 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
     let bestOverallHklList = JSON.parse(JSON.stringify(hklList));
     let bestOverallCost = initialCost;
 
-    // --- Progress Scaling Setup ---
     const baseProgress = leBailCycle / totalLeBailCycles;
     const cycleProgressSpan = 1 / totalLeBailCycles;
-    // --- End Progress Scaling Setup ---
 
 
-    // --- Main PT Loop ---
     for (let iter = 0; iter < maxIter; iter++) {
          try {
-             // --- Part 1: Standard Monte Carlo step for each replica ---
              for (let i = 0; i < numReplicas; i++) {
                  let replica = replicas[i];
                  const originalParams = JSON.parse(JSON.stringify(replica.params));
                  const originalHklList = JSON.parse(JSON.stringify(replica.hklList));
 
-                 // Perturb a random parameter
                  const p_idx = Math.floor(Math.random() * paramMapping.length);
                  const mapping = paramMapping[p_idx];
                  const original_val = mapping.get(replica.params, replica.hklList);
                  const step_scale = Math.max(0.01, replica.temp);
-                  // Use smaller steps for Pawley intensities
                  const base_step_suggestion = (refinementMode === 'pawley' && mapping.isIntensity) ? 0.005 : 0.05;
                  const step_size = (mapping.step || base_step_suggestion) * step_scale * mapping.scale;
                  const random_step = (Math.random() - 0.5) * 2 * step_size;
                  const new_val = original_val + random_step;
                  mapping.set(replica.params, replica.hklList, new_val);
 
-                 // Calculate new cost and decide whether to accept
                  const neighbor_cost = objective(replica.params, replica.hklList);
                  const delta_cost = neighbor_cost - replica.cost;
 
-                 // Metropolis criterion, scaled by temperature
                   const acceptance_prob = (replica.temp > 1e-9 && replica.cost > 0) ? Math.exp(-delta_cost / (replica.cost * replica.temp)) : 0;
                  if (delta_cost < 0 || acceptance_prob > Math.random()) {
-                     replica.cost = neighbor_cost; // Accept
+                     replica.cost = neighbor_cost;
                  } else {
-                     replica.params = originalParams; // Reject
+                     replica.params = originalParams;
                      replica.hklList = originalHklList;
                  }
 
-                 // Update the global best solution
                  if (replica.cost < bestOverallCost) {
                      bestOverallCost = replica.cost;
                      bestOverallParams = JSON.parse(JSON.stringify(replica.params));
@@ -1959,7 +1775,6 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
                  }
              }
 
-             // --- Part 2: Attempt swaps between adjacent replicas ---
              if (iter > 0 && iter % swapInterval === 0) {
                  for (let i = 0; i < numReplicas - 1; i++) {
                      const rep1 = replicas[i];
@@ -1969,7 +1784,7 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
 
                      const delta_beta = (1 / rep1.temp) - (1 / rep2.temp);
                      const delta_cost = rep1.cost - rep2.cost;
-                     const acceptance_prob_swap = Math.exp(Math.min(50, delta_beta * delta_cost)); // Cap exponent
+                     const acceptance_prob_swap = Math.exp(Math.min(50, delta_beta * delta_cost));
 
                      if (acceptance_prob_swap > Math.random()) {
                          [rep1.params, rep2.params] = [rep2.params, rep1.params];
@@ -1979,25 +1794,21 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
                  }
              }
 
-             // --- MODIFIED PROGRESS UPDATE ---
              const progressWithinCycle = (iter + 1) / maxIter;
              const overallProgress = baseProgress + progressWithinCycle * cycleProgressSpan;
              postMessage({ type: 'progress', value: Math.min(1.0, overallProgress) });
-             // --- END MODIFICATION ---
 
 
          } catch (error) {
               console.error("Error during PT iteration:", iter, error);
               postMessage({ type: 'error', message: `Error in PT iter ${iter}: ${error.message}` });
-              // Continue loop, relying on bestOverall state
          }
 
-    } // End of loop
+    }
 
-    // --- Finalization ---
      updateHklPositions(bestOverallHklList, bestOverallParams, system);
      const finalNetCalcPattern = calculatePattern(workerWorkingData.tth, bestOverallHklList, bestOverallParams);
-     const finalY_bkg = calculateTotalBackground(workerWorkingData.tth, bestOverallParams, workerBackgroundAnchors); // <-- MODIFIED
+     const finalY_bkg = calculateTotalBackground(workerWorkingData.tth, bestOverallParams, workerBackgroundAnchors);
      let finalScaleFactor = 1.0;
      if (refinementMode === 'le-bail') {
           let num = 0, den = 0;
@@ -2018,29 +1829,25 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
            });
      }
 
-     // --- Ensure final progress update for the cycle ---
      const finalCycleProgress = (leBailCycle + 1) / totalLeBailCycles;
      postMessage({ type: 'progress', value: Math.min(1.0, finalCycleProgress) });
-     // --- End final progress update ---
 
-     // --- Create serializable parameter info ---
       const parameterInfoForMainThread = paramMapping.map(m => ({
            name: m.name,
            scale: m.scale,
            isIntensity: m.isIntensity
       }));
-      // --- End serializable info ---
 
 
     return {
         params: bestOverallParams,
         hklList: bestOverallHklList,
         algorithm: 'pt',
-        parameterInfo: parameterInfoForMainThread, // Send serializable info
+        parameterInfo: parameterInfoForMainThread,
         fitFlags,
         ss_res: bestOverallCost
     };
-} // End refineParametersPT
+}
 
 
 // --- Parameter Mapping (Helper) ---
@@ -2062,7 +1869,6 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
                 let rawValue = normalizedValue * scale;
                 if (rawValue < minVal) rawValue = minVal;
                 if (rawValue > maxVal) rawValue = maxVal;
-                 // Ensure the parameter exists before setting
                  if (p_obj && p_obj.hasOwnProperty(name)) {
                      p_obj[name] = rawValue;
                  }
@@ -2085,8 +1891,8 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
                     mappings.push({
                         name: hkl_name,
                         scale: scale,
-                        step: 0.3, // Step suggestion for intensity
-                        isIntensity: true, // Mark as intensity
+                        step: 0.3,
+                        isIntensity: true,
                         index: index,
                         get: (p_obj, hkl_list_obj) => {
                             const intensity = hkl_list_obj?.[index]?.intensity ?? 0;
@@ -2095,7 +1901,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
                         set: (p_obj, hkl_list_obj, normalizedValue) => {
                              if (hkl_list_obj?.[index]) {
                                 let rawValue = normalizedValue * scale;
-                                hkl_list_obj[index].intensity = Math.max(0, rawValue); // Ensure >= 0
+                                hkl_list_obj[index].intensity = Math.max(0, rawValue);
                              }
                         }
                     });
@@ -2105,17 +1911,14 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
 
 
     // --- Other Parameters ---
-    const profileType = String(initialParams.profileType || "simple_pvoigt"); // Use default
+    const profileType = String(initialParams.profileType || "simple_pvoigt");
 
-    // Lattice Parameters
     mappings.push(createMapping(fitFlags.a, 'a', 4.0, 0.1, Infinity, 0.01));
     mappings.push(createMapping(fitFlags.b, 'b', 4.0, 0.1, Infinity, 0.01));
     mappings.push(createMapping(fitFlags.c, 'c', 6.0, 0.1, Infinity, 0.01));
     mappings.push(createMapping(fitFlags.alpha, 'alpha', 90.0, 0, 180, 0.05));
     mappings.push(createMapping(fitFlags.beta, 'beta', 90.0, 0, 180, 0.05));
     mappings.push(createMapping(fitFlags.gamma, 'gamma', 120.0, 0, 180, 0.05));
-
-    // Instrumental
     mappings.push(createMapping(fitFlags.zeroShift, 'zeroShift', 0.01, -Infinity, Infinity, 0.1));
 
     if (profileType === "simple_pvoigt") {
@@ -2128,7 +1931,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
         mappings.push(createMapping(fitFlags.shft, 'shft', 0.01, -Infinity, Infinity, 0.1));
         mappings.push(createMapping(fitFlags.trns, 'trns', 0.01, -Infinity, Infinity, 0.1));
     } 
-    else if (profileType === "tch_aniso") { // TCH
+    else if (profileType === "tch_aniso") {
         mappings.push(createMapping(fitFlags.U, 'U', 0.01, 0, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.V, 'V', 0.01, -Infinity, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.W, 'W', 0.01, 1e-6, Infinity, 0.2));
@@ -2136,7 +1939,6 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
         mappings.push(createMapping(fitFlags.Y, 'Y', 0.01, 1e-6, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.SL, 'SL', 0.001, -Infinity, Infinity, 0.1));
         mappings.push(createMapping(fitFlags.HL, 'HL', 0.001, -Infinity, Infinity, 0.1));
-        // Aniso parameters are part of TCH
         mappings.push(createMapping(fitFlags.S400, 'S400', 0.1, -Infinity, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.S040, 'S040', 0.1, -Infinity, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.S004, 'S004', 0.1, -Infinity, Infinity, 0.2));
@@ -2145,7 +1947,6 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
         mappings.push(createMapping(fitFlags.S022, 'S022', 0.1, -Infinity, Infinity, 0.2));
     }
     else if (profileType === "split_pvoigt") {
-        // new profile, après le 25 oct 2025
         mappings.push(createMapping(fitFlags.GU_L, 'GU_L', 0.01, 0, Infinity, 0.05));
         mappings.push(createMapping(fitFlags.GV_L, 'GV_L', 0.01, -Infinity, Infinity, 0.05));
         mappings.push(createMapping(fitFlags.GW_L, 'GW_L', 0.01, 1e-6, Infinity, 0.05));
@@ -2159,13 +1960,12 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
         mappings.push(createMapping(fitFlags.trns_split, 'trns_split', 0.01, -Infinity, Infinity, 0.1));
     }
    
-
-    // Filter out null mappings (where flag was false)
     const paramMapping = mappings.filter(Boolean);
     return { paramMapping };
 }
 
 
+// --- 4. Worker Message Handler ---
 // --- 4. Worker Message Handler ---
 self.onmessage = async function(e) {
     const {
@@ -2198,28 +1998,20 @@ self.onmessage = async function(e) {
 
     let finalResults;
     let currentHklList = JSON.parse(JSON.stringify(masterHklList || [])); // Start with master list
+    let currentParams = initialParams; // Use initial params for both modes initially
 
     try {
         // --- Le Bail Mode ---
         if (refinementMode === 'le-bail') {
             const LE_BAIL_CYCLES = 4; // Or make configurable
-            let currentParams = initialParams; // Start with initial params
 
             for (let cycle = 0; cycle < LE_BAIL_CYCLES; cycle++) {
-                // 
-                // postMessage({ type: 'progress', value: (cycle + 0.5) / LE_BAIL_CYCLES, message: `Le Bail Cycle ${cycle + 1}/${LE_BAIL_CYCLES}` });
-
                 let refinementResults;
-                // --- Pass cycle info to refinement functions ---
                 if (algorithm === 'lm') {
                     refinementResults = await refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, cycle, LE_BAIL_CYCLES);
-                } else if (algorithm === 'sa') {
-                    refinementResults = await refineParametersSA(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, cycle, LE_BAIL_CYCLES);
-                } else { // pt
+                } else { // pt (default)
                     refinementResults = await refineParametersPT(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, cycle, LE_BAIL_CYCLES);
                 }
-                // --- End Pass cycle info ---
-
 
                 if (refinementResults && refinementResults.params && refinementResults.hklList && !refinementResults.error) {
                     currentParams = refinementResults.params; // Update params for next cycle/extraction
@@ -2230,39 +2022,52 @@ self.onmessage = async function(e) {
                 }
 
                 // --- Intensity Extraction Step ---
-                const backgroundForExtraction = calculateTotalBackground(workerWorkingData.tth, currentParams, workerBackgroundAnchors); // <-- MODIFIED
+                const backgroundForExtraction = calculateTotalBackground(workerWorkingData.tth, currentParams, workerBackgroundAnchors);
                 const expDataForExtraction = {
                     tth: workerWorkingData.tth,
                     intensity: workerWorkingData.intensity,
                     background: backgroundForExtraction
                 };
                  leBailIntensityExtraction(expDataForExtraction, currentHklList, currentParams);
-
-
+                 // The extracted intensities in currentHklList are now ready for the next cycle's refinement
             } // End Le Bail cycle loop
 
         }
         // --- Pawley Mode ---
-        else {
-             let currentParams = initialParams; // Start with initial params
+        else { // refinementMode === 'pawley'
 
-             // Initialize intensities to a constant value instead
-             currentHklList.forEach(peak => {
-                 if (peak) {
-                     peak.intensity = 1000.0; // Or another reasonable starting value
-                 }
-             });
+             // ***** MODIFICATION START *****
+             // Perform a SINGLE Le Bail extraction first to initialize intensities
+             postMessage({ type: 'progress', value: 0.05, message: 'Initializing Pawley intensities...' }); // Small progress update
+             try {
+                // Ensure HKL positions are correct with initial params before extraction
+                updateHklPositions(currentHklList, currentParams, system);
 
-            // Run chosen algorithm ONCE for Pawley, refining intensities simultaneously
-            // --- Pass default cycle info (0, 1) for Pawley ---
+                const backgroundForInit = calculateTotalBackground(workerWorkingData.tth, currentParams, workerBackgroundAnchors);
+                const expDataForInit = {
+                    tth: workerWorkingData.tth,
+                    intensity: workerWorkingData.intensity,
+                    background: backgroundForInit
+                };
+                 leBailIntensityExtraction(expDataForInit, currentHklList, currentParams);
+                 // currentHklList now contains initial intensity estimates (as heights)
+                 console.log("Pawley intensities initialized via Le Bail extraction.");
+             } catch (initError) {
+                  console.warn("Could not initialize Pawley intensities using Le Bail extraction:", initError);
+                  // Fallback: Initialize with 1000 if extraction fails
+                  currentHklList.forEach(peak => {
+                       if (peak) peak.intensity = 1000.0;
+                  });
+             }
+             // ***** MODIFICATION END *****
+
+
+            // Now run the chosen algorithm ONCE for Pawley, refining initialized intensities simultaneously
             if (algorithm === 'lm') {
                 finalResults = await refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
-            } else if (algorithm === 'sa') {
-                finalResults = await refineParametersSA(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
             } else { // pt
                 finalResults = await refineParametersPT(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
             }
-             // --- End Pass cycle info ---
 
              if (!finalResults || finalResults.error) {
                   throw new Error(`Refinement algorithm (${algorithm}) failed during Pawley fit. ${finalResults?.error ? 'See previous error.' : ''}`);
@@ -2275,26 +2080,23 @@ self.onmessage = async function(e) {
             throw new Error("Refinement finished but produced invalid results.");
         }
 
+        // --- (Rest of the onmessage function remains the same: calculating stats, sending results) ---
         const finalParams = finalResults.params;
         const finalHklList = finalResults.hklList;
 
-        // Calculate final stats using the results from the refinement
         const finalNetPatternForStats = calculatePattern(workerWorkingData.tth, finalHklList, finalParams);
-        const finalBackgroundForStats = calculateTotalBackground(workerWorkingData.tth, finalParams, workerBackgroundAnchors); // <-- MODIFIED
+        const finalBackgroundForStats = calculateTotalBackground(workerWorkingData.tth, finalParams, workerBackgroundAnchors);
 
-        // Pass workerWorkingData to calculateStatistics
         const finalStats = calculateStatistics(
-            workerWorkingData, // Use the data stored in the worker
+            workerWorkingData,
             finalNetPatternForStats,
-            finalResults.fitFlags || fitFlags, // Use flags from result if available
+            finalResults.fitFlags || fitFlags,
             finalBackgroundForStats,
             finalParams,
             finalHklList,
             refinementMode
         );
 
-
-        // Prepare result object to send back
         const resultPayload = {
             params: finalParams,
             hklList: finalHklList,
@@ -2302,14 +2104,13 @@ self.onmessage = async function(e) {
             algorithm: algorithm,
             refinementMode: refinementMode,
             fitFlags: finalResults.fitFlags || fitFlags,
-            parameterInfo: finalResults.parameterInfo || [], // Send serializable info
-            // paramMapping removed
+            parameterInfo: finalResults.parameterInfo || [],
             JtJ: finalResults.JtJ || null,
-            ss_res: finalResults.ss_res // Include final cost
+            ss_res: finalResults.ss_res
         };
 
-        // Post the final result
         postMessage({ type: 'result', results: resultPayload });
+
 
     } catch (error) {
         console.error("Worker Error during refinement:", error);
@@ -2317,12 +2118,12 @@ self.onmessage = async function(e) {
     } finally {
 
          workerWorkingData = null;
-         workerBackgroundAnchors = []; // <-- ADDED
-         hklIndexCache = {}; // Clear HKL cache after run? Maybe keep it? changé avec la version 113
+         workerBackgroundAnchors = [];
+         hklIndexCache = {};
     }
-}; 
+};
 
-// --- error handler -
+// --- error handler ---
 self.onerror = function(event) {
      console.error("Unhandled Worker Error:", event.message, event);
      postMessage({ type: 'error', message: `Unhandled Worker Error: ${event.message}` });
