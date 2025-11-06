@@ -186,7 +186,7 @@
     color: white;                           /* Change text to white for contrast */
     border-color: var(--system-blue);       /* Make the border blue as well */
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0, 122, 255, 0.3); /* Optional: Add a blue glow like the primary buttons */
+    box-shadow: 0 4px 8px rgba(0, 122, 255, 0.3);
 }
 
         .btn:disabled { 
@@ -211,9 +211,9 @@
 }
 
 .file-input-label:hover { 
-    background-color: var(--system-blue);    /* Change background to blue */
-    color: white;                           /* Change text to white */
-    border-color: var(--system-blue);       /* Make the border blue */
+    background-color: var(--system-blue);   
+    color: white;                          
+    border-color: var(--system-blue);      
 }
 
         
@@ -391,7 +391,7 @@
             gap: 16px; 
         } 
         
-        /* Add these styles anywhere inside the <style> tag */
+
         .anchor-point-item {
             display: grid;
             grid-template-columns: 1fr 1fr auto;
@@ -603,7 +603,7 @@
     margin-top: -5px; 
     border-width: 5px; 
     border-style: solid;
-    border-color: transparent transparent transparent #2d3748; /* Match tooltip background */
+    border-color: transparent transparent transparent #2d3748;
 }
 
 .tooltip-content.visible {
@@ -1046,7 +1046,7 @@
 <script>
     document.addEventListener('DOMContentLoaded', () => {      
 
-        const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 8
+        const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 6
         const PEAK_HEIGHT_CUTOFF = 0.001; // 0.01 Corresponds to 1%
  
 const tooltipContainer = document.querySelector('.help-tooltip-container');
@@ -1171,13 +1171,13 @@ if (tooltipContainer && tooltipContent) {
         let mainChart;
 
 
-        // --- Worker Setup --- ADD THIS BLOCK ---
+        // --- Worker Setup 
         let refinementWorker = null;
         try {
             refinementWorker = new Worker('refinement_worker.js');
             console.log("Refinement worker created.");
 
-            // --- Worker Message Handler --- ADD THIS ---
+            // --- Worker Message Handler
             refinementWorker.onmessage = function(e) {
                 const { type, value, message, results } = e.data;
 
@@ -1607,7 +1607,7 @@ function handleSplinePointListInteraction(e) {
             backgroundAnchors[index].y = value;
             // No need to touch tth here, it's either fixed (edge) or editable via the other input
             updateBackgroundForPreview(); // Recalculate and redraw the background curve
-            updateSplinePointsOnChart(); // <-- THIS IS THE ADDED LINE to update scatter points
+            updateSplinePointsOnChart(); 
         }
     }
 
@@ -3046,7 +3046,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                 const shift1 = calculatePeakShift(basePos1, params);
                 const peakPos1 = basePos1 + shift1;
 
-                // REMOVED shapeArea1 calculation.
+      
                 
                 // Get widths just for the window approximation
                 const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
@@ -3088,7 +3088,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                     const shift2 = calculatePeakShift(basePos2, params);
                     const peakPos2 = basePos2 + shift2;
                     
-                    // REMOVED shapeArea2 calculation.
+             
 
                     const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
                     const fwhm_approx2 = getPeakFWHM(gG2, gL2);
@@ -3123,7 +3123,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
         }
 
 
-        // --- END Calculation Functions for Main Thread ---
+        
 
         // master HKL, 1.0.3 et ensuite
         // This function now uses the cache to get raw indices and then calculates positions.
@@ -3792,11 +3792,11 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
             const currentYMin = mainChart.scales.y.min;
             const currentYMax = mainChart.scales.y.max;
             
-            // --- ADDED THIS BLOCK ---
+            
             // Store the current X-axis zoom state as well
             const currentXMin = mainChart.scales.x.min;
             const currentXMax = mainChart.scales.x.max;
-            // --- END OF ADDED BLOCK ---
+            
 
             const findDataset = (label) => mainChart.data.datasets.find(d => d.label === label);
             
@@ -4452,7 +4452,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                  });
                  backgroundPointsSection.push(''); // Add blank line after section
             }
-            // --- END ADDED SECTION ---
+            
 
 
             const reflectionsSection = [];
@@ -4569,13 +4569,13 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                 ...statsSection,
                 ...whAnalysisSection,
                 ...paramLines,
-                ...backgroundPointsSection, // <-- Inserted background points here
+                ...backgroundPointsSection, 
                 ...reflectionsSection,
                 ...dataSection
             ].join('\n');
         }
 
-        // --- EVENT LISTENERS, 8 oct, version 1.0.3; update le 24 oct v 111
+        // --- EVENT LISTENERS, 8 oct, version 1.0.3; updated le 24 oct v 111
 
         document.getElementById('le-bail-button').addEventListener('click', () => runFit('le-bail'));
         document.getElementById('pawley-button').addEventListener('click', () => runFit('pawley'));
@@ -4830,7 +4830,7 @@ controls.tthMinSlider.addEventListener('input', () => {
             renderSplinePointList(); // Update UI list
         }
     }
-    // --- END UPDATE ---
+    
 
     redrawFitForNewRange(); // This updates working data and redraws chart/background
 });
@@ -4856,7 +4856,7 @@ controls.tthMaxSlider.addEventListener('input', () => {
             renderSplinePointList(); // Update UI list
         }
     }
-    // --- END UPDATE ---
+    
 
     redrawFitForNewRange(); // This updates working data and redraws chart/background
 });
