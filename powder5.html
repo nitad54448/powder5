@@ -1206,13 +1206,8 @@ if (tooltipContainer && tooltipContent) {
                     }
 
                      try {
-                         // Recalculate background and net pattern using the worker results
-                         // Use the SAME working data slice the worker used
-                         // *** PASS SPLINE POINTS (backgroundAnchors) TO BACKGROUND CALCULATION ***
                          const finalBackgroundDisplay = calculateTotalBackground(workerWorkingData.tth, displayParams, backgroundAnchors);
                          const finalNetPatternDisplay = calculatePattern(workerWorkingData.tth, displayHklList, displayParams);
-
-                         // Pass the *correct* sliced data to updateUI/updateChart
                          updateUI(
                              displayParams,
                              fitResults.stats,
@@ -1228,9 +1223,8 @@ if (tooltipContainer && tooltipContent) {
 
 
                     setUIState(false); // Re-enable UI
-                    controls.progressBar.style.transition = 'width 0.3s ease'; // Restore normal transition
-                    controls.progressBar.style.width = '100%'; // Ensure it shows 100%
-
+                    controls.progressBar.style.transition = 'width 0.3s ease';
+                    controls.progressBar.style.width = '100%';
                 } else if (type === 'error') {
                     console.error("Worker reported error:", message);
                     showToast(`Refinement Error: ${message}`, 'error');
@@ -1305,7 +1299,6 @@ function createMonotonicCubicSplineInterpolator(points) {
             const alpha = m[i] / delta[i];
             const beta = m[i + 1] / delta[i];
             const tau = alpha * alpha + beta * beta;
-            // If condition violated, scale tangents to preserve monotonicity
             if (tau > 9) { // Fritsch & Carlson condition
                 const factor = 3.0 / Math.sqrt(tau);
                 m[i] = alpha * delta[i] * factor;
@@ -1340,7 +1333,7 @@ function createMonotonicCubicSplineInterpolator(points) {
         // Normalized position within interval [0, 1]
         const t = (h_i > 1e-9) ? (tthValue - x_i) / h_i : 0; // Avoid division by zero
 
-        // Cubic Hermite spline basis functions
+        // Cubic Hermite spline basis functions, check this 
         const h00 = 2 * t * t * t - 3 * t * t + 1;
         const h10 = t * t * t - 2 * t * t + t;
         const h01 = -2 * t * t * t + 3 * t * t;
@@ -1385,7 +1378,7 @@ function autoFindSplinePoints(numPoints) {
     const intensity = fullExperimentalData.intensity;
     const totalDataPoints = tth.length;
 
-    // --- Find Edge Points (No Averaging) ---
+    // --- Find Edge Points, problem: how to deal with the edge
     const firstPoint = findClosestExperimentalPoint(minTth);
     const lastPoint = findClosestExperimentalPoint(maxTth);
 
@@ -1438,7 +1431,7 @@ function autoFindSplinePoints(numPoints) {
                 let finalMinVal = Infinity;
                 let finalMinIndex = initialMinIndex; // Default to initial minimum
 
-                // Iterate through the original chunk indices BUT check if tth is within refine window
+                // Iterate through the original chunk indices
                 for (let j = chunkStartIdx; j < chunkEndIdx; j++) {
                      if (j === firstPoint.index || j === lastPoint.index) continue; // Skip edges
                     if (tth[j] >= refineMinTth && tth[j] <= refineMaxTth) {
@@ -1448,13 +1441,12 @@ function autoFindSplinePoints(numPoints) {
                         }
                     }
                 }
-                // --- End Step 2 ---
+            
 
-
-                // Check if this final minimum point already exists (by index)
+                // Check if this final minimum point already exists 
                 const exists = newSplinePoints.some(p => p.index === finalMinIndex);
                 if (!exists) {
-                    // --- Step 3: Calculate Average Intensity around finalMinIndex ---
+                    // --- Step 3: Calculate Average Intensity 
                     let sumY = 0;
                     let countY = 0;
                     const windowStart = Math.max(0, finalMinIndex - AVERAGE_WINDOW_HALF_WIDTH);
@@ -1468,9 +1460,9 @@ function autoFindSplinePoints(numPoints) {
                     // --- End Step 3 ---
 
                     newSplinePoints.push({
-                        index: finalMinIndex,        // Store refined minimum index
-                        tth: tth[finalMinIndex],     // Use tth from the refined minimum point
-                        y: averageY                  // Use the calculated average intensity
+                        index: finalMinIndex,     
+                        tth: tth[finalMinIndex],  
+                        y: averageY                
                     });
                 }
             }
@@ -1479,7 +1471,7 @@ function autoFindSplinePoints(numPoints) {
         }
     }
 
-    // Overwrite the global list, sort by 2-theta
+    // Overwrite the global list
     backgroundAnchors = newSplinePoints.sort((a, b) => a.tth - b.tth);
 
     renderSplinePointList();
@@ -1492,14 +1484,14 @@ function autoFindSplinePoints(numPoints) {
 function updateSplinePointsOnChart() {
     if (!mainChart) return;
 
-    const anchorDataset = mainChart.data.datasets.find(d => d.label === 'Spline Points'); // <-- CHANGED LABEL
+    const anchorDataset = mainChart.data.datasets.find(d => d.label === 'Spline Points'); 
     if (anchorDataset) {
-        // Map the anchors to the {x, y} format required by Chart.js scatter plots
+        // Map the anchors to the {x, y} format required by Chart.js 
         anchorDataset.data = backgroundAnchors.map(anchor => ({
             x: anchor.tth,
             y: anchor.y
         }));
-       mainChart.update('none'); // Redraw the chart without animation
+       mainChart.update('none'); // Redraw the chart without animation, too slwo and useless
     }
 }
 
@@ -1545,7 +1537,7 @@ function updateSplinePointsOnChart() {
             const isEdgePoint = (index === 0 || index === backgroundAnchors.length - 1);
             const tthDisabled = isEdgePoint ? 'disabled' : '';
             const removeDisabled = isEdgePoint ? 'disabled' : '';
-            const removeStyle = isEdgePoint ? 'opacity: 0.3; cursor: not-allowed;' : ''; // Visually disable remove button
+            const removeStyle = isEdgePoint ? 'opacity: 0.3; cursor: not-allowed;' : ''; 
 
             item.innerHTML = `
                 <input type="number" class="control-input spline-tth-input" data-index="${index}" value="${anchor.tth.toFixed(4)}" step="0.01" title="2-theta" ${tthDisabled}>
@@ -1555,24 +1547,19 @@ function updateSplinePointsOnChart() {
             listContainer.appendChild(item);
         });
     }
-    updateSplinePointsOnChart(); // Keep this call
+    updateSplinePointsOnChart();
 }
 
 
 
 function handleSplinePointListInteraction(e) {
     let listNeedsUpdate = false;
-    // It's safer to read slider values inside the specific event handlers
-    // in case they change between different input events within this function call.
-    // const minTth = parseFloat(controls.tthMinSlider.value);
-    // const maxTth = parseFloat(controls.tthMaxSlider.value);
-
     if (e.target.classList.contains('anchor-remove-btn')) {
         const index = parseInt(e.target.dataset.index, 10);
         // Prevent deleting first or last point (index 0 and length-1)
         if (!isNaN(index) && index > 0 && index < backgroundAnchors.length - 1) {
             backgroundAnchors.splice(index, 1);
-            listNeedsUpdate = true; // Need to re-render the list with updated indices
+            listNeedsUpdate = true; 
         } else if (!isNaN(index) && (index === 0 || index === backgroundAnchors.length - 1)) {
              showToast("Cannot remove edge points.", "error"); // Inform user
         }
@@ -1585,14 +1572,10 @@ function handleSplinePointListInteraction(e) {
         if (!isNaN(index) && index > 0 && index < backgroundAnchors.length - 1) {
             if (!isNaN(value) && backgroundAnchors[index]) {
                 backgroundAnchors[index].tth = value;
-                // Don't re-render on every keystroke, sort internally and update background/points
                 backgroundAnchors.sort((a, b) => a.tth - b.tth);
-                // We *do* need to re-render if sorting changes the index order in the UI
                 listNeedsUpdate = true;
             }
         } else if (!isNaN(index) && backgroundAnchors[index]) {
-             // Revert the value if user tried to change edge point tth
-             // Read the correct edge value from sliders *now*
              const currentMinTth = parseFloat(controls.tthMinSlider.value);
              const currentMaxTth = parseFloat(controls.tthMaxSlider.value);
              e.target.value = (index === 0 ? currentMinTth : currentMaxTth).toFixed(4);
@@ -1611,11 +1594,9 @@ function handleSplinePointListInteraction(e) {
         }
     }
 
-    // This block is now primarily for handling list structure changes (add/remove/sort)
     if (listNeedsUpdate) {
         renderSplinePointList(); // Rebuilds the HTML list elements
         updateBackgroundForPreview(); // Ensure background curve reflects potential Tth changes
-        // updateSplinePointsOnChart() is called inside renderSplinePointList, so not needed again here
     }
 }
 
@@ -1644,7 +1625,7 @@ function handleSplinePointListInteraction(e) {
             let [system, centering] = controls.bravaisLattice.value.split('_');
             // 9. r Rhombohedral, maille hex
             if (system === "rhombohedral") {
-                centering = "R"; // Force centering to 'R' for rhombohedral system
+                centering = "R"; // Force centering to 'R' for rhombohedral system, fait chieR
             }
             return { system, centering };
         }
