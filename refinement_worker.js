@@ -1751,7 +1751,7 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
                  const mapping = paramMapping[p_idx];
                  const original_val = mapping.get(replica.params, replica.hklList);
                  const step_scale = Math.max(0.01, replica.temp);
-                 const base_step_suggestion = (refinementMode === 'pawley' && mapping.isIntensity) ? 0.005 : 0.05;
+                 const base_step_suggestion = (refinementMode === 'pawley' && mapping.isIntensity) ? 0.05 : 0.05;
                  const step_size = (mapping.step || base_step_suggestion) * step_scale * mapping.scale;
                  const random_step = (Math.random() - 0.5) * 2 * step_size;
                  const new_val = original_val + random_step;

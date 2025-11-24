@@ -15,8 +15,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
-        <script src="rules_spaceGroups.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js"></script>
+    <script src="rules_spaceGroups.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js"></script>
     <style>
         :root {
             --system-blue: #007AFF;
@@ -108,9 +108,13 @@
             background-color: var(--system-background);
             border-radius: 12px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            /* ADDED: Flex column with gap ensures equal vertical spacing */
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
         }
         .control-group:first-child { 
-            padding-top: 0; 
+            padding-top: 16px; /* Reset to standard padding since we use flex gap now */
             margin-top: 0;
         }
         .control-label { 
@@ -175,19 +179,19 @@
         }
 
         .btn-secondary { 
-    background-color: var(--system-gray-5); /* Darker background */
-    color: var(--system-label); 
-    border: 1px solid var(--system-gray-4); /* Add solid border */
-    box-shadow: none; /* Remove shadow for a cleaner look */
-}
+            background-color: var(--system-gray-5); 
+            color: var(--system-label); 
+            border: 1px solid var(--system-gray-4); 
+            box-shadow: none; 
+        }
 
-.btn-secondary:hover:not(:disabled) { 
-    background-color: var(--system-blue);    /* Change background to blue */
-    color: white;                           /* Change text to white for contrast */
-    border-color: var(--system-blue);       /* Make the border blue as well */
-    transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(0, 122, 255, 0.3);
-}
+        .btn-secondary:hover:not(:disabled) { 
+            background-color: var(--system-blue);    
+            color: white;                           
+            border-color: var(--system-blue);       
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 122, 255, 0.3);
+        }
 
         .btn:disabled { 
             background-color: var(--system-gray-6); 
@@ -198,23 +202,23 @@
         }
         
        .file-input-label { 
-    display: block; 
-    padding: 12px 16px; 
-    background-color: var(--system-gray-5); /* Match the secondary buttons */
-    color: var(--system-label); 
-    border-radius: 10px; 
-    text-align: center; 
-    cursor: pointer; 
-    transition: all 0.2s;
-    font-weight: 500;
-    border: 1px solid var(--system-gray-4); /* Change from dashed to solid */
-}
+            display: block; 
+            padding: 12px 16px; 
+            background-color: var(--system-gray-5); 
+            color: var(--system-label); 
+            border-radius: 10px; 
+            text-align: center; 
+            cursor: pointer; 
+            transition: all 0.2s;
+            font-weight: 500;
+            border: 1px solid var(--system-gray-4); 
+        }
 
-.file-input-label:hover { 
-    background-color: var(--system-blue);   
-    color: white;                          
-    border-color: var(--system-blue);      
-}
+        .file-input-label:hover { 
+            background-color: var(--system-blue);   
+            color: white;                          
+            border-color: var(--system-blue);      
+        }
 
         
         .results-grid { 
@@ -384,14 +388,6 @@
             background: var(--system-gray-3); 
         }
 
-        /* --- UNIFIED UI & SPACING STYLES --- */
-        #tab-panel-sample > .control-group, #tab-panel-background > .control-group {
-            display: flex; 
-            flex-direction: column; 
-            gap: 16px; 
-        } 
-        
-
         .anchor-point-item {
             display: grid;
             grid-template-columns: 1fr 1fr auto;
@@ -404,10 +400,10 @@
         }
 
         .anchor-point-item span {
-    font-size: 15px;
-    padding: 0 4px;
-    text-align: right;
-}
+            font-size: 15px;
+            padding: 0 4px;
+            text-align: right;
+        }
 
         .anchor-point-item .control-input {
             height: 36px;
@@ -430,7 +426,7 @@
         }
 
         .control-group h2, .profile-section-header {
-            margin: 0 0 16px 0; 
+            margin: 0; /* CHANGED: Margin removed to allow gap to handle spacing */
             padding-bottom: 12px; 
             border-bottom: 1px solid var(--system-separator);
             color: var(--system-label); 
@@ -438,9 +434,9 @@
             font-weight: 600;
         }
 
-.profile-controls-container + .profile-controls-container {
-    margin-top: 24px;
-}
+        .profile-controls-container + .profile-controls-container {
+            margin-top: 24px;
+        }
 
         .parameter-grid-3col, .parameter-grid-2col, .slider-group, .form-row {
             display: grid; 
@@ -557,78 +553,78 @@
             position: relative; 
             display: inline-block; 
         }
-.help-icon { 
-    display: flex; 
-    align-items: center; 
-    justify-content: center; 
-    width: 24px; 
-    height: 24px; 
-    background-color: #4a5568; /* Darker background for icon */
-    color: white; /* White question mark */
-    border-radius: 50%; 
-    font-weight: 500; 
-    font-size: 14px; 
-    cursor: help; 
-    transition: all 0.2s; 
-}
-.help-icon:hover { 
-    background-color: #2d3748; /* Even darker on hover */
-    color: white;
-}
+        .help-icon { 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            width: 24px; 
+            height: 24px; 
+            background-color: #4a5568; /* Darker background for icon */
+            color: white; /* White question mark */
+            border-radius: 50%; 
+            font-weight: 500; 
+            font-size: 14px; 
+            cursor: help; 
+            transition: all 0.2s; 
+        }
+        .help-icon:hover { 
+            background-color: #2d3748; /* Even darker on hover */
+            color: white;
+        }
         
-.tooltip-content {
-    visibility: hidden; 
-    opacity: 0; 
-    width: 280px;
-    background-color: #2d3748; /* Darker background for better contrast */
-    color: #f7fafc; /* Light text color */
-    text-align: left;
-    border-radius: 10px; 
-    padding: 16px;
-    position: absolute; 
-    z-index: 1001;
-    top: -15px;
-    right: 115%;
-    margin-right: 10px;
-    transition: opacity 0.3s; 
-    font-size: 15px; 
-    border: 1px solid #4a5568; /* Darker border */
-    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3); /* Stronger shadow */
-}
-.tooltip-content::after {
-    content: ""; 
-    position: absolute;
-    top: 20px;
-    left: 100%;
-    margin-top: -5px; 
-    border-width: 5px; 
-    border-style: solid;
-    border-color: transparent transparent transparent #2d3748;
-}
+        .tooltip-content {
+            visibility: hidden; 
+            opacity: 0; 
+            width: 280px;
+            background-color: #2d3748; /* Darker background for better contrast */
+            color: #f7fafc; /* Light text color */
+            text-align: left;
+            border-radius: 10px; 
+            padding: 16px;
+            position: absolute; 
+            z-index: 1001;
+            top: -15px;
+            right: 115%;
+            margin-right: 10px;
+            transition: opacity 0.3s; 
+            font-size: 15px; 
+            border: 1px solid #4a5568; /* Darker border */
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3); /* Stronger shadow */
+        }
+        .tooltip-content::after {
+            content: ""; 
+            position: absolute;
+            top: 20px;
+            left: 100%;
+            margin-top: -5px; 
+            border-width: 5px; 
+            border-style: solid;
+            border-color: transparent transparent transparent #2d3748;
+        }
 
-.tooltip-content.visible {
-    visibility: visible;
-    opacity: 1;
-}
+        .tooltip-content.visible {
+            visibility: visible;
+            opacity: 1;
+        }
 
-.tooltip-content h4 { 
-    color: #fff; /* White for headings */
-    font-size: 15px; 
-    margin-top: 0; 
-    margin-bottom: 8px; 
-    font-weight: 600; 
-}
-.tooltip-content p { 
-    margin-top: 0; 
-    margin-bottom: 6px; 
-    line-height: 1.4; 
-    color: #e2e8f0; /* Lighter gray for paragraph text */
-}
-.tooltip-content hr { 
-    border: none; 
-    border-top: 1px solid #4a5568; /* Darker separator */
-    margin: 12px 0; 
-}
+        .tooltip-content h4 { 
+            color: #fff; /* White for headings */
+            font-size: 15px; 
+            margin-top: 0; 
+            margin-bottom: 8px; 
+            font-weight: 600; 
+        }
+        .tooltip-content p { 
+            margin-top: 0; 
+            margin-bottom: 6px; 
+            line-height: 1.4; 
+            color: #e2e8f0; /* Lighter gray for paragraph text */
+        }
+        .tooltip-content hr { 
+            border: none; 
+            border-top: 1px solid #4a5568; /* Darker separator */
+            margin: 12px 0; 
+        }
         .hidden { 
             display: none !important; 
         }
@@ -786,6 +782,7 @@
                         <input type="number" id="ratio21" value="0.497" step="0.01" class="control-input" min="0">
                     </div>
                 </div>
+
             </div> <div id="tab-panel-background" class="tab-content-panel">
                 <div class="control-group">
                     <h2>Background (Spline)</h2>
@@ -796,23 +793,19 @@
                             <span id="spline-points-value" class="slider-value-display">20</span>
                         </div>
                     </div>
-                    <button id="auto-spline-button" class="btn btn-secondary" style="width: 100%; margin-top: 12px;">Generate Spline Points</button>
-                </div>
-
-                <div class="control-group">
-                    <div style="padding-top: 16px; border-top: 1px solid var(--system-separator);">
-                        <h2 style="margin-bottom: 6px;">Spline Points</h2>
-                        <p class="control-label" style="margin-bottom: 16px;">
-                            Define the background spline. Use <b>Generate Spline Points</b>, <b>Ctrl+Click</b> on the chart, or edit the list below.
-                        </p>
+                
                         <div class="form-row" style="margin-bottom: 16px;">
                            <label for="show-spline-points-checkbox" class="control-label">Show Points on Chart</label>
-                           <input type="checkbox" id="show-spline-points-checkbox" class="fit-checkbox" style="justify-self: start;" checked>
+                           <input type="checkbox" id="show-spline-points-checkbox" class="fit-checkbox" style="justify-self: start;">
                        </div>
                         <div id="spline-points-list" style="max-height: 230px; overflow-y: auto; border: 1px solid var(--system-gray-4); border-radius: 8px; padding: 8px 0 8px 8px;">
                             </div>
                     </div>
-                </div> </div> <div id="tab-panel-profile" class="tab-content-panel">
+                </div>
+                
+                
+                
+                <div id="tab-panel-profile" class="tab-content-panel">
                  <div class="control-group">
                      <div class="parameter-grid-2col" style="margin-bottom: 24px;">
                          <label for="profile-function-select" class="control-label">Profile Function</label>
@@ -1035,7 +1028,7 @@
     </div>
 
     <div style="position: absolute; bottom: 6px; right: 12px; font-size: 10px; color: var(--system-secondary-label);">
-        Powder 5, version 115, 27 Oct 2025
+        Powder 5, version 116, 24 Nov 2025
     </div>
 </div>
 
@@ -3390,7 +3383,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                  maxIterations: maxIterations,
                  algorithm: algorithm,
                  refinementMode: refinementMode,
-                 backgroundAnchors: JSON.parse(JSON.stringify(backgroundAnchors)) // <-- ADD THIS LINE
+                 backgroundAnchors: JSON.parse(JSON.stringify(backgroundAnchors)) 
              };
 
             // --- Send data to worker ---
@@ -3638,35 +3631,40 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
         }
 
 
+
         function updatePawleyButtonState() {
+    // Safety check to ensure DOM elements exist before accessing them
     if (!controls || !controls.algorithmSelect || !document.getElementById('pawley-button')) {
          console.error("Cannot update Pawley button: Controls not ready.");
-         return; // Safety check
+         return; 
     }
+
     const selectedAlgorithm = controls.algorithmSelect.value;
     const pawleyButton = document.getElementById('pawley-button');
+    // Check if we actually have data loaded
     const fileLoaded = fullExperimentalData && fullExperimentalData.tth.length > 0;
 
-
-            if (!fileLoaded || isFitting) {
-                pawleyButton.disabled = true;
-                pawleyButton.title = ""; // Clear title
-            } else if (selectedAlgorithm === 'lm') {
-                 // Enable Pawley for LM
-                pawleyButton.disabled = false;
-                pawleyButton.title = "Run Pawley refinement with Levenberg-Marquardt.";
-            } else if (selectedAlgorithm === 'pt') {
-                // Enable Pawley for PT
-                pawleyButton.disabled = false;
-                pawleyButton.title = "Run Pawley refinement with Parallel Tempering.";
-            } else {
-                // Disable for any other case
-                 pawleyButton.disabled = true;
-                 pawleyButton.title = "Select a valid algorithm.";
-            }
-
+    // 1. If no file is loaded OR a fit is currently running, always disable the button.
+    if (!fileLoaded || isFitting) {
+        pawleyButton.disabled = true;
+        pawleyButton.title = ""; 
+    } 
+    // 2. Enable if Levenberg-Marquardt (lm) is selected
+    else if (selectedAlgorithm === 'lm') {
+        pawleyButton.disabled = false;
+        pawleyButton.title = "Run Pawley refinement with Levenberg-Marquardt.";
+    } 
+    // 3. Enable if Parallel Tempering (pt) is selected (This enables PT for Pawley)
+    else if (selectedAlgorithm === 'pt') {
+        pawleyButton.disabled = false;
+        pawleyButton.title = "Run Pawley refinement with Parallel Tempering.";
+    } 
+    // 4. Disable for any other unknown state
+    else {
+        pawleyButton.disabled = true;
+        pawleyButton.title = "Select a valid algorithm.";
+    }
 }
-
 
 
         // setUIState function
@@ -3848,11 +3846,12 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                         { label: 'Difference Zero', data: [], borderColor: 'rgba(156, 163, 175, 0.8)', borderWidth: 1, pointRadius: 0, borderDash: [2, 2], order: 6 },
                         { type: 'bar', label: 'HKL Markers', data: [], backgroundColor: 'rgba(22, 163, 74, 0.9)', barThickness: 1, categoryPercentage: 1.0, barPercentage: 1.0, order: 0 },
                         {
-                            label: 'Spline Points', // <-- RENAMED LABEL
+                            label: 'Spline Points', 
                             type: 'scatter',
                             data: [], // Initially empty
                             showLine: false,
-                            pointBackgroundColor: 'rgba(34, 197, 94, 1)', // A vibrant green
+                            hidden: true,
+                            pointBackgroundColor: 'rgba(34, 197, 94, 1)', // green
                             pointBorderColor: 'rgba(255, 255, 255, 0.9)',
                             pointRadius: 5,
                             pointHoverRadius: 7,
@@ -4201,7 +4200,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                 `${modeName} Refinement Report`,
                 '========================================================================',
                 '',
-                `Powder5, version 115, 27 Oct 2025`,
+                `Powder5, version 116, 24 Nov 2025`,
                 `Report Generated: ${now.toLocaleString()}`,
                 `Data File: ${controls.fileName.textContent || 'N/A'}`,
                 ''
@@ -4266,12 +4265,29 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                      esdWarning = "No parameters were refined.";
                  } else if (N > P) {
                      const degreesOfFreedom = N - P;
-                     if (ss_res >= 0 && isFinite(ss_res)) {
+
+if (ss_res >= 0 && isFinite(ss_res)) {
                           const reduced_chi_sq = (degreesOfFreedom > 0) ? (ss_res / degreesOfFreedom) : 0;
                           let cov_matrix = null;
+
                           try {
+                               // Verify Matrix Dimensions
                                if (Array.isArray(JtJ) && JtJ.length === P && Array.isArray(JtJ[0]) && JtJ[0].length === P) {
-                                   const H_inv = math.inv(JtJ);
+                                   
+                                   let H_inv;
+                                   try {
+                                       // 1. Try standard inversion (Faster)
+                                       H_inv = math.inv(JtJ);
+                                   } catch (singularError) {
+                                       // 2. If singular (determinant is 0), use Pseudo-Inverse (Robust for Pawley)
+                                       console.warn("JtJ Matrix is singular. Using Pseudo-Inverse (pinv).");
+                                       if (math.pinv) {
+                                            H_inv = math.pinv(JtJ);
+                                       } else {
+                                            throw singularError; 
+                                       }
+                                   }
+
                                    if (H_inv) {
                                         cov_matrix = math.multiply(H_inv, reduced_chi_sq);
                                    } else {
@@ -4283,7 +4299,10 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                           } catch (invError) {
                                console.error("Matrix inversion error:", invError);
                                cov_matrix = null;
+                               esdWarning = "Matrix singularity prevented error calculation (severe peak overlap).";
                           }
+
+                          // If covariance matrix was successfully calculated, extract diagonal elements
                           if (cov_matrix) {
                               parameterInfo.forEach((p_info, i) => {
                                    if (cov_matrix[i] && cov_matrix[i][i] !== undefined) {
@@ -4293,22 +4312,18 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                                             const scale = p_info.scale || 1.0;
                                             esds[p_info.name] = sigma_scaled * scale;
                                         } else {
-                                             console.warn(`Invalid or negative variance term for parameter ${p_info.name}:`, variance);
                                              esds[p_info.name] = NaN;
-                                             esdWarning = esdWarning || 'Negative/invalid variance encountered.';
                                         }
                                    } else {
-                                        console.warn(`Missing diagonal element [${i},${i}] in covariance matrix for parameter ${p_info.name}`);
                                         esds[p_info.name] = NaN;
-                                        esdWarning = esdWarning || 'Covariance matrix calculation issue.';
                                    }
                               });
-                          } else {
-                               esdWarning = 'Covariance matrix calculation failed (likely high parameter correlation or singularity).';
                           }
                      } else {
-                          esdWarning = "Invalid sum of squared residuals (ss_res) for variance calculation.";
+                          esdWarning = "Invalid sum of squared residuals (ss_res).";
                      }
+
+
                  } else {
                      esdWarning = `N (${N}) <= P (${P}), cannot calculate reliable errors.`;
                  }
@@ -4463,28 +4478,48 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                              tthCorr += calculatePeakShift(hkl.tth, finalParams);
                          } catch { /* ignore shift error */ }
 
-                        const i_calc_height = hkl.intensity || 0;
-                        const shapeArea_Ka1 = getPseudoVoigtArea(hkl.tth, hkl, finalParams);
-                        let total_calc_area = i_calc_height * shapeArea_Ka1;
-                        let total_esd_factor = shapeArea_Ka1;
 
+
+
+
+                         const i_calc_height = hkl.intensity || 0;
+                        
+                        // 1. Calculate K-Alpha 1 Area (Normalized to Height=1)
+                        const shapeArea_Ka1 = getPseudoVoigtArea(hkl.tth, hkl, finalParams);
+                        
+                        // 2. Initialize Total Integrated Area (Height * ShapeArea)
+                        let total_calc_area = i_calc_height * shapeArea_Ka1;
+                        
+                        // 3. Handle K-Alpha 2 Doublet
                         const lambda1 = finalParams.lambda;
                         const lambda2 = finalParams.lambda2;
                         const ratio21 = finalParams.ratio;
-                        const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
+                        const doubletActive = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
 
-                        if (doubletEnabled && i_calc_height > 0) {
+                        if (doubletActive && i_calc_height > 0) {
                             const deg2rad = Math.PI / 180;
                             const sinTheta1 = Math.sin(hkl.tth * deg2rad / 2.0);
-                            const sinTheta2 = sinTheta1 * (lambda1 > 1e-6 ? (lambda2 / lambda1) : 1.0);
+                            // Calculate sin(theta2) based on wavelength ratio
+                            const sinTheta2 = sinTheta1 * (lambda2 / lambda1);
 
+                            // Only add Ka2 if it exists within physical space (sin < 1)
                             if (Math.abs(sinTheta2) < 1) {
                                 const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
                                 const shapeArea_Ka2 = getPseudoVoigtArea(tth2, hkl, finalParams);
+                                
+                                // Add Ka2 contribution: Height * Ratio * ShapeArea2
                                 total_calc_area += i_calc_height * ratio21 * shapeArea_Ka2;
-                                total_esd_factor += ratio21 * shapeArea_Ka2;
                             }
                         }
+
+                        // 4. Apply Global Scale Factor to get final I_calc
+                        total_calc_area *= mainScaleFactor;
+
+                        // 5. Calculate Effective Width Factor for ESD Scaling
+                        // The matrix gives ESD for Height. We need ESD for Area.
+                        // Relation: Area = Height * EffectiveWidth. Therefore, sigma(Area) = sigma(Height) * EffectiveWidth.
+                        // EffectiveWidth = TotalArea / Height.
+                        const effective_width_factor = (i_calc_height > 1e-9) ? (total_calc_area / i_calc_height) : 0;
 
                         const i_obs = i_obs_map.get(hkl.hkl_list[0]) || 0;
                         let esd_I_str = '';
@@ -4494,12 +4529,20 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                              const esd_I_val_height = esds[hkl_name];
 
                              if (typeof esd_I_val_height === 'number' && isFinite(esd_I_val_height)) {
-                                 const esd_I_val_area = esd_I_val_height * total_esd_factor;
+                                 // Convert Height ESD to Area ESD
+                                 const esd_I_val_area = esd_I_val_height * effective_width_factor;
                                  esd_I_str = `(${esd_I_val_area.toFixed(1)})`;
                              } else if (isNaN(esd_I_val_height)) {
                                  esd_I_str = '(NaN)';
                              }
                         }
+
+
+
+
+
+
+
 
                         if (i_obs > 0.01 || total_calc_area > 0.01) {
                             reflectionsSection.push(formatLine([
@@ -4682,6 +4725,8 @@ document.getElementById('profile-function-select').addEventListener('change', ha
                     updatePlotRange(true);
                     generateMasterHklList();      
                     updateBackgroundForPreview();
+                    autoFindSplinePoints(parseInt(document.getElementById('spline-points-slider').value));
+
                     rescalePlot(false); 
                     mainChart.update('none');
 
@@ -4743,12 +4788,12 @@ controls.mainChartCanvas.addEventListener('click', e => {
         const x = e.clientX - rect.left;
         const tthValue = mainChart.scales.x.getValueForPixel(x);
 
-        // --- ADD RANGE CHECK ---
+
         if (tthValue < minTth || tthValue > maxTth) {
             showToast("Cannot add points outside the current 2θ range.", "error");
             return; // Stop if outside range
         }
-        // --- END CHECK ---
+       
 
         const closestPoint = findClosestExperimentalPoint(tthValue);
         if (closestPoint) {
@@ -4776,19 +4821,15 @@ controls.mainChartCanvas.addEventListener('click', e => {
         controls.iterationsSlider.addEventListener('input', () => controls.iterationsValue.textContent = controls.iterationsSlider.value);
         
 
-document.getElementById('auto-spline-button').addEventListener('click', () => {
-    const numPoints = parseInt(document.getElementById('spline-points-slider').value, 10);
-    if (fullExperimentalData.tth.length > 0 && !isNaN(numPoints)) {
-        autoFindSplinePoints(numPoints);
-    } else {
-        showToast("Load data first or check slider value.", "error");
-    }
-});
+const debouncedAutoSpline = debounce((val) => {
+    autoFindSplinePoints(parseInt(val));
+}, 50);
 
-// Also connect the slider's display value
 document.getElementById('spline-points-slider').addEventListener('input', (e) => {
     document.getElementById('spline-points-value').textContent = e.target.value;
+    debouncedAutoSpline(e.target.value);
 });
+
 
 
 // MIN SLIDER
