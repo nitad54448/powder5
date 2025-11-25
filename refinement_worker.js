@@ -23,16 +23,12 @@ if (typeof spaceGroups === 'undefined') {
 
 
 // --- 2. Define Constants & Global Worker State ---
- // Make sure this matches the main script
-const CALCULATION_WINDOW_MULTIPLIER = 6.0;
+const CALCULATION_WINDOW_MULTIPLIER = 8.0;
 const PEAK_HEIGHT_CUTOFF = 0.002;
 const HIGH_WEIGHT_MULTIPLIER = 50.0;
-
-
-
 let workerWorkingData = null; // To store the sliced data sent from the main thread
-let hklIndexCache = {}; // Cache for HKL indices within the worker
-let workerBackgroundAnchors = []; // <-- ADDED: To store spline points from main thread
+let hklIndexCache = {}; 
+let workerBackgroundAnchors = []; 
 
 
 // --- START: Monotonic Cubic Spline Helper Functions ---
@@ -203,9 +199,6 @@ function createMonotonicCubicSplineInterpolator(points) {
         return background;
     }
 
-
-
-// --- Space Group / HKL Functions (from rules_spaceGroups.js, now assumed global) ---
 
 // --- HKL List Generation & Position Update ---
 function updateHklPositions(hklList, params, system) {
@@ -605,7 +598,7 @@ function calculatePeakShift(tth, params) {
 }
 
 /**
- * [NEW HELPER] Calculates widths for simple_pvoigt
+ * Calculates widths for simple_pvoigt
  */
 function _calculateWidths_Simple(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
     let gamma_G = 1e-4;
@@ -627,7 +620,7 @@ function _calculateWidths_Simple(tth, hkl, params, safeThetaRad, tanTheta, cosTh
 }
 
 /**
- * [NEW HELPER] Calculates widths for split_pvoigt
+ * Calculates widths for split_pvoigt
  */
 function _calculateWidths_Split(tth, hkl, params, side, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
     let gamma_G = 1e-4;
@@ -656,7 +649,7 @@ function _calculateWidths_Split(tth, hkl, params, side, safeThetaRad, tanTheta, 
 }
 
 /**
- * [NEW HELPER] Calculates widths for tch_aniso
+ * Calculates widths for tch_aniso
  */
 function _calculateWidths_TCH(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
     let gamma_G = 1e-4;
@@ -694,8 +687,6 @@ function _calculateWidths_TCH(tth, hkl, params, safeThetaRad, tanTheta, cosTheta
             
     return { gamma_G, gamma_L };
 }
-
-
 
 
 /**
@@ -760,7 +751,7 @@ function getPeakFWHM(gamma_G, gamma_L) {
 }
 
 /**
- * [NEW HELPER] Calculates area for simple_pvoigt
+ * Calculates area for simple_pvoigt
  */
 function _getArea_Simple(tth_peak, hkl, params) {
     const GAUSS_AREA_CONST = 1.0644677;
@@ -776,7 +767,7 @@ function _getArea_Simple(tth_peak, hkl, params) {
 }
 
 /**
- * [NEW HELPER] Calculates area for split_pvoigt
+ * Calculates area for split_pvoigt
  */
 function _getArea_Split(tth_peak, hkl, params) {
     const GAUSS_AREA_CONST = 1.0644677;
@@ -882,14 +873,11 @@ function applyAsymmetry(x, x0, tth_peak, params) {
 
 /**
  * Calculates the pseudo-Voigt peak shape value at point x.
- * This is now a DISPATCHER function.
  */
 function pseudoVoigt(x, x0, tth_peak, hkl, params) {
      if (!params) return 0.0;
 
-    // Apply asymmetry correction *once* at the top level
-    const corrected_delta = applyAsymmetry(x, x0, tth_peak, params);
-    
+    const corrected_delta = applyAsymmetry(x, x0, tth_peak, params);    
     let result = 0.0;
     try {
         switch (params.profileType) {
@@ -911,7 +899,7 @@ function pseudoVoigt(x, x0, tth_peak, hkl, params) {
 
 
 /**
- * [NEW HELPER] Calculates shape for simple_pvoigt
+ * Calculates shape for simple_pvoigt
  */
 function _pseudoVoigt_Simple(corrected_delta, tth_peak, hkl, params) {
     const Cg = 2.772588722239781; // 4 * ln(2)
@@ -1077,7 +1065,6 @@ function calculatePattern(tthAxis, hklList, params) {
     }
     return pattern;
 }
-
 
 
 // --- Le Bail Intensity Extraction 
@@ -1360,9 +1347,6 @@ function leBailIntensityExtraction(expData, hklList, params) {
 }
 
 
-
-
-
 // --- Statistics ---
 function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBackground, params, hklList, refinementMode) {
     const y_obs = localWorkingData.intensity;
@@ -1437,7 +1421,6 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
         if (!isFinite(chi2) || chi2 < 0) chi2 = 0;
     }
 
-
     return {
         r_p: isFinite(Rp) ? Rp : -1,
         rwp: isFinite(Rwp) ? Rwp : -1,
@@ -1447,10 +1430,7 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
     };
 }
 
-
 // --- Refinement Algorithms (LM, PT) ---
-// (Simulated Annealing function removed)
-
 async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
         const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList, refinementMode);
         if (paramMapping.length === 0) {
@@ -1659,10 +1639,6 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
              fitFlags
         };
 }
-
-
-// --- (refineParametersSA function was here and is now REMOVED) ---
-
 
 // ---
 async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
@@ -1966,7 +1942,6 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
 
 
 // --- 4. Worker Message Handler ---
-// --- 4. Worker Message Handler ---
 self.onmessage = async function(e) {
     const {
         initialParams,
@@ -1979,15 +1954,13 @@ self.onmessage = async function(e) {
         maxIterations,
         algorithm,
         refinementMode,
-        backgroundAnchors // <-- ADDED
+        backgroundAnchors 
     } = e.data;
 
      // Store working data globally in the worker
      workerWorkingData = workingData;
-     workerBackgroundAnchors = backgroundAnchors; // <-- ADDED
+     workerBackgroundAnchors = backgroundAnchors; 
      // If spaceGroups data is passed, potentially assign it globally if needed
-     // self.spaceGroups = spaceGroupsData; // Uncomment if needed globally
-
     // Find the selected space group within the worker context
      const selectedSg = spaceGroups.find(sg => sg.number === selectedSgNumber);
      if (!selectedSg) {
@@ -2035,8 +2008,6 @@ self.onmessage = async function(e) {
         }
         // --- Pawley Mode ---
         else { // refinementMode === 'pawley'
-
-             // ***** MODIFICATION START *****
              // Perform a SINGLE Le Bail extraction first to initialize intensities
              postMessage({ type: 'progress', value: 0.05, message: 'Initializing Pawley intensities...' }); // Small progress update
              try {
@@ -2059,9 +2030,6 @@ self.onmessage = async function(e) {
                        if (peak) peak.intensity = 1000.0;
                   });
              }
-             // ***** MODIFICATION END *****
-
-
             // Now run the chosen algorithm ONCE for Pawley, refining initialized intensities simultaneously
             if (algorithm === 'lm') {
                 finalResults = await refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);

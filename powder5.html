@@ -718,10 +718,6 @@
     <p><b>Add BG Point:</b> Hold <b>Ctrl</b> and click on the chart to manually add a spline point.</p>
 </div>
 </div>
-
-
-
-
                 </div>
                 <input type="file" id="file-input" class="hidden" accept=".brml,.csv,.ras,.txt,.esd,.gsa,.std,.udf,.xra,.xrdml,.xy">
             </div>
@@ -1032,15 +1028,11 @@
     </div>
 </div>
 
-
-
-
-
 <script>
     document.addEventListener('DOMContentLoaded', () => {      
 
         const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 6
-        const PEAK_HEIGHT_CUTOFF = 0.001; // 0.01 Corresponds to 1%
+        const PEAK_HEIGHT_CUTOFF = 0.002; // 0.01 Corresponds to 1%
  
 const tooltipContainer = document.querySelector('.help-tooltip-container');
 const tooltipContent = document.querySelector('.tooltip-content');
@@ -1061,8 +1053,6 @@ if (tooltipContainer && tooltipContent) {
         }, 1000); //  milliseconds 
     });
 }
-
-
         const controls = {
             fileInput: document.getElementById('file-input'),
             fileName: document.getElementById('file-name'),
@@ -1075,8 +1065,6 @@ if (tooltipContainer && tooltipContent) {
         ratio21: document.getElementById('ratio21'),      
             zeroShift: document.getElementById('zero-shift'),
             fitZeroShift: document.getElementById('fit-zero-shift'),
- 
-
           profileSelect: document.getElementById('profile-function-select'),
             
             // Profile containers
@@ -1147,8 +1135,7 @@ if (tooltipContainer && tooltipContent) {
         // --- Global State ---
         let profileParamCache = { "simple_pvoigt": {}, "tch_aniso": {}, "split_pvoigt": {} };
         let currentProfile = "simple_pvoigt";
-
-       
+     
         let isFitting = false;
         let lastGeneratedHklList = [];
         let backgroundAnchors = []; // Stores {tth, y} spline points
@@ -1163,7 +1150,6 @@ if (tooltipContainer && tooltipContent) {
         let lastFitResultsCache = null;
         let mainChart;
 
-
         // --- Worker Setup 
         let refinementWorker = null;
         try {
@@ -1175,11 +1161,10 @@ if (tooltipContainer && tooltipContent) {
                 const { type, value, message, results } = e.data;
 
                 if (type === 'progress') {
-                    // Update progress bar smoothly
-                    controls.progressBar.style.transition = 'width 0.1s linear'; // Faster transition during updates
+                    //  progress bar 
+                    controls.progressBar.style.transition = 'width 0.1s linear';
                     controls.progressBar.style.width = `${Math.min(100, value * 100)}%`;
                     // Optionally display messages:
-                    // if (message) { /* Update a status label */ }
                 } else if (type === 'result') {
   //                  console.log("Worker finished, received results:", results);
                     fitResults = results; // Store the complete results object
@@ -1242,8 +1227,6 @@ if (tooltipContainer && tooltipContent) {
 
 
          updateSpaceGroupUI();
-
-// --- START: Monotonic Cubic Spline Helper Functions ---
 
 /**
  * Creates a monotonic cubic Hermite spline interpolation function.
@@ -1343,9 +1326,6 @@ function createMonotonicCubicSplineInterpolator(points) {
     };
 }
 
-
-
-
          /**
  * Automatically finds points for the background spline, using local minima
  * refined within a sub-window and smoothed by averaging, ensuring points
@@ -1426,7 +1406,7 @@ function autoFindSplinePoints(numPoints) {
 
                 // Iterate through the original chunk indices
                 for (let j = chunkStartIdx; j < chunkEndIdx; j++) {
-                     if (j === firstPoint.index || j === lastPoint.index) continue; // Skip edges
+                     if (j === firstPoint.index || j === lastPoint.index) continue;
                     if (tth[j] >= refineMinTth && tth[j] <= refineMaxTth) {
                         if (intensity[j] < finalMinVal) {
                             finalMinVal = intensity[j];
@@ -1473,7 +1453,6 @@ function autoFindSplinePoints(numPoints) {
 }
 
 
-
 function updateSplinePointsOnChart() {
     if (!mainChart) return;
 
@@ -1487,8 +1466,6 @@ function updateSplinePointsOnChart() {
        mainChart.update('none'); // Redraw the chart without animation, too slwo and useless
     }
 }
-
-
         // function to find the nearest data point to a click
         function findClosestExperimentalPoint(targetTth) {
             if (!fullExperimentalData || fullExperimentalData.tth.length === 0) {
@@ -1543,8 +1520,6 @@ function updateSplinePointsOnChart() {
     updateSplinePointsOnChart();
 }
 
-
-
 function handleSplinePointListInteraction(e) {
     let listNeedsUpdate = false;
     if (e.target.classList.contains('anchor-remove-btn')) {
@@ -1592,7 +1567,6 @@ function handleSplinePointListInteraction(e) {
         updateBackgroundForPreview(); // Ensure background curve reflects potential Tth changes
     }
 }
-
 
         function updateStephensAnisotropyUI() {
             const { system } = getSystemAndCentering();
@@ -1657,7 +1631,6 @@ function handleSplinePointListInteraction(e) {
             }
         }        
 
-
         // Data mapping systems to their possible Laue classes...peut etre mieux de les mettres dans la const spaceGroups ?
         const laueClassMap = {
             'cubic': [{ value: 'm-3m', text: 'm-3m' }, { value: 'm-3', text: 'm-3' }],
@@ -1667,7 +1640,6 @@ function handleSplinePointListInteraction(e) {
             'orthorhombic': [{ value: 'mmm', text: 'mmm' }],
             'monoclinic': [{ value: '2/m', text: '2/m' }],
         };
-
 
 function getSpaceGroupCentering(spaceGroupName) {
     const firstLetter = spaceGroupName.charAt(0).toUpperCase();
@@ -1726,7 +1698,7 @@ function updateSpaceGroupUI() {
         // This event listener triggers all UI updates.
         controls.bravaisLattice.addEventListener('change', updateUIForSystemChange);
 
-/**
+        /**
          * Smart file detector. It checks for known headers and extensions
          * and falls back to a generic 2-column parser.
          */
@@ -1923,9 +1895,7 @@ function updateSpaceGroupUI() {
         const parseUxdFile = (text) => { const lines = text.trim().split(/\r?\n/); const intensity = []; let startTth, stepSize, wavelength; let inDataSection = false; for (const line of lines) { const trimmedLine = line.trim(); if (inDataSection) { const parts = trimmedLine.split(/\s+/); parts.forEach(part => { const val = parseFloat(part); if (!isNaN(val)) intensity.push(val); }); } else { if (trimmedLine.toUpperCase().startsWith('_START=')) startTth = parseFloat(trimmedLine.substring(7)); else if (trimmedLine.toUpperCase().startsWith('_STEPSIZE=')) stepSize = parseFloat(trimmedLine.substring(10)); else if (trimmedLine.toUpperCase().startsWith('_WL1=')) wavelength = parseFloat(trimmedLine.substring(5)); else if (trimmedLine.toUpperCase() === '_COUNTS') inDataSection = true; } } if (startTth === undefined || stepSize === undefined) throw new Error("Could not find _START and _STEPSIZE in UXD file."); if (intensity.length === 0) throw new Error("No intensity data found after _COUNTS in UXD file."); const tth = Array.from({ length: intensity.length }, (_, i) => startTth + i * stepSize); return { tth, intensity, wavelength }; };
         const parsePhilipsUdfFile = (text) => { const lines = text.trim().split(/\r?\n/); const tth = [], intensity = []; let inDataSection = false; let wavelength = null; for (const line of lines) { const trimmedLine = line.trim(); if (trimmedLine.toUpperCase().startsWith('LAMBDA')) { const parts = trimmedLine.split('='); if (parts.length > 1) wavelength = parseFloat(parts[1]); } if (trimmedLine.toUpperCase() === '[DATA]') { inDataSection = true; continue; } if (trimmedLine.startsWith('[') && trimmedLine.toUpperCase() !== '[DATA]') inDataSection = false; if (inDataSection) { const parts = trimmedLine.split(/,/).map(p => p.trim()); if(parts.length >= 2) { const x = parseFloat(parts[0]); const y = parseFloat(parts[1]); if (!isNaN(x) && !isNaN(y)) { tth.push(x); intensity.push(y); } } } } if (tth.length === 0) throw new Error("No [Data] section found in UDF file."); return { tth, intensity, wavelength }; };
 
-
-
-        // Global cache for the data used in fitting, 
+  // Global cache for the data used in fitting, 
         let workingData = {
             tth: [],
             intensity: [],
@@ -1974,8 +1944,6 @@ function updateSpaceGroupUI() {
 
             workingData.isValid = true;
         }
-
-
 
         function evaluateExpression(expr, h, k, l) {
             switch (expr.trim()) {
@@ -2268,8 +2236,6 @@ function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
     return { multiplicity: m, canonical_hkl_obj: [h, k, l] };
 }
 
-
-
     /**
  * Generates the list of raw HKL indices {h, k, l, multiplicity} for PREVIEW/REFINEMENT.
  * Checks cache first in the worker context.
@@ -2280,7 +2246,6 @@ function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
  */
 function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     // --- Worker Cache Check (only runs in worker context) ---
-    // Note: 'self' is defined in workers, but not in the main window context.
     // 'hklIndexCache' is defined globally in both contexts.
     let sgNumber = null;
     if (spaceGroup && typeof spaceGroup.number === 'number') {
@@ -2290,7 +2255,6 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
              return hklIndexCache[sgNumber]; // Return cached version from worker
         }
     }
-    // --- End Worker Cache Check ---
 
     // --- Parameter Validation ---
     const { a, b, c, lambda } = params;
@@ -2587,8 +2551,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
 
             }); // end forEach peak
         }
-        // --- END HKL Position Calculation ---
-
+    
 
         /**
      * Calculates the total background contribution using monotonic cubic spline interpolation.
@@ -2655,8 +2618,6 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
 
         return background;
     }
-
-
 
 
         // --- Profile Shape & Width (Needed for Preview/Tooltips) ---
@@ -2992,11 +2953,6 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
         /**
          * Calculates the overall diffraction pattern. Runs in main thread for previews.
          */
-
-        /**
-         * Calculates the overall diffraction pattern. Runs in main thread for previews.
-         * [CORRECTED FOR PAWLEY STABILITY]
-         */
         function calculatePattern(tthAxis, hklList, params) {
             const n_points = tthAxis ? tthAxis.length : 0;
             if (n_points === 0 || !hklList || hklList.length === 0 || !params) {
@@ -3019,8 +2975,6 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                 const basePos1 = peak.tth + zeroShift;
                 const shift1 = calculatePeakShift(basePos1, params);
                 const peakPos1 = basePos1 + shift1;
-
-      
                 
                 // Get widths just for the window approximation
                 const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
@@ -3060,10 +3014,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                     const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
                     const basePos2 = tth2 + zeroShift;
                     const shift2 = calculatePeakShift(basePos2, params);
-                    const peakPos2 = basePos2 + shift2;
-                    
-             
-
+                    const peakPos2 = basePos2 + shift2;                    
                     const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
                     const fwhm_approx2 = getPeakFWHM(gG2, gL2);
 
@@ -3095,9 +3046,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
             }
             return pattern;
         }
-
-
-        
+       
 
         // master HKL, 1.0.3 et ensuite
         // This function now uses the cache to get raw indices and then calculates positions.
@@ -3120,7 +3069,7 @@ function generateMasterHklList() {
     const maxTth = Math.max(...fullExperimentalData.tth) + 2.0;
     const params = getAllParams();
 
-   // console.log("Params for HKL gen:", JSON.stringify(params));
+   // console.log("Params for HKL gen:", JSON.stringify(params));, corrigé le 24 nov
     //console.log("Selected SG object:", JSON.stringify(selectedSg));
 
 
@@ -3174,9 +3123,6 @@ function generateMasterHklList() {
                 mainChart.update('none');
             }
         }
-
-
-
 
 
 /**
@@ -3287,14 +3233,10 @@ function calculateWilliamsonHall(params, hklList) {
                 const params = fitResults.params;
                 const scaleFactor = fitResults.stats.scaleFactor;
                 
-                // *** PASS SPLINE POINTS (backgroundAnchors) TO BACKGROUND CALCULATION ***
                 const background_sliced = calculateTotalBackground(workingData.tth, params, backgroundAnchors);
                 const unscaledPeakPattern_sliced = calculatePattern(workingData.tth, fitResults.hklList, params);
-
                 const totalCalcPattern = math.add(math.multiply(Array.from(unscaledPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
-            
-const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
-
+                const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                 workingData.lastRawDifference = diff;
                 
                 const findDataset = (label) => mainChart.data.datasets.find(d => d.label === label);
@@ -3322,7 +3264,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
         }
 
 
-        // runFit function - NOW SENDS DATA TO WORKER, depuis le 24 oct 2025
+        // runFit function - sends data to workers, depuis le 24 oct 2025
         let workerWorkingData = null; // Store the data sent to the worker for result display
 
         function runFit(refinementMode) {
@@ -3614,11 +3556,10 @@ function debounce(func, wait) {
             }
             
             const sum_obs_calc = math.dot(Array.from(y_obs_net_sliced), Array.from(unscaledPeakPattern_sliced));
-const sum_calc_sq = math.dot(Array.from(unscaledPeakPattern_sliced), Array.from(unscaledPeakPattern_sliced));
+            const sum_calc_sq = math.dot(Array.from(unscaledPeakPattern_sliced), Array.from(unscaledPeakPattern_sliced));
             const scaleFactor = (sum_calc_sq > 1e-9) ? sum_obs_calc / sum_calc_sq : 1.0;
-
             const totalCalcPattern = math.add(math.multiply(Array.from(unscaledPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
-const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
+            const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
             workingData.lastRawDifference = diff;
 
@@ -3706,7 +3647,6 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
         }
 
    
-        // Update Pawley button based on algorithm AND current fitting state
         updatePawleyButtonState();
     }
         
@@ -3784,7 +3724,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
             // 2. Calculate the total pattern and the raw difference array
             const totalCalcPattern = math.add(math.multiply(Array.from(netPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
-const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
+            const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
             // This global variable is now ready for rescalePlot to use
             workingData.lastRawDifference = diff; 
@@ -3936,7 +3876,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
         }        
 
         function rescalePlot(updateY = false) {
-        // === CONFIGURABLE PARAMETERS FOR DIFFERENCE PLOT ===
+        // === diff plot parameters
         const DIFF_PLOT_MIN_RATIO = 0.1;  // Minimum allocation: 10% of Y scale
         const DIFF_PLOT_MAX_RATIO = 0.3;  // Maximum allocation: 30% of Y scale
         const DIFF_PLOT_PADDING = 1.1;     // Padding factor (1.1 = 10% extra space)
@@ -3950,7 +3890,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
         // --- DYNAMIC DIFFERENCE PLOT ALLOCATION ---
         let diffPlotHeightRatio = 0.15; // Default allocation
 
-        // This is the source of truth for the difference plot's magnitude
+        //  difference plot magnitude
         const diffData = workingData.lastRawDifference || [];
         
         if (diffData.length > 0) {
@@ -3966,11 +3906,8 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
         // Update Y-axis 
         if (updateY) {
             mainChart.options.scales.y.max = globalYMax;
-            // --- This line was moved inside the if(updateY) block ---
             mainChart.options.scales.y.min = -constantNegSpaceHeight;
         }
-        
-        // --- The problematic line was REMOVED from here ---
         
         // Draw HKL Markers
         const hklDataset = findDataset('HKL Markers');
@@ -4266,7 +4203,7 @@ const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
                  } else if (N > P) {
                      const degreesOfFreedom = N - P;
 
-if (ss_res >= 0 && isFinite(ss_res)) {
+                        if (ss_res >= 0 && isFinite(ss_res)) {
                           const reduced_chi_sq = (degreesOfFreedom > 0) ? (ss_res / degreesOfFreedom) : 0;
                           let cov_matrix = null;
 
@@ -4432,7 +4369,7 @@ if (ss_res >= 0 && isFinite(ss_res)) {
             }
 
 
-            // --- ADDED: Background Points Section ---
+            // --- ADDED: Background Points Section, version 115, 25 oct 2025 ---
             const backgroundPointsSection = [];
             if (backgroundAnchors && backgroundAnchors.length > 0) {
                  const bgWidths = [15, 18]; // 2theta, Intensity
@@ -4477,11 +4414,6 @@ if (ss_res >= 0 && isFinite(ss_res)) {
                          try {
                              tthCorr += calculatePeakShift(hkl.tth, finalParams);
                          } catch { /* ignore shift error */ }
-
-
-
-
-
                          const i_calc_height = hkl.intensity || 0;
                         
                         // 1. Calculate K-Alpha 1 Area (Normalized to Height=1)
@@ -4536,13 +4468,6 @@ if (ss_res >= 0 && isFinite(ss_res)) {
                                  esd_I_str = '(NaN)';
                              }
                         }
-
-
-
-
-
-
-
 
                         if (i_obs > 0.01 || total_calc_area > 0.01) {
                             reflectionsSection.push(formatLine([
@@ -4604,7 +4529,6 @@ if (ss_res >= 0 && isFinite(ss_res)) {
         document.getElementById('le-bail-button').addEventListener('click', () => runFit('le-bail'));
         document.getElementById('pawley-button').addEventListener('click', () => runFit('pawley'));
 
-
         // Helper function to handle a full HKL list recalculation, including cache invalidation.
         const handleFullHklRecalculation = () => {
             if (!mainChart || isFitting) return;
@@ -4616,10 +4540,7 @@ if (ss_res >= 0 && isFinite(ss_res)) {
 
         // Create a debounced version of the handler for frequent input events.
         const debouncedHklRecalculation = debounce(handleFullHklRecalculation, 400); // 400ms delay
-
         const debouncedBackgroundUpdate = debounce(updateBackgroundForPreview, 350);
-
-
         // Helper function for simple preview updates that DON'T require HKL recalculation.
         const handleSimplePreviewUpdate = () => {
             if (!mainChart || isFitting) return;
@@ -5011,9 +4932,6 @@ document.getElementById('show-spline-points-checkbox').addEventListener('change'
 });
 
 
-
-
-
 controls.reportButton.addEventListener('click', async () => {
     if (!fitResults) {
         alert("Cannot generate report: Fit results are missing.");
@@ -5087,11 +5005,8 @@ controls.reportButton.addEventListener('click', async () => {
         }
     }
 });
-
         controls.algorithmSelect.addEventListener('change', updatePawleyButtonState);
-
         updatePawleyButtonState();
-
         updateUIForSystemChange();
     });
 
