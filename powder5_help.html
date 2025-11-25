@@ -367,7 +367,7 @@
                 Control of the background spline is located under the "Background" tab:
             </p>
              <ul>
-                <li><b>Auto-generation:</b> Use the <strong>Auto-points slider</strong> (10-40 points) and the <strong>Generate Spline Points</strong> button to automatically populate the list. The algorithm selects points corresponding to local intensity minima within intervals distributed across the current <strong>2θ Min/Max slider</strong> range, applying some averaging around the minimum. The points at the exact 2θ Min and Max slider positions are always included and fixed to these $2\theta$ values.</li>
+                <li><b>Auto-generation:</b> The application <strong>automatically estimates</strong> background points immediately upon loading a data file. You can adjust the density of these points using the <strong>Auto-points slider</strong> (10-40 points). Adjusting the slider automatically recalculates the points based on local intensity minima within intervals distributed across the current <strong>2θ Min/Max slider</strong> range. The points at the exact 2θ Min and Max slider positions are always included and fixed to these $2\theta$ values.</li>
                 <li><b>Manual Addition:</b> Add individual points by holding <strong>Ctrl</strong> and clicking on the chart. The closest experimental point will be added to the list, provided it's within the current slider range and not an edge point.</li>
                 <li><b>Editable List:</b> The generated and manually added points appear in a list below the controls.
                     <ul>
@@ -491,7 +491,7 @@
             <h3>Phase 1: Initial Model Setup</h3>
             <ol>
                 <li><b>Define the Model:</b> Load data, select the crystal system and space group, and define the refinement range using the <strong>$2\theta$ sliders</strong>.</li>
-                <li><b>Set Background Points:</b> Use the controls under the "Background" tab (<strong>Generate Spline Points</strong>, <strong>Ctrl+Click</strong> on chart, or manual editing of the list) to define a set of points that reasonably follow the experimental background. This background shape is fixed during refinement.</li>
+                <li><b>Set Background Points:</b> The background is automatically estimated upon loading. Adjust the <strong>Auto-points slider</strong> under the "Background" tab to optimize the density of points so that they reasonably follow the experimental background. You can also edit the points manually or use <strong>Ctrl+Click</strong> on the chart. This background shape is fixed during refinement.</li>
                 <li><b>Peak Position Refinement:</b> Using the <strong>Le Bail</strong> and <strong>LM</strong> algorithms, refine only the <strong>Lattice Parameter(s)</strong> and, if necessary, the instrumental <strong>Zero Shift</strong>. The goal is to align the calculated Bragg positions with the observed peak maxima.</li>
             </ol>
 
@@ -643,7 +643,7 @@
             </p>
 
             <p>
-                Version: 1.15 | Last Updated: 27 October 2025.<br> This document was updated with the assistance of an AI.
+                Version: 116 | Last Updated: 24 Nov 2025.<br> This document was updated with the assistance of an AI.
             </p>
             <div class="note">
                 <strong>Disclaimer:</strong> This application is provided for educational and research purposes. While it implements standard and robust algorithms, it is not a substitute for fully validated, peer-reviewed software packages (e.g., GSAS-II, FullProf, TOPAS) for analyses intended for publication.
