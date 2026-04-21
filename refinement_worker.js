@@ -3,7 +3,7 @@
 // MODIFIED to use Spline Background
 // MODIFIED to remove Simulated Annealing (SA)
 try {
-importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js', 'rules_spaceGroups.js');} catch (e) {
+importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js', 'sg_database.js', 'sg_engine.js');} catch (e) {
     console.error("Worker Error: Failed to import scripts.", e);
     // Post an error back immediately if scripts fail to load
     postMessage({ type: 'error', message: `Worker failed to load scripts: ${e.message}` });
@@ -15,10 +15,16 @@ if (typeof math === 'undefined') {
    postMessage({ type: 'error', message: 'Worker Error: math.js did not load correctly.' });
     self.close();
 }
-// Check if spaceGroups data loaded
-if (typeof spaceGroups === 'undefined') {
-    postMessage({ type: 'error', message: 'Worker Error: rules_spaceGroups.js did not load correctly.' });
+// Check if SG engine loaded
+if (typeof SG_ENGINE === 'undefined') {
+    postMessage({ type: 'error', message: 'Worker Error: sg_engine.js did not load correctly.' });
     self.close();
+}
+
+// Engine shims so legacy call sites inside this file still work. The
+// authoritative implementations live in sg_engine.js.
+function isReflectionAllowed(h, k, l, spaceGroup) {
+    return SG_ENGINE.isReflectionAllowed(h, k, l, spaceGroup);
 }
 
 
@@ -295,108 +301,10 @@ function updateHklPositions(hklList, params, system) {
 }
 
 
+// Engine shim: delegate multiplicity to sg_engine.js so main thread
+// and worker share one authoritative implementation.
 function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
-    if (h === 0 && k === 0 && l === 0) {
-        return { multiplicity: 1, canonical_hkl_obj: [0, 0, 0] };
-    }
-
-    let m = 0;
-     const abs_h = Math.abs(h);
-     const abs_k = Math.abs(k);
-     const abs_l = Math.abs(l);
-     let [h_p, k_p, l_p] = [abs_h, abs_k, abs_l].sort((a, b) => b - a);
-
-    switch (laue_class) {
-         case 'm-3m':
-             if (h_p > k_p && k_p > l_p && l_p >= 0) m = 48;
-             else if (h_p === k_p && k_p > l_p && l_p >= 0) m = 24;
-             else if (h_p > k_p && k_p === l_p && l_p >= 0) m = 24;
-             else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;
-             else if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;
-             else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;
-             else if (h_p > k_p && k_p > 0 && l_p === 0) m = 24;
-             else m = 1;
-             break;
-         case 'm-3':
-              if (h_p > k_p && k_p > l_p && l_p >= 0) m = 24;
-              else if ((h_p === k_p && k_p > l_p && l_p >= 0) || (h_p > k_p && k_p === l_p && l_p >= 0)) m = 12;
-              else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;
-              else if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;
-              else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;
-              else if (h_p > k_p && k_p > 0 && l_p === 0) m = 12;
-              else m = 1;
-              break;
-         case '6/mmm':
-             if (l_p > 0) {
-                  if (abs_h === 0 && abs_k === 0) m = 2;
-                  else if (abs_h > 0 && abs_k === 0) m = 12;
-                  else if (abs_h === abs_k && abs_k > 0) m = 12;
-                  else if (abs_h > abs_k && abs_k >= 0) m = 24;
-                  else m = 24;
-              } else {
-                  if (abs_h === 0 && abs_k === 0) m = 1;
-                  else if (abs_h > 0 && abs_k === 0) m = 6;
-                  else if (abs_h === abs_k && abs_k > 0) m = 6;
-                  else if (abs_h > abs_k && abs_k >= 0) m = 12;
-                  else m = 12;
-              }
-              break;
-         case '6/m':
-              if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 12 : 2;
-              else m = (abs_h > 0 || abs_k > 0) ? 6 : 1;
-              break;
-        case '-3m':
-             if (l_p !== 0) {
-                 if (abs_h === 0 && abs_k === 0) { m = 2; }
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) { m = 12; }
-                 else { m = 24; }
-             } else {
-                 if (abs_h === 0 && abs_k === 0) { m = 1; }
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) { m = 6; }
-                 else { m = 12; }
-             }
-             break;
-         case '-3':
-             if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1;
-             else if (abs_h === 0 && abs_k === 0) m = 2;
-             else m = 6;
-             break;
-         case '4/mmm':
-             if (l_p > 0) {
-                 if (abs_h === 0 && abs_k === 0) m = 2;
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 8;
-                 else m = 16;
-             } else {
-                 if (abs_h === 0 && abs_k === 0) m = 1;
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 4;
-                 else m = 8;
-             }
-             break;
-         case '4/m':
-              if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 8 : 2;
-              else m = (abs_h > 0 || abs_k > 0) ? 4 : 1;
-              break;
-         case 'mmm':
-              if (abs_h > 0 && abs_k > 0 && l_p > 0) m = 8;
-              else if ((abs_h > 0 && abs_k > 0 && l_p === 0) || (abs_h > 0 && abs_k === 0 && l_p > 0) || (abs_h === 0 && abs_k > 0 && l_p > 0)) m = 4;
-              else if (abs_h > 0 || abs_k > 0 || l_p > 0) m = 2;
-              else m = 1;
-              break;
-         case '2/m':
-              if (abs_k > 0) m = 4;
-              else if (abs_k === 0 && (abs_h !== 0 || l_p !== 0)) m = 2;
-              else m = 1;
-              break;
-         case '-1':
-              if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1;
-              else m = 2;
-              break;
-        default:
-            console.warn("Unknown Laue class:", laue_class, "- assuming multiplicity 1");
-            m = 1;
-            break;
-    }
-    return { multiplicity: m, canonical_hkl_obj: [h, k, l] };
+    return SG_ENGINE.getMultiplicity(h, k, l, laue_class);
 }
 
 
@@ -1067,144 +975,6 @@ function calculatePattern(tthAxis, hklList, params) {
 }
 
 
-// --- Le Bail Intensity Extraction 
-function leBailIntensityExtraction(expData, hklList, params) {
-    if (!expData || !expData.tth || !expData.intensity || !expData.background || !hklList ||
-        expData.tth.length !== expData.intensity.length || expData.tth.length !== expData.background.length) {
-        console.error("leBailIntensityExtraction: Invalid input data.");
-        if (hklList) hklList.forEach(p => { if(p) p.intensity = 0; });
-        return;
-    }
-     const n_points = expData.tth.length;
-     if (n_points === 0) return;
-
-    const deg2rad = Math.PI / 180;
-    const lambda1 = params.lambda || 1.54056;
-    const lambda2 = params.lambda2 || 0;
-    const ratio21 = params.ratio || 0;
-    const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
-    const lambdaRatio = doubletEnabled ? lambda2 / lambda1 : 1.0;
-
-    const peak_profiles = new Array(hklList.length);
-    const total_profile_sum = new Float64Array(n_points).fill(0);
-
-
-
-    hklList.forEach((peak, j) => {
-        const current_peak_profile = new Float64Array(n_points).fill(0);
-        if (!peak || !peak.tth || peak.tth <= 0 || peak.tth >= 180) {
-            peak_profiles[j] = current_peak_profile;
-            return;
-        }
-        
-        const basePos1 = peak.tth + zeroShift;
-        const shift1 = calculatePeakShift(basePos1, params);
-        const peakPos1 = basePos1 + shift1;
-        const { gamma_G, gamma_L } = calculateProfileWidths(basePos1, peak, params);
-        const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
-        const window1 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx1);
-
-        let tth2 = null, basePos2 = null, peakPos2 = null, window2 = 0;
-        if (doubletEnabled) {
-             const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
-             const sinTheta2 = sinTheta1 * lambdaRatio;
-             if (Math.abs(sinTheta2) < 1) {
-                 tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                 basePos2 = tth2 + zeroShift;
-                 const shift2 = calculatePeakShift(basePos2, params);
-                 peakPos2 = basePos2 + shift2;
-                 const widths2 = calculateProfileWidths(basePos2, peak, params);
-                 const fwhm_approx2 = getPeakFWHM(widths2.gamma_G, widths2.gamma_L);
-                 window2 = (CALCULATION_WINDOW_MULTIPLIER + 2) * Math.max(0.01, fwhm_approx2);
-             }
-        }
-
-        for (let i = 0; i < n_points; i++) {
-            const current_tth = expData.tth[i];
-            let total_val_for_peak = 0;
-
-            if (Math.abs(current_tth - peakPos1) < window1) {
-                const profileVal1 = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params);
-                if (profileVal1 > PEAK_HEIGHT_CUTOFF / 10) {
-                    total_val_for_peak += profileVal1;
-                }
-            }
-            
-            if (tth2 && Math.abs(current_tth - peakPos2) < window2) {
-                const profileVal2 = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
-                if (profileVal2 > PEAK_HEIGHT_CUTOFF / 10) {
-                    total_val_for_peak += profileVal2 * ratio21;
-                }
-            }
-            
-            current_peak_profile[i] = total_val_for_peak;
-            total_profile_sum[i] += total_val_for_peak;
-        }
-        peak_profiles[j] = current_peak_profile;
-    });
-
-    
-    const currentCycleIntensities = new Array(hklList.length).fill(0.0);
-
-    for (let i = 1; i < n_points; i++) {
-        const step_width = expData.tth[i] - expData.tth[i-1];
-        if (step_width <= 0) continue;
-
-        const prev_y_obs_net = Math.max(0, expData.intensity[i-1] - (expData.background[i-1] || 0));
-        const current_y_obs_net = Math.max(0, expData.intensity[i] - (expData.background[i] || 0));
-
-        hklList.forEach((peak, j) => {
-            if (!peak) return;
-
-            const prev_fraction = total_profile_sum[i-1] > 1e-9 ? peak_profiles[j][i-1] / total_profile_sum[i-1] : 0;
-            const current_fraction = total_profile_sum[i] > 1e-9 ? peak_profiles[j][i] / total_profile_sum[i] : 0;
-            
-            const prev_partitioned_I = prev_y_obs_net * prev_fraction;
-            const current_partitioned_I = current_y_obs_net * current_fraction;
-            
-            const trapezoid_area = (prev_partitioned_I + current_partitioned_I) / 2 * step_width;
-            
-            currentCycleIntensities[j] += trapezoid_area;
-        });
-    }
-
-    hklList.forEach((peak, idx) => {
-        if (!peak) return;
-        const extracted_area = Math.max(0, currentCycleIntensities[idx] || 0);
-        
-        let peak_height = 0;
-        if (extracted_area > 0 && peak.tth) {
-            
-            const shapeArea_Ka1 = getPseudoVoigtArea(peak.tth, peak, params);
-            let total_area_factor = shapeArea_Ka1;
-
-            const lambda1 = params.lambda;
-            const lambda2 = params.lambda2;
-            const ratio21 = params.ratio;
-            const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
-
-            if (doubletEnabled) {
-                const deg2rad = Math.PI / 180;
-                const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
-                const sinTheta2 = sinTheta1 * (lambda1 > 1e-6 ? (lambda2 / lambda1) : 1.0);
-                
-                if (Math.abs(sinTheta2) < 1) {
-                    const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                    const shapeArea_Ka2 = getPseudoVoigtArea(tth2, peak, params);
-                    total_area_factor += ratio21 * shapeArea_Ka2;
-                }
-            }
-            
-            if (total_area_factor > 1e-9) {
-                peak_height = extracted_area / total_area_factor;
-            }
-        }
-        
-        peak.intensity = peak_height;
-        delete peak.intensity_previous;
-    });
-}
-
 
 function leBailIntensityExtraction(expData, hklList, params) {
     // Basic validation
@@ -1360,24 +1130,13 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
         return { r_p: -1, rwp: -1, chi2: -1, scaleFactor: 1, sum_w_res_sq: 0 };
     }
 
-    let scaleFactor = 1.0;
-    if (refinementMode === 'le-bail') {
-        let sum_w_y_net_y_calc = 0;
-        let sum_w_y_calc_sq = 0;
-        for (let i = 0; i < N; i++) {
-             const w_i = (weights[i] !== undefined && isFinite(weights[i])) ? weights[i] : 1.0;
-            const y_obs_net = y_obs[i] - y_bkg[i];
-            const y_calc_i = netCalcPattern[i] || 0;
-             if (isFinite(y_obs_net) && isFinite(y_calc_i)) {
-                sum_w_y_net_y_calc += w_i * y_obs_net * y_calc_i;
-                sum_w_y_calc_sq += w_i * y_calc_i * y_calc_i;
-             }
-        }
-        scaleFactor = (sum_w_y_calc_sq > 1e-12) ? Math.max(0, sum_w_y_net_y_calc / sum_w_y_calc_sq) : 1.0;
-         if (!isFinite(scaleFactor)) scaleFactor = 1.0;
+    // No separate scale factor: after the Le Bail fix, `netCalcPattern` is
+    // already per-peak-correct (intensities were extracted inside the
+    // refiner's objective before calculating the pattern).
+    const y_calc = new Float64Array(N);
+    for (let i = 0; i < N; i++) {
+        y_calc[i] = netCalcPattern[i] + y_bkg[i];
     }
-
-    const y_calc = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
 
     let sum_w_res_sq = 0, sum_w_obs_sq = 0, sum_abs_res = 0, sum_abs_obs_net = 0;
     for (let i = 0; i < N; i++) {
@@ -1425,7 +1184,7 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
         r_p: isFinite(Rp) ? Rp : -1,
         rwp: isFinite(Rwp) ? Rwp : -1,
         chi2: isFinite(chi2) ? chi2 : -1,
-        scaleFactor: scaleFactor,
+        scaleFactor: 1.0,
         sum_w_res_sq: isFinite(sum_w_res_sq) ? sum_w_res_sq : 0
     };
 }
@@ -1461,29 +1220,29 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
         const calculateTotalPattern = (targetArray) => {
             updateHklPositions(workingHklList, params, system);
             const y_bkg = calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors);
-            const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, params);
 
-            let scaleFactor = 1.0;
+            // In Le Bail mode, extract per-peak intensities from the observed
+            // pattern (minus background) using the current profile shapes BEFORE
+            // computing the calculated pattern. This replaces the old
+            // single-global-scale-factor approximation, which was mathematically
+            // wrong: it tried to match per-peak intensities by scaling the whole
+            // pattern by one number, so the refiner had to move lattice/profile
+            // parameters to compensate for intensities it was forbidden to adjust.
+            // Per-peak extraction is the actual Le Bail method.
             if (refinementMode === 'le-bail') {
-                let num = 0, den = 0;
-                for (let i = 0; i < n_points; i++) {
-                     const w_i = workerWorkingData.weights[i];
-                     const y_obs_net_i = y_obs[i] - y_bkg[i];
-                     const net_calc_i = netCalcPattern[i] || 0;
-                     if (isFinite(w_i) && isFinite(y_obs_net_i) && isFinite(net_calc_i)) {
-                        num += w_i * y_obs_net_i * net_calc_i;
-                        den += w_i * net_calc_i * net_calc_i;
-                     }
-                }
-                 scaleFactor = (den > 1e-12) ? Math.max(0, num / den) : 1.0;
-                 if (!isFinite(scaleFactor)) scaleFactor = 1.0;
+                leBailIntensityExtraction(
+                    { tth: workerWorkingData.tth, intensity: y_obs, background: y_bkg },
+                    workingHklList,
+                    params
+                );
             }
 
-            const totalPattern = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
+            const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, params);
+
             for (let i = 0; i < n_points; i++) {
-                 targetArray[i] = totalPattern[i];
-             }
-            return scaleFactor;
+                targetArray[i] = netCalcPattern[i] + y_bkg[i];
+            }
+            return 1.0;   // no separate scale factor anymore
         };
 
 
@@ -1657,31 +1416,26 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
     const objective = (p_obj, hkl_list_obj) => {
          try {
              updateHklPositions(hkl_list_obj, p_obj, system);
-             const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj);
              const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors);
 
-             let scaleFactor = 1.0;
+             // Le Bail: extract per-peak intensities against the current shapes
+             // before building the calculated pattern (see LM fix notes above).
              if (refinementMode === 'le-bail') {
-                  let num = 0, den = 0;
-                  for (let i = 0; i < workerWorkingData.tth.length; i++) {
-                       const w_i = workerWorkingData.weights[i];
-                       const y_obs_net_i = workerWorkingData.intensity[i] - y_bkg[i];
-                       const net_calc_i = netCalcPattern[i] || 0;
-                       if (isFinite(w_i) && isFinite(y_obs_net_i) && isFinite(net_calc_i)) {
-                            num += w_i * y_obs_net_i * net_calc_i;
-                            den += w_i * net_calc_i * net_calc_i;
-                       }
-                  }
-                  scaleFactor = (den > 1e-12) ? Math.max(0, num / den) : 1.0;
-                  if (!isFinite(scaleFactor)) scaleFactor = 1.0;
+                  leBailIntensityExtraction(
+                      { tth: workerWorkingData.tth,
+                        intensity: workerWorkingData.intensity,
+                        background: y_bkg },
+                      hkl_list_obj,
+                      p_obj
+                  );
              }
 
-             const y_calc_total = math.add(math.multiply(Array.from(netCalcPattern), scaleFactor), Array.from(y_bkg));
+             const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj);
 
              let sum_w_res_sq = 0;
              for (let i = 0; i < workerWorkingData.tth.length; i++) {
                   const w_i = workerWorkingData.weights[i];
-                  const res = workerWorkingData.intensity[i] - y_calc_total[i];
+                  const res = workerWorkingData.intensity[i] - (netCalcPattern[i] + y_bkg[i]);
                    if (isFinite(w_i) && isFinite(res)) {
                         sum_w_res_sq += w_i * res * res;
                    } else {
@@ -1783,27 +1537,9 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
     }
 
      updateHklPositions(bestOverallHklList, bestOverallParams, system);
-     const finalNetCalcPattern = calculatePattern(workerWorkingData.tth, bestOverallHklList, bestOverallParams);
-     const finalY_bkg = calculateTotalBackground(workerWorkingData.tth, bestOverallParams, workerBackgroundAnchors);
-     let finalScaleFactor = 1.0;
-     if (refinementMode === 'le-bail') {
-          let num = 0, den = 0;
-          for (let i = 0; i < workerWorkingData.tth.length; i++) {
-               const w_i = workerWorkingData.weights[i];
-               const y_obs_net_i = workerWorkingData.intensity[i] - finalY_bkg[i];
-               const net_calc_i = finalNetCalcPattern[i] || 0;
-               if (isFinite(w_i) && isFinite(y_obs_net_i) && isFinite(net_calc_i)) {
-                    num += w_i * y_obs_net_i * net_calc_i;
-                    den += w_i * net_calc_i * net_calc_i;
-               }
-          }
-          finalScaleFactor = (den > 1e-12) ? Math.max(0, num / den) : 1.0;
-          if (!isFinite(finalScaleFactor)) finalScaleFactor = 1.0;
-
-           bestOverallHklList.forEach(hkl => {
-               if(hkl) hkl.intensity *= finalScaleFactor;
-           });
-     }
+     // After the per-peak Le Bail extraction inside the objective, the
+     // intensities in bestOverallHklList are already correct. No final
+     // global rescaling is needed or appropriate.
 
      const finalCycleProgress = (leBailCycle + 1) / totalLeBailCycles;
      postMessage({ type: 'progress', value: Math.min(1.0, finalCycleProgress) });
@@ -1948,8 +1684,8 @@ self.onmessage = async function(e) {
         fitFlags,
         workingData, // contains tth, intensity, weights, startIndex
         masterHklList,
-        spaceGroupsData, // Pass the whole array if needed by HKL generation logic
         selectedSgNumber,
+        selectedSgQuery, // original user input string, for setting preservation
         system,
         maxIterations,
         algorithm,
@@ -1960,11 +1696,12 @@ self.onmessage = async function(e) {
      // Store working data globally in the worker
      workerWorkingData = workingData;
      workerBackgroundAnchors = backgroundAnchors; 
-     // If spaceGroups data is passed, potentially assign it globally if needed
-    // Find the selected space group within the worker context
-     const selectedSg = spaceGroups.find(sg => sg.number === selectedSgNumber);
+     // Resolve the space group via the shared engine. Prefer the original
+     // user query (which preserves any non-standard setting, e.g. "P1211");
+     // fall back to the numeric lookup.
+     const selectedSg = SG_ENGINE.resolve(selectedSgQuery) || SG_ENGINE.resolve(selectedSgNumber);
      if (!selectedSg) {
-         postMessage({ type: 'error', message: `Worker Error: Space group ${selectedSgNumber} not found.` });
+         postMessage({ type: 'error', message: `Worker Error: Space group ${selectedSgNumber} could not be resolved.` });
          return;
      }
 
@@ -1975,36 +1712,20 @@ self.onmessage = async function(e) {
 
     try {
         // --- Le Bail Mode ---
+        // With per-peak intensity extraction done inside the refiner's
+        // objective (see refineParametersLM/PT), Le Bail is just a single
+        // refinement call. The old 4-cycle outer loop was a workaround
+        // for a buggy objective that used a global scale factor instead
+        // of per-peak extraction; it is no longer needed.
         if (refinementMode === 'le-bail') {
-            const LE_BAIL_CYCLES = 4; // Or make configurable
-
-            for (let cycle = 0; cycle < LE_BAIL_CYCLES; cycle++) {
-                let refinementResults;
-                if (algorithm === 'lm') {
-                    refinementResults = await refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, cycle, LE_BAIL_CYCLES);
-                } else { // pt (default)
-                    refinementResults = await refineParametersPT(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, cycle, LE_BAIL_CYCLES);
-                }
-
-                if (refinementResults && refinementResults.params && refinementResults.hklList && !refinementResults.error) {
-                    currentParams = refinementResults.params; // Update params for next cycle/extraction
-                    currentHklList = refinementResults.hklList; // Update HKL intensities
-                    finalResults = refinementResults; // Store latest results
-                } else {
-                     throw new Error(`Refinement algorithm (${algorithm}) failed during Le Bail cycle ${cycle + 1}. ${refinementResults?.error ? 'See previous error.' : ''}`);
-                }
-
-                // --- Intensity Extraction Step ---
-                const backgroundForExtraction = calculateTotalBackground(workerWorkingData.tth, currentParams, workerBackgroundAnchors);
-                const expDataForExtraction = {
-                    tth: workerWorkingData.tth,
-                    intensity: workerWorkingData.intensity,
-                    background: backgroundForExtraction
-                };
-                 leBailIntensityExtraction(expDataForExtraction, currentHklList, currentParams);
-                 // The extracted intensities in currentHklList are now ready for the next cycle's refinement
-            } // End Le Bail cycle loop
-
+            if (algorithm === 'lm') {
+                finalResults = await refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
+            } else { // pt
+                finalResults = await refineParametersPT(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
+            }
+            if (!finalResults || finalResults.error) {
+                throw new Error(`Refinement algorithm (${algorithm}) failed during Le Bail fit. ${finalResults?.error ? 'See previous error.' : ''}`);
+            }
         }
         // --- Pawley Mode ---
         else { // refinementMode === 'pawley'

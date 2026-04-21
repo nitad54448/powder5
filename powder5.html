@@ -15,7 +15,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
-    <script src="rules_spaceGroups.js"></script>
+    <script src="sg_database.js"></script>
+    <script src="sg_engine.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js"></script>
     <style>
         :root {
@@ -686,6 +687,229 @@
             outline-offset: 2px;
         }
 
+        /*  Space Group modal  */
+        .sg-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.35);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(2px);
+        }
+        .sg-modal-overlay.open { display: flex; }
+        .sg-modal {
+            background: var(--system-background);
+            width: min(880px, 95vw);
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+            border-radius: 14px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+            overflow: hidden;
+            font-family: inherit;
+            color: var(--system-label);
+        }
+        .sg-modal-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--system-separator);
+            font-size: 15px;
+            font-weight: 600;
+        }
+        .sg-modal-body {
+            display: grid;
+            grid-template-columns: 1.1fr 1fr;
+            gap: 0;
+            min-height: 0;
+            flex: 1;
+        }
+        .sg-modal-left {
+            display: flex;
+            flex-direction: column;
+            padding: 14px 16px;
+            gap: 10px;
+            min-width: 0;
+            border-right: 1px solid var(--system-separator);
+            overflow: hidden;
+        }
+        .sg-modal-right {
+            padding: 14px 16px;
+            overflow-y: auto;
+            min-width: 0;
+        }
+        .sg-filter-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+        }
+        .sg-filter-label {
+            font-size: 11px;
+            color: var(--system-secondary-label);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            width: 100%;
+            margin: 4px 0 -2px 0;
+        }
+        .sg-chip {
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--system-separator);
+            background: var(--system-fill);
+            color: var(--system-label);
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.12s, color 0.12s, border-color 0.12s;
+        }
+        .sg-chip:hover:not(.disabled) { background: var(--system-secondary-fill); }
+        .sg-chip.active {
+            background: var(--system-blue);
+            color: white;
+            border-color: var(--system-blue);
+        }
+        .sg-chip.disabled {
+            opacity: 0.35;
+            cursor: not-allowed;
+        }
+        .sg-search-row {
+            display: grid;
+            grid-template-columns: 1fr 1.7fr;
+            gap: 8px;
+        }
+        .sg-search-row input {
+            font-size: 13px;
+            padding: 6px 10px;
+            border-radius: 8px;
+            border: 1px solid var(--system-separator);
+            background: var(--system-background);
+            color: var(--system-label);
+            outline: none;
+            min-width: 0;
+        }
+        .sg-search-row input:focus { border-color: var(--system-blue); }
+        .sg-list-wrap {
+            flex: 1;
+            min-height: 220px;
+            border: 1px solid var(--system-separator);
+            border-radius: 8px;
+            overflow-y: auto;
+            background: var(--system-background);
+        }
+        .sg-list-item {
+            padding: 7px 12px;
+            font-size: 13px;
+            cursor: pointer;
+            border-bottom: 1px solid var(--system-gray-6);
+            display: grid;
+            grid-template-columns: 48px 1fr 110px;
+            gap: 8px;
+            align-items: baseline;
+        }
+        .sg-list-item:last-child { border-bottom: none; }
+        .sg-list-item:hover { background: var(--system-secondary-fill); }
+        .sg-list-item.selected {
+            background: var(--system-blue);
+            color: white;
+        }
+        .sg-list-item .num { font-variant-numeric: tabular-nums; color: var(--system-secondary-label); }
+        .sg-list-item.selected .num { color: rgba(255,255,255,0.85); }
+        .sg-list-item .sys { font-size: 11px; color: var(--system-secondary-label); text-align: right; }
+        .sg-list-item.selected .sys { color: rgba(255,255,255,0.85); }
+        .sg-list-empty {
+            padding: 24px;
+            text-align: center;
+            color: var(--system-secondary-label);
+            font-size: 13px;
+        }
+        .sg-explain {
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .sg-explain h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .sg-explain-grid {
+            display: grid;
+            grid-template-columns: 110px 1fr;
+            gap: 4px 14px;
+            font-size: 12px;
+        }
+        .sg-explain-grid dt {
+            color: var(--system-secondary-label);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            font-size: 10.5px;
+            padding-top: 2px;
+        }
+        .sg-explain-grid dd {
+            margin: 0;
+            font-variant-numeric: tabular-nums;
+        }
+        .sg-explain-cond-table {
+            margin-top: 8px;
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        .sg-explain-cond-table th,
+        .sg-explain-cond-table td {
+            text-align: left;
+            padding: 3px 8px 3px 0;
+            border-bottom: 1px solid var(--system-gray-6);
+        }
+        .sg-explain-empty, .sg-explain-warning {
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        .sg-explain-empty {
+            background: var(--system-fill);
+            color: var(--system-secondary-label);
+        }
+        .sg-explain-warning {
+            background: rgba(255, 204, 0, 0.14);
+            color: #7a5200;
+            border: 1px solid rgba(255, 204, 0, 0.45);
+        }
+        .sg-modal-footer {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            padding: 12px 16px;
+            border-top: 1px solid var(--system-separator);
+            background: var(--system-grouped-background);
+        }
+        .sg-btn {
+            padding: 7px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--system-separator);
+            background: var(--system-background);
+            color: var(--system-label);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .sg-btn:hover:not(:disabled) { background: var(--system-secondary-fill); }
+        .sg-btn-primary {
+            background: var(--system-blue);
+            color: white;
+            border-color: var(--system-blue);
+        }
+        .sg-btn-primary:hover:not(:disabled) { filter: brightness(0.92); }
+        .sg-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        @media (max-width: 720px) {
+            .sg-modal-body { grid-template-columns: 1fr; }
+            .sg-modal-left { border-right: none; border-bottom: 1px solid var(--system-separator); }
+        }
+
     </style>
 </head>
 
@@ -733,25 +957,17 @@
                 <div class="control-group">
                     <h2>Structural Parameters</h2>
                     <div class="parameter-grid-2col">
-                        <label for="bravais-lattice" class="control-label">System</label>
-                        <select id="bravais-lattice" class="control-select">
-                            <option value="cubic_F" selected>Cubic (F)</option>
-                            <option value="cubic_I">Cubic (I)</option>
-                            <option value="cubic_P">Cubic (P)</option>
-                            <option value="hexagonal_P">Hexagonal (P)</option>
-                            <option value="tetragonal_I">Tetragonal (I)</option>
-                            <option value="tetragonal_P">Tetragonal (P)</option>
-                            <option value="orthorhombic_F">Orthorhombic (F)</option>
-                            <option value="orthorhombic_I">Orthorhombic (I)</option>
-                            <option value="orthorhombic_C">Orthorhombic (C)</option>
-                            <option value="orthorhombic_P">Orthorhombic (P)</option>
-                            <option value="monoclinic_C">Monoclinic (C)</option>
-                            <option value="monoclinic_P">Monoclinic (P)</option>
-                        </select>
+                        <label class="control-label">Space Group</label>
+                        <button type="button"
+                                id="space-group-open-modal"
+                                class="control-input"
+                                style="text-align: center; cursor: pointer; background: var(--system-fill); border: 1px solid var(--system-separator);">
+                            Select Group &raquo;
+                        </button>
                     </div>
-                    <div class="parameter-grid-2col">
-                        <label for="space-group-select" class="control-label">Space Group</label>
-                        <select id="space-group-select" class="control-select"></select>
+                    <div id="space-group-info"
+                         style="font-size: 12px; color: var(--system-secondary-label); margin: 4px 0 6px 0; min-height: 16px;">
+                        Group unspecified
                     </div>
 
                     <div id="lattice-parameters-container">
@@ -775,7 +991,7 @@
                     </div>
                     <div class="form-row">
                         <label for="ratio21" class="control-label">Ratio (I₂/I₁)</label>
-                        <input type="number" id="ratio21" value="0.497" step="0.01" class="control-input" min="0">
+                        <input type="number" id="ratio21" value="0.497" step="0.01" class="control-input" min="0" max="1">
                     </div>
                 </div>
 
@@ -1056,8 +1272,9 @@ if (tooltipContainer && tooltipContent) {
         const controls = {
             fileInput: document.getElementById('file-input'),
             fileName: document.getElementById('file-name'),
-            bravaisLattice: document.getElementById('bravais-lattice'),
-            spaceGroupSelect: document.getElementById('space-group-select'),
+            // Space group selector (modal-based).
+            spaceGroupOpenModalBtn: document.getElementById('space-group-open-modal'),
+            spaceGroupInfo:         document.getElementById('space-group-info'),
 
             latticeParamsContainer: document.getElementById('lattice-parameters-container'),
             wavelength: document.getElementById('wavelength'),
@@ -1226,7 +1443,8 @@ if (tooltipContainer && tooltipContent) {
         }
 
 
-         updateSpaceGroupUI();
+         // updateSpaceGroupUI() is replaced by the engine-driven flow;
+         // datalist + initial resolution happen later in the init path.
 
 /**
  * Creates a monotonic cubic Hermite spline interpolation function.
@@ -1568,6 +1786,7 @@ function handleSplinePointListInteraction(e) {
     }
 }
 
+//I may have a problem here, 21 april 2026
         function updateStephensAnisotropyUI() {
             const { system } = getSystemAndCentering();
             const sParams = { s400: { input: controls.paramS400, fit: controls.fitS400 }, s040: { input: controls.paramS040, fit: controls.fitS040 }, s004: { input: controls.paramS004, fit: controls.fitS004 }, s220: { input: controls.paramS220, fit: controls.fitS220 }, s202: { input: controls.paramS202, fit: controls.fitS202 }, s022: { input: controls.paramS022, fit: controls.fitS022 }, };
@@ -1588,13 +1807,479 @@ function handleSplinePointListInteraction(e) {
         Chart.register(verticalCursorLine);
         Chart.Tooltip.positioners.experimentalAnchor = function(items) { if (!items.length) return false; const experimentalItem = items.find(item => item.datasetIndex === 0) || items[0]; return { x: experimentalItem.element.x, y: experimentalItem.element.y }; };
         
-                function getSystemAndCentering() {
-            let [system, centering] = controls.bravaisLattice.value.split('_');
-            // 9. r Rhombohedral, maille hex
-            if (system === "rhombohedral") {
-                centering = "R"; // Force centering to 'R' for rhombohedral system, fait chieR
+        // Space-group state, driven by the SG_ENGINE, computed from cctbx, python script is in the repo.. hopefully it is ok as I have several programs based on that json file
+        // `currentSG` is null until the user applies a selection from the
+        // modal. All downstream code reads system / centering / laue_class
+        // from this record.
+        let currentSG = null;
+
+        function getSystemAndCentering() {
+            // Compat shim for call sites that still ask for {system, centering}.
+            if (!currentSG) return { system: null, centering: null };
+            return { system: currentSG.system, centering: currentSG.centering };
+        }
+
+        function updateSpaceGroupInfo() {
+            // Single info line next to the "Space Group »" button.
+            const el = controls.spaceGroupInfo;
+            if (!el) return;
+            if (!currentSG) {
+                el.textContent = 'Group unspecified';
+                el.style.color = 'var(--system-secondary-label)';
+                return;
             }
-            return { system, centering };
+            const isStd = currentSG.setting_description === 'standard';
+            const base =
+                `#${currentSG.number} · ${currentSG.standard_symbol} · `
+                + `${currentSG.system} · Laue ${currentSG.laue_class}`
+                + (!isStd ? ` · setting ${currentSG.setting_description}` : '');
+
+            // The only hard correctness issue with non-standard settings in
+            // the current HKL generator is monoclinic off unique-axis-b:
+            let warn = '';
+            if (currentSG.system === 'monoclinic'
+                && !/^b/.test(currentSG.setting_description || '')) {
+                warn = ' — HKL generator assumes unique axis b';
+            }
+            el.textContent = base + warn;
+            el.style.color = 'var(--system-secondary-label)';
+        }
+
+        function updateLatticeParamUI() {
+            const currentValues = {}; const container = controls.latticeParamsContainer;
+            container.querySelectorAll('input[type="number"]').forEach(input => { const name = input.id.replace('lattice-param-', ''); if (input.value) currentValues[name] = input.value; });
+            const { system } = getSystemAndCentering(); container.innerHTML = '';
+            if (!system) return;
+            const createInput = (name, label, defaultValue, step, isAngle = false) => {
+                const valueToUse = currentValues[name] !== undefined ? currentValues[name] : defaultValue; const id_base = `lattice-param-${name}`; const unit = isAngle ? '°' : 'Å';
+                // Angles must lie strictly between 0 and 180°; lengths must
+                // be positive. The HTML attributes block spinner decrements
+                // past the minimum; a separate JS guard at read time
+                // (see getAllParams) refuses hand-typed bad values.
+                const minMaxAttrs = isAngle ? 'min="1" max="179"' : 'min="0.001"';
+                const row = document.createElement('div'); row.className = 'parameter-grid-3col'; row.innerHTML = `<label for="${id_base}" class="control-label">${label} (${unit})</label><input type="number" id="${id_base}" value="${valueToUse}" step="${step}" class="control-input" ${minMaxAttrs}><input type="checkbox" id="fit-lattice-${name}" class="fit-checkbox" title="Fit this parameter" checked>`; container.appendChild(row);
+            };
+            const params = {
+                triclinic:   [{ name: 'a', label: 'a', value: 5.0, step: 0.001 }, { name: 'b', label: 'b', value: 6.0, step: 0.001 }, { name: 'c', label: 'c', value: 7.0, step: 0.001 }, { name: 'alpha', label: 'α', value: 90.0, step: 0.01, isAngle: true }, { name: 'beta', label: 'β', value: 95.0, step: 0.01, isAngle: true }, { name: 'gamma', label: 'γ', value: 100.0, step: 0.01, isAngle: true }],
+                monoclinic:  [{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'b', label: 'b', value: 5.0, step: 0.001 }, { name: 'c', label: 'c', value: 6.0, step: 0.001 }, { name: 'beta', label: 'β', value: 105.0, step: 0.01, isAngle: true }],
+                orthorhombic:[{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'b', label: 'b', value: 5.0, step: 0.001 }, { name: 'c', label: 'c', value: 6.0, step: 0.001 }],
+                tetragonal:  [{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'c', label: 'c', value: 5.0, step: 0.001 }],
+                hexagonal:   [{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'c', label: 'c', value: 6.0, step: 0.001 }],
+                trigonal:    [{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'c', label: 'c', value: 6.0, step: 0.001 }],
+                rhombohedral:[{ name: 'a', label: 'a', value: 5.5, step: 0.001 }, { name: 'c', label: 'c', value: 15.0, step: 0.001 }],
+                cubic:       [{ name: 'a', label: 'a', value: 4.23, step: 0.001 }]
+            };
+            if(params[system]) params[system].forEach(p => createInput(p.name, p.label, p.value, p.step, p.isAngle));
+        }
+
+        function updateUIForSystemChange() {
+            // Called after the user applies a new space group from the modal,
+            // or at startup. Rebuilds lattice-parameter inputs and refreshes
+            // Stephens-anisotropy enabling to match the system.
+            updateSpaceGroupInfo();
+            updateLatticeParamUI();
+            updateStephensAnisotropyUI();
+        }
+
+        // ===================================================================
+        // Space-Group modal: filter chips + search + explanation panel.
+        // All cctbx settings (≈530 rows) are pre-materialised into a flat
+        // array `ALL_SETTINGS` once; every re-filter walks that array.
+        // With an AND'd filter chain this is cheap (< 2 ms on any machine).
+        // ===================================================================
+        const SGM = (() => {
+            // --- Build the pooled list once. ---
+            const SYSTEMS = ['triclinic','monoclinic','orthorhombic','tetragonal','trigonal','hexagonal','cubic'];
+            const CENTERINGS = ['P','A','B','C','I','F','R'];
+
+            function buildAllSettings() {
+                const out = [];
+                for (let n = 1; n <= 230; n++) {
+                    const entries = SG_ENGINE.listSettings(n);
+                    entries.forEach(rec => {
+                        // rec already has: number, symbol, standard_symbol,
+                        // setting_description, hall, system, laue_class,
+                        // point_group, centering, centrosymmetric,
+                        // reflection_conditions, display_label (optional),
+                        // alternate_halls (optional).
+                        //
+                        // The HKL generator only supports hexagonal-axes
+                        // indexing for R-centred groups (the d-spacing
+                        // formula and asymmetric-unit loop are written
+                        // that way). Drop the rhomb-axes duplicates so
+                        // the user can't pick a setting the engine
+                        // wouldn't handle correctly.
+                        const lbl = rec.display_label || '';
+                        if (/rhomb\. axes/.test(lbl)) return;
+
+                        // Strip the now-redundant "[hex. axes]" tag from
+                        // the remaining label, so an R-centred entry
+                        // just reads e.g. "R-3c" like every other group.
+                        if (/hex\. axes/.test(lbl)) {
+                            rec = { ...rec,
+                                    display_label: lbl.replace(/\s*\[hex\. axes\]\s*/, '').trim() };
+                        }
+                        out.push(rec);
+                    });
+                }
+                return out;
+            }
+
+            const ALL_SETTINGS = buildAllSettings();
+
+            // --- Modal DOM handles (resolved lazily). ---
+            let nodes = null;
+            function grabNodes() {
+                if (nodes) return nodes;
+                nodes = {
+                    overlay: document.getElementById('sg-modal-overlay'),
+                    systemRow: document.getElementById('sg-chip-row-system'),
+                    centRow:   document.getElementById('sg-chip-row-centering'),
+                    axesLabel: document.getElementById('sg-chip-row-axes-label'),
+                    axesRow:   document.getElementById('sg-chip-row-axes'),
+                    numInput:  document.getElementById('sg-search-number'),
+                    txtInput:  document.getElementById('sg-search-text'),
+                    listWrap:  document.getElementById('sg-list-wrap'),
+                    explain:   document.getElementById('sg-explain'),
+                    btnCancel: document.getElementById('sg-btn-cancel'),
+                    btnReset:  document.getElementById('sg-btn-reset'),
+                    btnApply:  document.getElementById('sg-btn-apply')
+                };
+                return nodes;
+            }
+
+            // --- Filter state. Reset() brings everything back to this. ---
+            const state = {
+                system: null,       // one of SYSTEMS or null
+                centering: null,    // one of CENTERINGS or null
+                axis: null,         // 'hex' | 'rhomb' | null
+                numText: '',
+                txtText: '',
+                selected: null      // the chosen setting record, or null
+            };
+
+            function resetState() {
+                state.system = null;
+                state.centering = null;
+                state.axis = null;
+                state.numText = '';
+                state.txtText = '';
+                state.selected = null;
+            }
+
+            function mkChip(label, active, disabled, onClick) {
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'sg-chip' + (active ? ' active' : '') + (disabled ? ' disabled' : '');
+                chip.textContent = label;
+                chip.disabled = !!disabled;
+                if (!disabled) chip.addEventListener('click', onClick);
+                return chip;
+            }
+
+            // Which centerings are possible, given the current filter set
+            // (excluding `centering` itself — we derive its enabled options
+            // from what the OTHER filters allow). Same idea for axes.
+            function availableCenteringsGiven(exclSystem) {
+                const out = new Set();
+                ALL_SETTINGS.forEach(rec => {
+                    if (exclSystem && rec.system !== exclSystem) return;
+                    out.add(rec.centering);
+                });
+                return out;
+            }
+            function axisChoiceApplies() {
+                // Show the axis row only when the selection could be an
+                // R-centred trigonal group (that's the only case where we
+                // surface both hex- and rhomb-axis indexings).
+                // Criterion: any row with an axis tag survives the current
+                // non-axis filters.
+                return ALL_SETTINGS.some(rec => {
+                    if (!rec.axis) return false;
+                    if (state.system && rec.system !== state.system) return false;
+                    if (state.centering && rec.centering !== state.centering) return false;
+                    return true;
+                });
+            }
+
+            function renderChips() {
+                const n = grabNodes();
+
+                // System chips. Every system is always enabled because
+                // toggling one simply reshapes the rest of the UI.
+                n.systemRow.innerHTML = '';
+                SYSTEMS.forEach(sys => {
+                    n.systemRow.appendChild(mkChip(
+                        sys.charAt(0).toUpperCase() + sys.slice(1),
+                        state.system === sys,
+                        false,
+                        () => {
+                            state.system = state.system === sys ? null : sys;
+                            // Clear centering/axis if they no longer fit.
+                            const avail = availableCenteringsGiven(state.system);
+                            if (state.centering && !avail.has(state.centering)) state.centering = null;
+                            if (!axisChoiceApplies()) state.axis = null;
+                            renderAll();
+                        }
+                    ));
+                });
+
+                // Centering chips. Enabled set depends on current system.
+                n.centRow.innerHTML = '';
+                const avail = availableCenteringsGiven(state.system);
+                CENTERINGS.forEach(c => {
+                    const enabled = avail.has(c);
+                    n.centRow.appendChild(mkChip(
+                        c,
+                        state.centering === c,
+                        !enabled,
+                        () => {
+                            state.centering = state.centering === c ? null : c;
+                            if (!axisChoiceApplies()) state.axis = null;
+                            renderAll();
+                        }
+                    ));
+                });
+
+                // Axis-choice chips (shown only when relevant).
+                const axisShown = axisChoiceApplies();
+                n.axesLabel.style.display = axisShown ? '' : 'none';
+                n.axesRow.style.display   = axisShown ? '' : 'none';
+                n.axesRow.innerHTML = '';
+                if (axisShown) {
+                    [['hex','Hex. axes'],['rhomb','Rhomb. axes']].forEach(([key, label]) => {
+                        n.axesRow.appendChild(mkChip(
+                            label,
+                            state.axis === key,
+                            false,
+                            () => {
+                                state.axis = state.axis === key ? null : key;
+                                renderAll();
+                            }
+                        ));
+                    });
+                }
+            }
+
+            function applyFilters() {
+                const numQ = (state.numText || '').trim();
+                const txtQ = (state.txtText || '').trim().toLowerCase();
+                return ALL_SETTINGS.filter(rec => {
+                    if (state.system    && rec.system     !== state.system)    return false;
+                    if (state.centering && rec.centering  !== state.centering) return false;
+                    if (state.axis) {
+                        if (rec.axis !== state.axis) return false;
+                    }
+                    if (numQ) {
+                        // Exact integer match, or prefix match on the number.
+                        if (/^\d+$/.test(numQ)) {
+                            if (String(rec.number) !== numQ) return false;
+                        } else {
+                            return false;
+                        }
+                    }
+                    if (txtQ) {
+                        const hay = (
+                            rec.symbol + ' ' +
+                            rec.standard_symbol + ' ' +
+                            (rec.hall || '') + ' ' +
+                            (rec.display_label || '')
+                        ).toLowerCase();
+                        if (hay.indexOf(txtQ) === -1) return false;
+                    }
+                    return true;
+                });
+            }
+
+            function renderList(list) {
+                const n = grabNodes();
+                if (list.length === 0) {
+                    n.listWrap.innerHTML = '<div class="sg-list-empty">No space groups match these filters.</div>';
+                    return;
+                }
+                // Make sure the selection (if any) is still in the filtered list;
+                // if not, drop it.
+                if (state.selected) {
+                    const keep = list.some(r =>
+                        r.number === state.selected.number
+                        && r.symbol === state.selected.symbol
+                        && r.setting_description === state.selected.setting_description
+                    );
+                    if (!keep) state.selected = null;
+                }
+                const frag = document.createDocumentFragment();
+                list.slice(0, 600).forEach(rec => {   // cap — 530 max anyway
+                    const row = document.createElement('div');
+                    row.className = 'sg-list-item';
+                    const isSel = state.selected
+                        && rec.number === state.selected.number
+                        && rec.symbol === state.selected.symbol
+                        && rec.setting_description === state.selected.setting_description;
+                    if (isSel) row.classList.add('selected');
+                    row.innerHTML =
+                        `<span class="num">#${rec.number}</span>`
+                        + `<span>${escapeHtml(rec.display_label || rec.symbol)}</span>`
+                        + `<span class="sys">${rec.system}</span>`;
+                    row.addEventListener('click', () => {
+                        state.selected = rec;
+                        renderAll();
+                    });
+                    frag.appendChild(row);
+                });
+                n.listWrap.innerHTML = '';
+                n.listWrap.appendChild(frag);
+            }
+
+            function escapeHtml(s) {
+                return String(s)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            function renderExplain(list) {
+                const n = grabNodes();
+                // Precedence:
+                //   1. Empty list  -> "No match" message in the panel.
+                //   2. Has list, nothing selected -> hint.
+                //   3. Has selection -> full details.
+                if (list.length === 0) {
+                    n.explain.innerHTML =
+                        '<div class="sg-explain-warning">'
+                        + '<strong>No space groups match these filters.</strong><br>'
+                        + 'Adjust the selections or clear a search field. '
+                        + 'Apply stays disabled until a row is selected.'
+                        + '</div>';
+                    return;
+                }
+                if (!state.selected) {
+                    n.explain.innerHTML =
+                        '<div class="sg-explain-empty">'
+                        + `<strong>${list.length}</strong> space-group setting`
+                        + (list.length === 1 ? '' : 's')
+                        + ' match the current filters. Pick one from the list to see details.'
+                        + '</div>';
+                    return;
+                }
+                const rec = state.selected;
+                const condHtml = renderConditions(rec.reflection_conditions);
+                n.explain.innerHTML =
+                    '<div class="sg-explain">'
+                    + `<h3>${escapeHtml(rec.display_label || rec.symbol)}</h3>`
+                    + '<dl class="sg-explain-grid">'
+                    + row('Number',    '#' + rec.number)
+                    + row('Symbol',    rec.standard_symbol)
+                    + row('Setting',   rec.setting_description || '(default)')
+                    + row('System',    rec.system)
+                    + row('Laue class', rec.laue_class)
+                    + row('Point group', rec.point_group)
+                    + row('Centering', rec.centering)
+                    + row('Hall',      rec.hall || '—')
+                    + row('Centrosymmetric', rec.centrosymmetric ? 'yes' : 'no')
+                    + '</dl>'
+                    + '<div style="margin-top:12px;">'
+                    +   '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--system-secondary-label);margin-bottom:4px;">Reflection conditions</div>'
+                    +   condHtml
+                    + '</div>'
+                    + '</div>';
+                function row(k, v) {
+                    return `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`;
+                }
+            }
+
+            function renderConditions(conds) {
+                const keys = conds ? Object.keys(conds) : [];
+                if (keys.length === 0) {
+                    return '<div style="font-size:12px;color:var(--system-secondary-label);">No reflection conditions (every hkl is allowed).</div>';
+                }
+                let html = '<table class="sg-explain-cond-table"><thead><tr><th>Family</th><th>Rule</th></tr></thead><tbody>';
+                keys.forEach(fam => {
+                    (conds[fam] || []).forEach(rule => {
+                        html += `<tr><td>${escapeHtml(fam)}</td><td>${escapeHtml(rule)}</td></tr>`;
+                    });
+                });
+                html += '</tbody></table>';
+                return html;
+            }
+
+            function renderAll() {
+                renderChips();
+                const list = applyFilters();
+                renderList(list);
+                renderExplain(list);
+                const n = grabNodes();
+                n.btnApply.disabled = !state.selected;
+            }
+
+            // --- Public API ---
+            function open(prefill) {
+                const n = grabNodes();
+                // Either preload from the current SG or start blank.
+                if (prefill) {
+                    state.system = prefill.system || null;
+                    state.centering = prefill.centering || null;
+                    state.axis = prefill.axis || null;
+                    state.numText = '';
+                    state.txtText = '';
+                    // Try to find the exact setting in ALL_SETTINGS.
+                    state.selected = ALL_SETTINGS.find(r =>
+                        r.number === prefill.number
+                        && r.symbol === prefill.symbol
+                        && r.setting_description === prefill.setting_description
+                    ) || null;
+                } else {
+                    resetState();
+                }
+                n.numInput.value = state.numText;
+                n.txtInput.value = state.txtText;
+                renderAll();
+                n.overlay.classList.add('open');
+                setTimeout(() => n.txtInput.focus(), 40);
+            }
+            function close() {
+                grabNodes().overlay.classList.remove('open');
+            }
+
+            // --- Event wiring (idempotent). ---
+            function wire(onApply) {
+                const n = grabNodes();
+                n.numInput.addEventListener('input', (e) => {
+                    state.numText = e.target.value;
+                    renderAll();
+                });
+                n.txtInput.addEventListener('input', (e) => {
+                    state.txtText = e.target.value;
+                    renderAll();
+                });
+                n.btnCancel.addEventListener('click', close);
+                n.btnReset.addEventListener('click', () => {
+                    resetState();
+                    n.numInput.value = '';
+                    n.txtInput.value = '';
+                    renderAll();
+                });
+                n.btnApply.addEventListener('click', () => {
+                    if (!state.selected) return;
+                    onApply(state.selected);
+                    close();
+                });
+                // Close on Escape; backdrop click.
+                n.overlay.addEventListener('click', (e) => {
+                    if (e.target === n.overlay) close();
+                });
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && n.overlay.classList.contains('open')) close();
+                });
+            }
+
+            return { open, close, wire };
+        })();
+
+        // Called when the user clicks Apply in the modal.
+        function handleSpaceGroupApplied(rec) {
+            currentSG = rec;
+            updateUIForSystemChange();
+            if (typeof handleFullHklRecalculation === 'function') {
+                handleFullHklRecalculation();
+            }
         }
 
         function saveProfileState(profileId) {
@@ -1631,72 +2316,6 @@ function handleSplinePointListInteraction(e) {
             }
         }        
 
-        // Data mapping systems to their possible Laue classes...peut etre mieux de les mettres dans la const spaceGroups ?
-        const laueClassMap = {
-            'cubic': [{ value: 'm-3m', text: 'm-3m' }, { value: 'm-3', text: 'm-3' }],
-            'hexagonal': [{ value: '6/mmm', text: '6/mmm' }, { value: '6/m', text: '6/m' }],
-            'rhombohedral': [{ value: '-3m', text: '-3m (Rhom. axes)' }, { value: '-3', text: '-3 (Rhom. axes)' }],
-            'tetragonal': [{ value: '4/mmm', text: '4/mmm' }, { value: '4/m', text: '4/m' }],
-            'orthorhombic': [{ value: 'mmm', text: 'mmm' }],
-            'monoclinic': [{ value: '2/m', text: '2/m' }],
-        };
-
-function getSpaceGroupCentering(spaceGroupName) {
-    const firstLetter = spaceGroupName.charAt(0).toUpperCase();
-    if (firstLetter === "R") return "R"; // rhombohedral, mais en axes hex, à vérifier
-    return firstLetter; // P, I, F, C, A, etc.
-}
-
-    //  updateSpaceGroupUI, v 108
-    // les rhombo dans les axes hexa
-function updateSpaceGroupUI() {
-    const { system } = getSystemAndCentering();
-    if (!spaceGroups.length) return; // Wait until data is defined
-
-    const filteredGroups = spaceGroups.filter(sg => {
-        // -
-        // Create a special case for the hexagonal system to include rhombohedral ('R') groups.
-        if (system === 'hexagonal') {
-            // Show any group that is either 'hexagonal' OR is 'trigonal' with an 'R' name.
-            return sg.system === 'hexagonal' || sg.system === 'trigonal';
-        }
-        
-        // The original logic works correctly for all other systems.
-        const selectedCentering = controls.bravaisLattice.value.split('_')[1];
-        const sgCentering = sg.name.charAt(0).toUpperCase();
-        return sg.system === system && sgCentering === selectedCentering;
-    });
-
-    controls.spaceGroupSelect.innerHTML = "";
-    filteredGroups.forEach(sg => {
-        const opt = document.createElement("option");
-        opt.value = sg.number;
-        opt.textContent = `${sg.number} – ${sg.name}`;
-        controls.spaceGroupSelect.appendChild(opt);
-    });
-}
-
-        function updateLatticeParamUI() {
-            const currentValues = {}; const container = controls.latticeParamsContainer;
-            container.querySelectorAll('input[type="number"]').forEach(input => { const name = input.id.replace('lattice-param-', ''); if (input.value) currentValues[name] = input.value; });
-            const { system } = getSystemAndCentering(); container.innerHTML = '';
-            const createInput = (name, label, defaultValue, step, isAngle = false) => {
-                const valueToUse = currentValues[name] !== undefined ? currentValues[name] : defaultValue; const id_base = `lattice-param-${name}`; const unit = isAngle ? '°' : 'Å'; const minAttribute = isAngle ? '' : 'min="0.001"';
-                const row = document.createElement('div'); row.className = 'parameter-grid-3col'; row.innerHTML = `<label for="${id_base}" class="control-label">${label} (${unit})</label><input type="number" id="${id_base}" value="${valueToUse}" step="${step}" class="control-input" ${minAttribute}><input type="checkbox" id="fit-lattice-${name}" class="fit-checkbox" title="Fit this parameter" checked>`; container.appendChild(row);
-            };
-            const params = { cubic: [{ name: 'a', label: 'a', value: 4.23, step: 0.001 }], tetragonal: [{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'c', label: 'c', value: 5.0, step: 0.001 }], orthorhombic: [{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'b', label: 'b', value: 5.0, step: 0.001 }, { name: 'c', label: 'c', value: 6.0, step: 0.001 }], hexagonal: [{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'c', label: 'c', value: 6.0, step: 0.001 }], rhombohedral: [{ name: 'a', label: 'a', value: 5.5, step: 0.001 }, { name: 'c', label: 'c', value: 15.0, step: 0.001 }], monoclinic: [{ name: 'a', label: 'a', value: 4.0, step: 0.001 }, { name: 'b', label: 'b', value: 5.0, step: 0.001 }, { name: 'c', label: 'c', value: 6.0, step: 0.001 }, { name: 'beta', label: 'β', value: 105.0, step: 0.01, isAngle: true }] };
-            if(params[system]) params[system].forEach(p => createInput(p.name, p.label, p.value, p.step, p.isAngle));
-        }
-
-
-        function updateUIForSystemChange() {
-            updateLatticeParamUI();
-            updateSpaceGroupUI();
-            updateStephensAnisotropyUI();
-        }
-
-        // This event listener triggers all UI updates.
-        controls.bravaisLattice.addEventListener('change', updateUIForSystemChange);
 
         /**
          * Smart file detector. It checks for known headers and extensions
@@ -1935,7 +2554,7 @@ function updateSpaceGroupUI() {
             workingData.weights = new Float64Array(n);
             
             const yMax = Math.max(...workingData.intensity);
-            const floor = 0.001 * yMax; // Floor is 0.1% of maximum, similar to GSAS
+            const floor = 0.0001 * yMax; // Floor is 0.01% of maximum, in GSAS is 0.1%
 
             for (let i = 0; i < n; i++) {
                 let weight = 1 / Math.max(floor, workingData.intensity[i]);
@@ -1945,296 +2564,18 @@ function updateSpaceGroupUI() {
             workingData.isValid = true;
         }
 
-        function evaluateExpression(expr, h, k, l) {
-            switch (expr.trim()) {
-                case 'h+k': return h + k;
-                case 'k+l': return k + l;
-                case 'h+l': return h + l;
-                case 'h+k+l': return h + k + l;
-                case '-h+k+l': return -h + k + l;
-                case 'h-k+l': return h - k + l;
-                case '2h+l': return 2 * h + l;
-                case 'h': return h;
-                case 'k': return k;
-                case 'l': return l;
-                default: return NaN; // Return NaN for unknown expressions
-            }
+        // --- Engine delegation ---
+        // isReflectionAllowed, getMultiplicityAndCanonicalHKL and the
+        // reflection-condition evaluator live in sg_engine.js. Both the
+        // main thread and the refinement worker load it. The shims below
+        // preserve the old call signatures used throughout this file.
+        function isReflectionAllowed(h, k, l, spaceGroup) {
+            return SG_ENGINE.isReflectionAllowed(h, k, l, spaceGroup);
+        }
+        function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
+            return SG_ENGINE.getMultiplicity(h, k, l, laue_class);
         }
 
-        /**
- * Main entry point to check if a reflection is allowed by the space group rules.
- * @returns {boolean} True if the reflection is allowed.
- */
-function isReflectionAllowed(h, k, l, spaceGroup) {
-    const ruleTree = spaceGroup.rule_tree;
-
-    // If no rules, all reflections are allowed
-    if (!ruleTree || Object.keys(ruleTree).length === 0) {
-        return true;
-    }
-
-    return evaluateRuleTree(h, k, l, ruleTree);
-}
-
-/**
- * Recursively evaluates the rule tree for a given reflection.
- * @returns {boolean} The result of the rule evaluation.
- */
-function evaluateRuleTree(h, k, l, node) {
-    // Handle logical operators (AND/OR)
-    if (node.logic) {
-        if (node.logic === "AND") {
-            return node.rules.every(rule => evaluateRuleTree(h, k, l, rule));
-        } else if (node.logic === "OR") {
-            return node.rules.some(rule => evaluateRuleTree(h, k, l, rule));
-        }
-    }
-
-    // Handle individual rule types
-    if (node.type === "family_check") {
-        const inFamily = isInFamily(h, k, l, node.family);
-        // The 'inverse' flag means the rule applies if the reflection is NOT in the family
-        return node.inverse ? !inFamily : inFamily;
-    }
-
-    if (node.type === "expression_check") {
-        const value = evaluateExpression(h, k, l, node.expression);
-        // The condition is met if the expression result is an even multiple of the divisor
-        return !isNaN(value) && value % node.divisor === 0;
-    }
-
-    if (node.type === "parity") {
-        if (node.rule === "all_even") {
-            return h % 2 === 0 && k % 2 === 0 && l % 2 === 0;
-        } else if (node.rule === "all_odd") {
-            return h % 2 !== 0 && k % 2 !== 0 && l % 2 !== 0;
-        }
-    }
-
-    // If a node doesn't match any known type, it's considered a pass
-    return true;
-}
-
-/**
- * Checks if a given hkl triplet belongs to a specific reflection family.
- * @returns {boolean} True if the hkl is in the family.
- */
-function isInFamily(h, k, l, family) {
-    switch (family) {
-        case "h00": return k === 0 && l === 0;
-        case "0k0": return h === 0 && l === 0;
-        case "00l": return h === 0 && k === 0;
-        case "h0l": return k === 0;
-        case "hk0": return l === 0;
-        case "0kl": return h === 0;
-        case "hhl": return h === k;
-        case "hkk": return k === l;
-        case "hhh": return h === k && k === l;
-        default:    return false;
-    }
-}
-
-/**
- * Safely evaluates a predefined crystallographic expression.
- * @returns {number|NaN} The result of the expression, or NaN if unknown.
- */
-function evaluateExpression(h, k, l, expr) {
-    // Ensure expr is a string before calling trim
-    const expression = typeof expr === 'string' ? expr.trim() : '';
-    switch (expression) {
-        case 'h+k':   return h + k;
-        case 'k+l':   return k + l;
-        case 'h+l':   return h + l;
-        case 'h+k+l': return h + k + l;
-        case '-h+k+l':return -h + k + l;
-         case 'h-k+l': return h - k + l; // Added missing case
-        case '2h+l':  return 2 * h + l;
-        case 'h':     return h;
-        case 'k':     return k;
-        case 'l':     return l;
-        default:      return NaN; // Return NaN for unknown expressions
-    }
-}
-
-/**
- * Recursively evaluates the rule tree for a given reflection.
- * @returns {boolean} The result of the rule evaluation.
- */
-function evaluateRuleTree(h, k, l, node) {
-    // Handle logical operators (AND/OR)
-    if (node.logic) {
-        if (node.logic === "AND") {
-            // Ensure node.rules exists and is an array
-            return Array.isArray(node.rules) && node.rules.every(rule => evaluateRuleTree(h, k, l, rule));
-        } else if (node.logic === "OR") {
-            // Ensure node.rules exists and is an array
-            return Array.isArray(node.rules) && node.rules.some(rule => evaluateRuleTree(h, k, l, rule));
-        }
-    }
-
-    // Handle individual rule types
-    if (node.type === "family_check") {
-        const inFamily = isInFamily(h, k, l, node.family);
-        // The 'inverse' flag means the rule applies if the reflection is NOT in the family
-        return node.inverse ? !inFamily : inFamily;
-    }
-
-    if (node.type === "expression_check") {
-        const value = evaluateExpression(h, k, l, node.expression);
-         // Check if divisor is valid before modulo operation
-         if (node.divisor === undefined || node.divisor === 0) return false; // Rule cannot be satisfied
-        // The condition is met if the expression result is an even multiple of the divisor
-        return !isNaN(value) && value % node.divisor === 0;
-    }
-
-    if (node.type === "parity") {
-        if (node.rule === "all_even") {
-            return h % 2 === 0 && k % 2 === 0 && l % 2 === 0;
-        } else if (node.rule === "all_odd") {
-             // Check absolute values for oddness if negative indices are possible
-            return Math.abs(h) % 2 !== 0 && Math.abs(k) % 2 !== 0 && Math.abs(l) % 2 !== 0;
-        }
-    }
-
-    return true; // Default to allowing reflection if rule is unhandled/malformed
-}
-
-
-/**
- * Main entry point to check if a reflection is allowed by the space group rules.
- * @returns {boolean} True if the reflection is allowed.
- */
-function isReflectionAllowed(h, k, l, spaceGroup) {
-     if (!spaceGroup || !spaceGroup.rule_tree) {
-         // console.warn("isReflectionAllowed: Invalid spaceGroup or missing rule_tree for SG:", spaceGroup?.number);
-         return true; // Allow if rules are missing
-     }
-    const ruleTree = spaceGroup.rule_tree;
-
-    // If no rules defined in the tree, allow all reflections
-    if (Object.keys(ruleTree).length === 0) {
-        return true;
-    }
-
-    return evaluateRuleTree(h, k, l, ruleTree);
-}
-
-// --- Multiplicity Calculation (Keep in Main Thread for Preview) ---
-// (This function was previously removed, add it back)
-function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
-    if (h === 0 && k === 0 && l === 0) {
-        return { multiplicity: 1, canonical_hkl_obj: [0, 0, 0] };
-    }
-
-    let m = 0;
-     // Use absolute values for comparisons to handle negative indices correctly
-     const abs_h = Math.abs(h);
-     const abs_k = Math.abs(k);
-     const abs_l = Math.abs(l);
-
-     // Sort absolute values: h' >= k' >= l'
-     let [h_p, k_p, l_p] = [abs_h, abs_k, abs_l].sort((a, b) => b - a);
-
-
-    switch (laue_class) {
-         case 'm-3m':
-             if (h_p > k_p && k_p > l_p && l_p >= 0) m = 48;        // h > k > l > 0
-             else if (h_p === k_p && k_p > l_p && l_p >= 0) m = 24;  // h = k > l >= 0
-             else if (h_p > k_p && k_p === l_p && l_p >= 0) m = 24;  // h > k = l >= 0
-             // else if (h_p > l_p && k_p > l_p && h_p === k_p) m = 24; // Redundant with h=k>l
-             else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;   // h = k = l > 0
-             else if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;       // h00
-             else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;      // hh0
-             else if (h_p > k_p && k_p > 0 && l_p === 0) m = 24;      // hk0 (h>k>0)
-             else m = 1; // Should not happen for non-zero hkl
-             break;
-         case 'm-3':
-              if (h_p > k_p && k_p > l_p && l_p >= 0) m = 24;        // h > k > l >= 0
-              else if ((h_p === k_p && k_p > l_p && l_p >= 0) || (h_p > k_p && k_p === l_p && l_p >= 0)) m = 12; // h=k>l>=0 or h>k=l>=0
-              else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;   // h=k=l>0
-              else if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;       // h00
-              else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;      // hh0 - Correction: m-3 has 12 for hh0
-              else if (h_p > k_p && k_p > 0 && l_p === 0) m = 12;      // hk0 (h>k>0) - Correction: m-3 has 12 for hk0
-              else m = 1;
-              break;
-         case '6/mmm':
-             if (l_p > 0) { // l != 0
-                  if (abs_h === 0 && abs_k === 0) m = 2; // 00l
-                  else if (abs_h > 0 && abs_k === 0) m = 12; // h0l
-                  else if (abs_h === abs_k && abs_k > 0) m = 12; // hhl
-                  else if (abs_h > abs_k && abs_k >= 0) m = 24; // hkl, h>k>=0
-                   // Need to consider 2hk.l, h h 2h .l etc for hexagonal? Usually handled by checking h,k,i=-h-k
-                   // Assuming standard 3-index notation for now.
-                  else m = 24; // Fallback general
-              } else { // l=0 plane
-                  if (abs_h === 0 && abs_k === 0) m = 1; // Origin
-                  else if (abs_h > 0 && abs_k === 0) m = 6; // h00
-                  else if (abs_h === abs_k && abs_k > 0) m = 6; // hh0
-                  else if (abs_h > abs_k && abs_k >= 0) m = 12; // hk0, h>k>=0
-                  else m = 12; // Fallback general hk0
-              }
-              break;
-         case '6/m':
-              if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 12 : 2; // 00l vs hkl/h0l/hhl etc.
-              else m = (abs_h > 0 || abs_k > 0) ? 6 : 1; // Origin vs hk0/h00/hh0
-              break;
-        case '-3m': // Needs careful check for rhombohedral vs hexagonal indexing
-             // Using hexagonal axes convention
-             if (l_p !== 0) { // l != 0
-                 if (abs_h === 0 && abs_k === 0) { m = 2; } // 00l
-                 // Special conditions like h-k+l = 3n or -h+k+l = 3n might matter for R centering, handled by isReflectionAllowed
-                 // Multiplicity based purely on Laue group symmetry:
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) { m = 12; } // h0l, hhl, 0kl forms
-                 else { m = 24; } // General hkl
-             } else { // l=0 plane
-                 if (abs_h === 0 && abs_k === 0) { m = 1; } // Origin
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) { m = 6; } // h00, hh0 forms
-                 else { m = 12; } // General hk0
-             }
-             break;
-         case '-3':
-             if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1; // Origin
-             else if (abs_h === 0 && abs_k === 0) m = 2; // 00l
-             else m = 6; // General hkl and hk0
-             break;
-         case '4/mmm':
-             if (l_p > 0) { // l != 0
-                 if (abs_h === 0 && abs_k === 0) m = 2; // 00l
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 8; // h0l, hhl forms
-                 else m = 16; // General hkl
-             } else { // l=0 plane
-                 if (abs_h === 0 && abs_k === 0) m = 1; // Origin
-                 else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 4; // h00, hh0 forms
-                 else m = 8; // General hk0
-             }
-             break;
-         case '4/m':
-              if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 8 : 2; // 00l vs hkl/h0l/hhl
-              else m = (abs_h > 0 || abs_k > 0) ? 4 : 1; // Origin vs hk0/h00/hh0
-              break;
-         case 'mmm':
-              if (abs_h > 0 && abs_k > 0 && l_p > 0) m = 8; // hkl
-              else if ((abs_h > 0 && abs_k > 0 && l_p === 0) || (abs_h > 0 && abs_k === 0 && l_p > 0) || (abs_h === 0 && abs_k > 0 && l_p > 0)) m = 4; // hk0, h0l, 0kl
-              else if (abs_h > 0 || abs_k > 0 || l_p > 0) m = 2; // h00, 0k0, 00l
-              else m = 1; // Origin
-              break;
-         case '2/m': // Assumes unique axis b
-              if (abs_k > 0) m = 4; // hkl, 0kl
-              else if (abs_k === 0 && (abs_h !== 0 || l_p !== 0)) m = 2; // h0l (including h00, 00l)
-              else m = 1; // Origin
-              break;
-         case '-1':
-              if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1; // Origin
-              else m = 2; // General hkl
-              break;
-        default:
-            console.warn("Unknown Laue class in getMultiplicity:", laue_class, "- assuming multiplicity 1");
-            m = 1;
-            break;
-    }
-    // Simple canonical: return original h,k,l for now
-    return { multiplicity: m, canonical_hkl_obj: [h, k, l] };
-}
 
     /**
  * Generates the list of raw HKL indices {h, k, l, multiplicity} for PREVIEW/REFINEMENT.
@@ -3051,17 +3392,16 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
         // master HKL, 1.0.3 et ensuite
         // This function now uses the cache to get raw indices and then calculates positions.
 function generateMasterHklList() {
-    if (fullExperimentalData.tth.length === 0 || spaceGroups.length === 0) {
+    if (fullExperimentalData.tth.length === 0) {
         masterHklList = [];
         updatePreviewPattern();
         return;
     }
 
-    const selectedSgNumber = parseInt(controls.spaceGroupSelect.value, 10);
-    const selectedSg = spaceGroups.find(sg => sg.number === selectedSgNumber);
+    const selectedSg = currentSG;
     if (!selectedSg) {
         masterHklList = [];
-        console.error("Cannot generate HKL list: selected space group not found.");
+        console.error("Cannot generate HKL list: no space group resolved.");
         updatePreviewPattern();
         return;
     }
@@ -3277,24 +3617,26 @@ function calculateWilliamsonHall(params, hklList) {
                  return; // Prevent running if worker failed to load
              }
 
+            // Block early if no space group has been chosen -- no point
+            // preparing data or computing masterHklList without one.
+            if (!currentSG) {
+                showToast('Please select a space group first ("Space Group »" button).', "error");
+                return;
+            }
 
             isFitting = true;
             setUIState(true);
             updateWorkingData(); // Prepare the data slice
 
             if (masterHklList.length === 0) {
-                 showToast("Could not find a list of reflections. Please select a space group first. Aborting fit.", "error");
+                 showToast("No reflections in range. Check lattice parameters and 2-theta range.", "error");
                  isFitting = false; setUIState(false); return;
             }
 
             const currentParams = getAllParams();
             const fitFlags = getFitFlags();
-            const selectedSgNumber = parseInt(controls.spaceGroupSelect.value, 10);
-            const selectedSg = spaceGroups.find(sg => sg.number === selectedSgNumber);
-            if (!selectedSg) {
-                 showToast("Error: Could not find selected space group data.", "error");
-                 isFitting = false; setUIState(false); return;
-             }
+            const selectedSg = currentSG;
+            const selectedSgNumber = selectedSg.number;
 
             const system = selectedSg.system; // Make sure this matches worker logic
             const maxIterations = parseInt(controls.iterationsSlider.value);
@@ -3319,8 +3661,11 @@ function calculateWilliamsonHall(params, hklList) {
                  fitFlags: fitFlags,
                  workingData: workerWorkingData, // Send the sliced data
                  masterHklList: JSON.parse(JSON.stringify(masterHklList)), // Send a deep copy
-                 spaceGroupsData: spaceGroups, // Send all space group definitions
+                 // The worker resolves the SG itself via SG_ENGINE. The
+                 // Hall symbol uniquely identifies a setting; the number
+                 // is a fallback if Hall lookup misses.
                  selectedSgNumber: selectedSgNumber,
+                 selectedSgQuery:  selectedSg.hall || String(selectedSgNumber),
                  system: system,
                  maxIterations: maxIterations,
                  algorithm: algorithm,
@@ -3477,7 +3822,7 @@ function calculateWilliamsonHall(params, hklList) {
  * This forces a full recalculation on the next request.
  */
 function invalidateHklCache() {
-    const selectedSgNumber = parseInt(controls.spaceGroupSelect.value, 10);
+    const selectedSgNumber = currentSG ? currentSG.number : null;
     if (selectedSgNumber && hklIndexCache[selectedSgNumber]) {
         delete hklIndexCache[selectedSgNumber];
     }
@@ -3515,7 +3860,7 @@ function debounce(func, wait) {
             const params = getAllParams();
             if (isNaN(params.lambda) || params.lambda <= 0 || isNaN(params.a) || params.a <= 0) return;
             
-            const selectedSg = spaceGroups.find(sg => sg.number === parseInt(controls.spaceGroupSelect.value, 10));
+            const selectedSg = currentSG;
             if (!selectedSg) return;
 
             let hklList = JSON.parse(JSON.stringify(masterHklList));
@@ -4157,8 +4502,10 @@ function debounce(func, wait) {
             const profileType = finalParams.profileType || "simple_pvoigt";
             const profileName = profileNameMap[profileType] || "Unknown Profile";
 
-            const selectedSg = spaceGroups.find(sg => sg.number === parseInt(controls.spaceGroupSelect.value, 10));
-            const spaceGroupName = selectedSg ? `${selectedSg.number} – ${selectedSg.name}` : 'N/A';
+            const selectedSg = currentSG;
+            const spaceGroupName = selectedSg
+                ? `${selectedSg.number} – ${selectedSg.standard_symbol}`
+                : 'N/A';
 
             const statsSection = [
                 '--- Refinement Statistics ---',
@@ -4538,8 +4885,7 @@ function debounce(func, wait) {
             mainChart.update('none');
         };
 
-        // Create a debounced version of the handler for frequent input events.
-        const debouncedHklRecalculation = debounce(handleFullHklRecalculation, 400); // 400ms delay
+        // Create a debounced version of the background update handler.
         const debouncedBackgroundUpdate = debounce(updateBackgroundForPreview, 350);
         // Helper function for simple preview updates that DON'T require HKL recalculation.
         const handleSimplePreviewUpdate = () => {
@@ -4553,16 +4899,51 @@ function debounce(func, wait) {
 
         // --- Attach Listeners to Specific Controls ---
         // 1. Triggers for FULL Recalculation (these invalidate the cache)
-        // These are for single-click events, so they use the direct handler.
-        document.getElementById('bravais-lattice').addEventListener('change', handleFullHklRecalculation);
-        document.getElementById('space-group-select').addEventListener('change', handleFullHklRecalculation);
-        document.getElementById('wavelength').addEventListener('input', handleFullHklRecalculation);
+        // The space-group modal fires the full UI re-layout AND recalculation
+        // on Apply because changing system changes the lattice-parameter
+        // inputs too.
+        controls.spaceGroupOpenModalBtn.addEventListener('click', () => {
+            // Preload with the current selection (if any) so the modal
+            // doesn't throw away state.
+            SGM.open(currentSG || null);
+        });
+        SGM.wire(handleSpaceGroupApplied);
+        // Numeric-input validation. If the user types a value outside the
+        // input's min/max, mark it red and DO NOT trigger a recalculation.
+        // Arrow-key steps past the min/max are blocked by the HTML attribute
+        // itself; this guard catches hand-typed values like "-5".
+        function validateAndRun(inputEl, runner) {
+            const v = parseFloat(inputEl.value);
+            const min = inputEl.hasAttribute('min') ? parseFloat(inputEl.min) : -Infinity;
+            const max = inputEl.hasAttribute('max') ? parseFloat(inputEl.max) :  Infinity;
+            if (!isFinite(v) || v < min || v > max) {
+                inputEl.style.borderColor = '#b3261e';
+                inputEl.style.backgroundColor = '#ffecec';
+                return;
+            }
+            inputEl.style.borderColor = '';
+            inputEl.style.backgroundColor = '';
+            runner();
+        }
+
+        // Wavelength and ratio inputs: use 'change' (blur / Enter) rather
+        // than 'input' (every keystroke). Typing "0.797" would otherwise
+        // trigger a recalc at "0" first, which aborts the HKL generator
+        // because lambda=0 is invalid.
+        document.getElementById('wavelength').addEventListener('change', (e) =>
+            validateAndRun(e.target, handleFullHklRecalculation));
+        document.getElementById('wavelength2').addEventListener('change', (e) =>
+            validateAndRun(e.target, handleFullHklRecalculation));
+        document.getElementById('ratio21').addEventListener('change', (e) =>
+            validateAndRun(e.target, handleFullHklRecalculation));
         
-        // Use event delegation for dynamically created lattice parameter inputs.
-        // it now calls the debounced handler.
-        document.getElementById('lattice-parameters-container').addEventListener('input', (event) => {
+        // Lattice parameters use event delegation because the inputs are
+        // rebuilt every time the system changes. 'change' (blur / Enter)
+        // rather than 'input' avoids firing the recalc on every keystroke,
+        // which would briefly see zero / half-typed values.
+        document.getElementById('lattice-parameters-container').addEventListener('change', (event) => {
             if (event.target && event.target.type === 'number' && event.target.id.startsWith('lattice-param-')) {
-                debouncedHklRecalculation();
+                validateAndRun(event.target, handleFullHklRecalculation);
             }
         });
         
@@ -4888,7 +5269,8 @@ controls.mainChartCanvas.addEventListener('contextmenu', e => {
             if (fullExperimentalData.tth.length > 0) updatePreviewPattern(); 
         });
         
-        controls.bravaisLattice.addEventListener('change', updateUIForSystemChange);
+        // (The old bravaisLattice listener has been removed; the space-group
+        // input now drives all system-dependent UI updates.)
         
         controls.paramS400.addEventListener('input', updateStephensAnisotropyUI); controls.fitS400.addEventListener('change', updateStephensAnisotropyUI); controls.paramS220.addEventListener('input', updateStephensAnisotropyUI); controls.fitS220.addEventListener('change', updateStephensAnisotropyUI); controls.paramS202.addEventListener('input', updateStephensAnisotropyUI); controls.fitS202.addEventListener('change', updateStephensAnisotropyUI);
 
@@ -5012,6 +5394,41 @@ controls.reportButton.addEventListener('click', async () => {
 
 </script>
 
+
+<div id="sg-modal-overlay" class="sg-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="sg-modal-title">
+  <div class="sg-modal">
+    <div class="sg-modal-header" id="sg-modal-title">Select Space Group</div>
+    <div class="sg-modal-body">
+      <div class="sg-modal-left">
+        <div class="sg-filter-label">Crystal system</div>
+        <div class="sg-filter-row" id="sg-chip-row-system"></div>
+        <div class="sg-filter-label">Bravais centering</div>
+        <div class="sg-filter-row" id="sg-chip-row-centering"></div>
+        <div class="sg-filter-label" id="sg-chip-row-axes-label" style="display:none;">Axis choice</div>
+        <div class="sg-filter-row" id="sg-chip-row-axes" style="display:none;"></div>
+        <div class="sg-filter-label">Search</div>
+        <div class="sg-search-row">
+          <input type="text" id="sg-search-number" placeholder="Number (e.g. 19)" autocomplete="off" spellcheck="false" inputmode="numeric">
+          <input type="text" id="sg-search-text"   placeholder="Symbol or Hall (e.g. P21/c, Fd-3m, I 4bd)" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="sg-list-wrap" id="sg-list-wrap">
+          <div class="sg-list-empty">No space groups match these filters.</div>
+        </div>
+      </div>
+      <div class="sg-modal-right" id="sg-explain">
+        <div class="sg-explain-empty">
+          Pick a row from the list, or use the filters and search fields to narrow it down.
+          Filters combine with AND.
+        </div>
+      </div>
+    </div>
+    <div class="sg-modal-footer">
+      <button type="button" class="sg-btn" id="sg-btn-cancel">Cancel</button>
+      <button type="button" class="sg-btn" id="sg-btn-reset">Reset</button>
+      <button type="button" class="sg-btn sg-btn-primary" id="sg-btn-apply" disabled>Apply</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>
