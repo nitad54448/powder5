@@ -1239,14 +1239,14 @@
         <canvas id="main-chart"></canvas>
     </div>
 
-    <div style="position: absolute; bottom: 6px; right: 12px; font-size: 10px; color: var(--system-secondary-label);">
-        Powder 5, version 121, 21 April 2026
+<div id="app-version-footer" style="position: absolute; bottom: 6px; right: 12px; font-size: 10px; color: var(--system-secondary-label);">
     </div>
 </div>
 
 <script>
+    const APP_VERSION_TEXT = "Powder 5, version 122, 21 April 2026";
     document.addEventListener('DOMContentLoaded', () => {      
-
+        document.getElementById('app-version-footer').textContent = APP_VERSION_TEXT;
         const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 6
         const PEAK_HEIGHT_CUTOFF = 0.002; // 0.01 Corresponds to 1%
  
@@ -4478,11 +4478,12 @@ function debounce(func, wait) {
             };
 
             const modeName = refinementMode === 'pawley' ? 'Pawley' : 'Le Bail';
+
             const header = [
                 `${modeName} Refinement Report`,
                 '========================================================================',
                 '',
-                `Powder5, version 116, 24 Nov 2025`,
+                APP_VERSION_TEXT,
                 `Report Generated: ${now.toLocaleString()}`,
                 `Data File: ${controls.fileName.textContent || 'N/A'}`,
                 ''
