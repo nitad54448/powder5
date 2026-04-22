@@ -1246,6 +1246,27 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
         };
 
 
+        // --- LM main loop ----------------------------------------------------
+        //   Fixes (April 2026):
+        //     B. Convergence test moved to the END of the iteration, and
+        //        only triggers on an ACCEPTED step. The old placement
+        //        (before the step) could confuse "last step was rejected"
+        //        with "we've converged" and exit prematurely.
+        //     C. On rejection, we restore oldParams/oldHklList correctly,
+        //        AND we do NOT advance ss_res — it still reflects the last
+        //        accepted cost.
+        //     D. Finite-difference step now uses a larger relative floor and,
+        //        when the parameter is at (or very near) its lower bound,
+        //        flips sign so the perturbed point stays feasible.
+        //        This avoids silent clamping by set() during Jacobian build,
+        //        which would have zeroed that parameter's column.
+        //
+        //   Also: since get/set are now raw-space, the LM solve itself is in
+        //   raw space. Damping uses Marquardt's lambda*diag(JtJ) (see below),
+        //   which is the local-curvature scaling that replaces the old
+        //   initial-value normalization.
+        let lastAcceptedCost = Infinity;
+
         for (let iter = 0; iter < maxIter; iter++) {
              let oldParams = null;
              let oldHklList = null;
@@ -1253,41 +1274,67 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  calculateTotalPattern(y_calc_baseline);
 
                  let cost = 0;
+                 let residualFailed = false;
                  for (let i = 0; i < n_points; i++) {
                      residuals[i] = (y_obs[i] - y_calc_baseline[i]) * sqrt_weights[i];
                      if (isFinite(residuals[i])) {
                           cost += residuals[i] * residuals[i];
                      } else {
-                          lambda = Math.min(1e9, lambda * 10);
-                          console.warn(`LM iter ${iter}: Residual calculation failed. Increased lambda to ${lambda}.`);
-                          if(oldParams) {
-                               params = oldParams;
-                               workingHklList = oldHklList;
-                          }
-                         continue;
+                          residualFailed = true;
+                          break;
                      }
                  }
-
-                 if (iter > 0 && Math.abs(ss_res - cost) < 1e-9 * ss_res) {
-                     break;
+                 if (residualFailed) {
+                     lambda = Math.min(1e9, lambda * 10);
+                     console.warn(`LM iter ${iter}: Residual calculation failed. Increased lambda to ${lambda}.`);
+                     continue;
                  }
+
+                 // First-iteration seed for the accepted cost (no step yet).
+                 if (iter === 0) lastAcceptedCost = cost;
                  ss_res = cost;
 
+                 // --- Build Jacobian column by column (one-sided FD, bound-aware) ---
                  const jacobian_T = [];
 
                  for (let p = 0; p < n_params; p++) {
                      const mapping = paramMapping[p];
                      const originalValue = mapping.get(params, workingHklList);
-                     const fd_step = Math.max(1e-6, Math.abs(originalValue) * 1e-5);
 
-                     mapping.set(params, workingHklList, originalValue + fd_step);
+                     // Larger floor than before (1e-7 absolute, 1e-4 relative)
+                     // to keep the FD signal above numerical noise for small
+                     // profile params like GW, GP, SL, HL.
+                     let fd_step = Math.max(1e-7, Math.abs(originalValue) * 1e-4);
+
+                     // If we're at (or below) the lower bound, flipping sign
+                     // keeps the perturbed point inside the feasible set so
+                     // set() won't silently clamp it and zero the column.
+                     const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
+                     const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
+                     let fd_sign = 1;
+                     if (isFinite(minV) && (originalValue + fd_step > maxV || originalValue - fd_step < minV)) {
+                         // near upper bound -> step down; near lower bound -> step up.
+                         // If hemmed in on both sides (unusual), fall back to +.
+                         if (originalValue + fd_step > maxV && originalValue - fd_step >= minV) {
+                             fd_sign = -1;
+                         } else if (originalValue - fd_step < minV && originalValue + fd_step <= maxV) {
+                             fd_sign = 1;
+                         } else {
+                             fd_sign = 1;
+                         }
+                     }
+
+                     mapping.set(params, workingHklList, originalValue + fd_sign * fd_step);
                      calculateTotalPattern(y_calc_total);
 
                      for (let i = 0; i < n_points; i++) {
                           if (!isFinite(y_calc_baseline[i]) || !isFinite(y_calc_total[i])) {
                               jacobian_col[i] = 0;
                           } else {
-                              jacobian_col[i] = (y_calc_total[i] - y_calc_baseline[i]) / fd_step * sqrt_weights[i];
+                              // Note the fd_sign: df/dx ≈ (f(x+h) - f(x)) / h
+                              // with h = fd_sign * fd_step, i.e. signed step.
+                              jacobian_col[i] = (y_calc_total[i] - y_calc_baseline[i])
+                                                / (fd_sign * fd_step) * sqrt_weights[i];
                           }
                      }
                      mapping.set(params, workingHklList, originalValue);
@@ -1303,15 +1350,23 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                   } else if (n_params > 0 && Array.isArray(JtJ) && JtJ.length === n_params && Array.isArray(JtJ[0]) && JtJ[0].length === n_params) {
                        finalJtJ = JtJ;
                   } else {
-                       console.warn("LM iter ${iter}: JtJ calculation failed or format invalid.");
+                       console.warn(`LM iter ${iter}: JtJ calculation failed or format invalid.`);
                        finalJtJ = null;
                        lambda = Math.min(1e9, lambda * 5);
                        continue;
                   }
 
+                 // Marquardt diagonal scaling: A = JtJ + lambda * diag(JtJ).
+                 // This replaces the old scheme where parameters were
+                 // pre-normalized by their initial magnitudes; diag(JtJ)
+                 // carries the correct CURRENT local curvature for each
+                 // parameter, so damping is applied consistently whether
+                 // a parameter has moved a lot or a little from its start.
                  const A_lm = math.clone(finalJtJ);
                  for (let i = 0; i < n_params; i++) {
-                     A_lm[i][i] += lambda * (finalJtJ[i][i] || 1e-6);
+                     const d = finalJtJ[i][i];
+                     const diag = (isFinite(d) && d > 1e-30) ? d : 1e-6;
+                     A_lm[i][i] += lambda * diag;
                  }
 
                  let p_step;
@@ -1321,26 +1376,20 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  } catch (solveError) {
                       console.warn(`LM iter ${iter}: Solve failed: ${solveError.message}. Increasing lambda.`);
                       lambda = Math.min(1e9, lambda * 10);
-                       if(oldParams) {
-                            params = oldParams;
-                            workingHklList = oldHklList;
-                       }
                       continue;
                  }
 
                  if (!p_step || p_step.some(v => !isFinite(v))) {
                      console.warn(`LM iter ${iter}: Step calculation resulted in NaN/Infinity. Increasing lambda.`);
                      lambda = Math.min(1e9, lambda * 5);
-                     if(oldParams) {
-                          params = oldParams;
-                          workingHklList = oldHklList;
-                     }
                      continue;
                  }
 
+                 // Snapshot BEFORE applying the trial step, so we can revert on rejection.
                  oldParams = JSON.parse(JSON.stringify(params));
                  oldHklList = JSON.parse(JSON.stringify(workingHklList));
 
+                 // Apply trial step in raw parameter space.
                  const p_current = paramMapping.map(m => m.get(params, workingHklList));
                  const p_new = math.add(p_current, p_step);
                  paramMapping.forEach((m, i) => m.set(params, workingHklList, p_new[i]));
@@ -1357,9 +1406,12 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                       }
                  }
 
+                 let stepAccepted = false;
                  if (new_cost < cost && isFinite(new_cost)) {
                      lambda = Math.max(1e-9, lambda / 3);
+                     stepAccepted = true;
                  } else {
+                     // Reject: restore previous state. Do NOT update lastAcceptedCost.
                      params = oldParams;
                      workingHklList = oldHklList;
                      lambda = Math.min(1e9, lambda * 2);
@@ -1369,11 +1421,31 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  const overallProgress = baseProgress + progressWithinCycle * cycleProgressSpan;
                  postMessage({ type: 'progress', value: Math.min(1.0, overallProgress) });
 
+                 // Convergence test: only compares ACCEPTED costs, so a
+                 // rejected step can never look like "converged" here.
+                 if (stepAccepted) {
+                     const denom = Math.max(Math.abs(lastAcceptedCost), 1.0);
+                     if (Math.abs(lastAcceptedCost - new_cost) < 1e-9 * denom) {
+                         lastAcceptedCost = new_cost;
+                         ss_res = new_cost;
+                         break;
+                     }
+                     lastAcceptedCost = new_cost;
+                     ss_res = new_cost;
+                 }
+
 
              } catch (error) {
                   console.error("Error during LM iteration:", iter, error);
                   postMessage({ type: 'error', message: `Error in LM iter ${iter}: ${error.message}` });
-                  return { params: oldParams || initialParams, hklList: oldHklList || JSON.parse(JSON.stringify(hklList)), ss_res: ss_res, error: true, JtJ: finalJtJ, parameterInfo: parameterInfoForMainThread, algorithm: 'lm', fitFlags };
+                  // Build parameterInfo locally — the outer-scope one isn't in scope yet.
+                  const errorParamInfo = paramMapping.map(m => ({
+                      name: m.name,
+                      scale: 1.0,
+                      typicalMagnitude: m.scale,
+                      isIntensity: m.isIntensity
+                  }));
+                  return { params: oldParams || initialParams, hklList: oldHklList || JSON.parse(JSON.stringify(hklList)), ss_res: ss_res, error: true, JtJ: finalJtJ, parameterInfo: errorParamInfo, algorithm: 'lm', fitFlags };
              }
 
         }
@@ -1381,9 +1453,16 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
          const finalCycleProgress = (leBailCycle + 1) / totalLeBailCycles;
          postMessage({ type: 'progress', value: Math.min(1.0, finalCycleProgress) });
 
+          // LM now operates in raw parameter space, so JtJ, Jtr, and the
+          // resulting covariance matrix are all in raw units. The main
+          // thread multiplies reported sigma by `scale` to un-normalize, so
+          // we report scale=1.0 here to keep that code path correct without
+          // touching it. We still include `.typicalMagnitude` in case the UI
+          // wants to display a "typical value" for the parameter.
           const parameterInfoForMainThread = paramMapping.map(m => ({
                name: m.name,
-               scale: m.scale,
+               scale: 1.0,
+               typicalMagnitude: m.scale,
                isIntensity: m.isIntensity
           }));
 
@@ -1566,30 +1645,48 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
 function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     const mappings = [];
 
+    // NOTE (fix, April 2026):
+    //   get/set now operate in RAW parameter space. Previously they
+    //   normalized by a `scale` frozen at the INITIAL value, which caused
+    //   LM to size its steps wrong once a parameter had moved appreciably
+    //   from its starting point. The LM routine now uses Marquardt's own
+    //   diagonal scaling (lambda * diag(JtJ)), which is the correct
+    //   curvature-aware scaling.
+    //
+    //   `scale` is still exposed on the mapping because:
+    //     - PT uses it to size random proposal steps (typical magnitude).
+    //     - The main thread previously multiplied ESDs by `scale` to
+    //       un-normalize. Since LM is now raw-space, that multiplication
+    //       is a no-op when `scale === 1.0`. We therefore report
+    //       `scale: 1.0` in the LM `parameterInfo` so existing main-thread
+    //       code keeps working unchanged. PT still reports its typical
+    //       magnitude for diagnostic display.
     const createMapping = (flag, name, defaultScale = 1.0, minVal = -Infinity, maxVal = Infinity, step = 0.2) => {
         if (!flag) return null;
         const initialValue = initialParams[name] ?? 0;
-         const scale = Math.abs(initialValue) > 1e-9 ? Math.abs(initialValue) : defaultScale;
+        const scale = Math.abs(initialValue) > 1e-9 ? Math.abs(initialValue) : defaultScale;
 
         return {
             name: name,
-            scale: scale,
-             step: step,
+            scale: scale,        // typical magnitude, for PT step-sizing & display
+            step: step,
             isIntensity: false,
-            get: (p_obj, hkl_list_obj) => (p_obj[name] ?? 0) / scale,
-            set: (p_obj, hkl_list_obj, normalizedValue) => {
-                let rawValue = normalizedValue * scale;
+            minVal: minVal,
+            maxVal: maxVal,
+            get: (p_obj, hkl_list_obj) => (p_obj[name] ?? 0),
+            set: (p_obj, hkl_list_obj, rawValue) => {
                 if (rawValue < minVal) rawValue = minVal;
                 if (rawValue > maxVal) rawValue = maxVal;
-                 if (p_obj && p_obj.hasOwnProperty(name)) {
-                     p_obj[name] = rawValue;
-                 }
+                if (p_obj && p_obj.hasOwnProperty(name)) {
+                    p_obj[name] = rawValue;
+                }
             }
         };
     };
 
 
     // --- Pawley Intensity Parameters ---
+    // Raw-space (see NOTE above createMapping).
      if (refinementMode === 'pawley' && hklList && workerWorkingData && workerWorkingData.tth && workerWorkingData.tth.length > 0) {
           const tthMin = workerWorkingData.tth[0];
           const tthMax = workerWorkingData.tth[workerWorkingData.tth.length - 1];
@@ -1598,7 +1695,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
                if (hkl && hkl.tth && hkl.tth >= tthMin && hkl.tth <= tthMax) {
                     const hkl_name = `I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`;
                     const initialIntensity = (hkl.intensity !== undefined && hkl.intensity > 1e-6) ? hkl.intensity : 1000.0;
-                    const scale = initialIntensity;
+                    const scale = initialIntensity;  // typical magnitude, used by PT
 
                     mappings.push({
                         name: hkl_name,
@@ -1606,13 +1703,13 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
                         step: 0.3,
                         isIntensity: true,
                         index: index,
+                        minVal: 0,
+                        maxVal: Infinity,
                         get: (p_obj, hkl_list_obj) => {
-                            const intensity = hkl_list_obj?.[index]?.intensity ?? 0;
-                            return intensity / scale;
+                            return hkl_list_obj?.[index]?.intensity ?? 0;
                         },
-                        set: (p_obj, hkl_list_obj, normalizedValue) => {
+                        set: (p_obj, hkl_list_obj, rawValue) => {
                              if (hkl_list_obj?.[index]) {
-                                let rawValue = normalizedValue * scale;
                                 hkl_list_obj[index].intensity = Math.max(0, rawValue);
                              }
                         }
