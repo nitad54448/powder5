@@ -1,7 +1,7 @@
 // refinement_worker.js
-// version 114, 26 oct 2025
-// MODIFIED to use Spline Background
-// MODIFIED to remove Simulated Annealing (SA)
+// version 122, 22 april 202, 
+// Spline Background in nov 2025, version 115
+
 try {
 importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js', 'sg_database.js', 'sg_engine.js');} catch (e) {
     console.error("Worker Error: Failed to import scripts.", e);
@@ -28,7 +28,7 @@ function isReflectionAllowed(h, k, l, spaceGroup) {
 }
 
 
-// --- 2. Define Constants & Global Worker State ---
+//   2. Define Constants & Global Worker State  
 const CALCULATION_WINDOW_MULTIPLIER = 8.0;
 const PEAK_HEIGHT_CUTOFF = 0.002;
 const HIGH_WEIGHT_MULTIPLIER = 50.0;
@@ -37,7 +37,7 @@ let hklIndexCache = {};
 let workerBackgroundAnchors = []; 
 
 
-// --- START: Monotonic Cubic Spline Helper Functions ---
+//   START: Monotonic Cubic Spline Helper Functions  
 
 /**
  * Creates a monotonic cubic Hermite spline interpolation function.
@@ -206,7 +206,7 @@ function createMonotonicCubicSplineInterpolator(points) {
     }
 
 
-// --- HKL List Generation & Position Update ---
+//   HKL List Generation & Position Update  
 function updateHklPositions(hklList, params, system) {
     const { a, b, c, alpha, beta, lambda } = params;
     if (!a || !lambda || a <= 0 || lambda <= 0 || !hklList) return; // Added !hklList check
@@ -620,7 +620,7 @@ function calculateProfileWidths(tth, hkl, params, side = 'center') {
 
     let widths = { gamma_G: 1e-4, gamma_L: 1e-4 };
 
-    // --- Dispatch to specific width calculators ---
+    //   Dispatch to specific width calculators  
     switch (profileType) {
         case "simple_pvoigt":
             widths = _calculateWidths_Simple(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe);
@@ -899,7 +899,7 @@ function calculatePattern(tthAxis, hklList, params) {
     const WINDOW_MULT = CALCULATION_WINDOW_MULTIPLIER;
     const HEIGHT_CUTOFF = PEAK_HEIGHT_CUTOFF;
 
-    // --- K-alpha 1 ---
+    //   K-alpha 1  
     hklList.forEach(peak => {
         if (!peak || !peak.intensity || peak.intensity <= 0 || !peak.tth || peak.tth < 0 || peak.tth > 180) return;
 
@@ -928,7 +928,7 @@ function calculatePattern(tthAxis, hklList, params) {
         }
     });
 
-    // --- K-alpha 2 ---
+    //   K-alpha 2  
     const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
     if (doubletEnabled) {
         const lambdaRatio = lambda2 / lambda1;
@@ -995,7 +995,7 @@ function leBailIntensityExtraction(expData, hklList, params) {
     const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
     const lambdaRatio = doubletEnabled ? lambda2 / lambda1 : 1.0;
 
-    // --- 1. Pre-calculate the theoretical shape (profile) for every peak ---
+    //   1. Pre-calculate the theoretical shape (profile) for every peak  
     const peak_profiles = new Array(hklList.length);
     const total_profile_sum = new Float64Array(n_points).fill(0);
 
@@ -1117,7 +1117,7 @@ function leBailIntensityExtraction(expData, hklList, params) {
 }
 
 
-// --- Statistics ---
+//   Statistics  
 function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBackground, params, hklList, refinementMode) {
     const y_obs = localWorkingData.intensity;
     const y_bkg = finalBackground;
@@ -1189,7 +1189,7 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
     };
 }
 
-// --- Refinement Algorithms (LM, PT) ---
+//   Refinement Algorithms (LM, PT)  
 async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
         const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList, refinementMode);
         if (paramMapping.length === 0) {
@@ -1246,7 +1246,7 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
         };
 
 
-        // --- LM main loop ----------------------------------------------------
+        //   LM main loop                  -
         //   Fixes (April 2026):
         //     B. Convergence test moved to the END of the iteration, and
         //        only triggers on an ACCEPTED step. The old placement
@@ -1294,7 +1294,7 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  if (iter === 0) lastAcceptedCost = cost;
                  ss_res = cost;
 
-                 // --- Build Jacobian column by column (one-sided FD, bound-aware) ---
+                 //   Build Jacobian column by column (one-sided FD, bound-aware)  
                  const jacobian_T = [];
 
                  for (let p = 0; p < n_params; p++) {
@@ -1478,7 +1478,7 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
         };
 }
 
-// ---
+//  
 async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
     const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList, refinementMode);
     if (paramMapping.length === 0) {
@@ -1641,7 +1641,7 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
 }
 
 
-// --- Parameter Mapping (Helper) ---
+//   Parameter Mapping (Helper)  
 function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     const mappings = [];
 
@@ -1685,7 +1685,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     };
 
 
-    // --- Pawley Intensity Parameters ---
+    //   Pawley Intensity Parameters  
     // Raw-space (see NOTE above createMapping).
      if (refinementMode === 'pawley' && hklList && workerWorkingData && workerWorkingData.tth && workerWorkingData.tth.length > 0) {
           const tthMin = workerWorkingData.tth[0];
@@ -1719,7 +1719,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
      }
 
 
-    // --- Other Parameters ---
+    //   Other Parameters  
     const profileType = String(initialParams.profileType || "simple_pvoigt");
 
     mappings.push(createMapping(fitFlags.a, 'a', 4.0, 0.1, Infinity, 0.01));
@@ -1774,7 +1774,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
 }
 
 
-// --- 4. Worker Message Handler ---
+//   4. Worker Message Handler  
 self.onmessage = async function(e) {
     const {
         initialParams,
@@ -1808,7 +1808,7 @@ self.onmessage = async function(e) {
     let currentParams = initialParams; // Use initial params for both modes initially
 
     try {
-        // --- Le Bail Mode ---
+        //   Le Bail Mode  
         // With per-peak intensity extraction done inside the refiner's
         // objective (see refineParametersLM/PT), Le Bail is just a single
         // refinement call. The old 4-cycle outer loop was a workaround
@@ -1824,7 +1824,7 @@ self.onmessage = async function(e) {
                 throw new Error(`Refinement algorithm (${algorithm}) failed during Le Bail fit. ${finalResults?.error ? 'See previous error.' : ''}`);
             }
         }
-        // --- Pawley Mode ---
+        //   Pawley Mode  
         else { // refinementMode === 'pawley'
              // Perform a SINGLE Le Bail extraction first to initialize intensities
              postMessage({ type: 'progress', value: 0.05, message: 'Initializing Pawley intensities...' }); // Small progress update
@@ -1861,12 +1861,12 @@ self.onmessage = async function(e) {
 
         } // End Pawley Mode
 
-        // --- Final Calculations & Posting Result ---
+        //   Final Calculations & Posting Result  
         if (!finalResults || !finalResults.params || !finalResults.hklList) {
             throw new Error("Refinement finished but produced invalid results.");
         }
 
-        // --- (Rest of the onmessage function remains the same: calculating stats, sending results) ---
+        //   (Rest of the onmessage function remains the same: calculating stats, sending results)  
         const finalParams = finalResults.params;
         const finalHklList = finalResults.hklList;
 
@@ -1909,7 +1909,7 @@ self.onmessage = async function(e) {
     }
 };
 
-// --- error handler ---
+//   error handler  
 self.onerror = function(event) {
      console.error("Unhandled Worker Error:", event.message, event);
      postMessage({ type: 'error', message: `Unhandled Worker Error: ${event.message}` });

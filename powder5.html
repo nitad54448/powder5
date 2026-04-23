@@ -1349,7 +1349,7 @@ if (tooltipContainer && tooltipContent) {
             resultsContainer: document.getElementById('results-container'),
                     };
 
-        // --- Global State ---
+        //   Global State  
         let profileParamCache = { "simple_pvoigt": {}, "tch_aniso": {}, "split_pvoigt": {} };
         let currentProfile = "simple_pvoigt";
      
@@ -1367,13 +1367,13 @@ if (tooltipContainer && tooltipContent) {
         let lastFitResultsCache = null;
         let mainChart;
 
-        // --- Worker Setup 
+        //   Worker Setup 
         let refinementWorker = null;
         try {
             refinementWorker = new Worker('refinement_worker.js');
             console.log("Refinement worker created.");
 
-            // --- Worker Message Handler
+            //   Worker Message Handler
             refinementWorker.onmessage = function(e) {
                 const { type, value, message, results } = e.data;
 
@@ -1569,7 +1569,7 @@ function autoFindSplinePoints(numPoints) {
     const intensity = fullExperimentalData.intensity;
     const totalDataPoints = tth.length;
 
-    // --- Find Edge Points, problem: how to deal with the edge
+    //   Find Edge Points, problem: how to deal with the edge
     const firstPoint = findClosestExperimentalPoint(minTth);
     const lastPoint = findClosestExperimentalPoint(maxTth);
 
@@ -1580,7 +1580,7 @@ function autoFindSplinePoints(numPoints) {
     newSplinePoints.push({ index: firstPoint.index, tth: minTth, y: firstPoint.y });
     newSplinePoints.push({ index: lastPoint.index, tth: maxTth, y: lastPoint.y });
 
-    // --- Find Internal Points (with Refined Minimum and Averaging) ---
+    //   Find Internal Points (with Refined Minimum and Averaging)  
     if (internalPointsToFind > 0) {
         let startIndex = fullExperimentalData.tth.findIndex(t => t >= minTth);
         let endIndex = fullExperimentalData.tth.findIndex(t => t > maxTth);
@@ -1597,7 +1597,7 @@ function autoFindSplinePoints(numPoints) {
 
                 if (chunkStartIdx >= chunkEndIdx) continue;
 
-                // --- Step 1: Find initial minimum index in the chunk ---
+                //   Step 1: Find initial minimum index in the chunk  
                 let initialMinVal = Infinity;
                 let initialMinIndex = -1;
                 for (let j = chunkStartIdx; j < chunkEndIdx; j++) {
@@ -1610,7 +1610,7 @@ function autoFindSplinePoints(numPoints) {
 
                 if (initialMinIndex === -1) continue; // No valid minimum found in chunk
 
-                // --- Step 2: Define and search within the refined window ---
+                //   Step 2: Define and search within the refined window  
                 const chunkStartTth = tth[chunkStartIdx];
                 const chunkEndTth = tth[Math.max(chunkStartIdx, chunkEndIdx - 1)]; // Ensure valid index
                 const chunkWidthTth = chunkEndTth - chunkStartTth;
@@ -1637,7 +1637,7 @@ function autoFindSplinePoints(numPoints) {
                 // Check if this final minimum point already exists 
                 const exists = newSplinePoints.some(p => p.index === finalMinIndex);
                 if (!exists) {
-                    // --- Step 3: Calculate Average Intensity 
+                    //   Step 3: Calculate Average Intensity 
                     let sumY = 0;
                     let countY = 0;
                     const windowStart = Math.max(0, finalMinIndex - AVERAGE_WINDOW_HALF_WIDTH);
@@ -1648,7 +1648,7 @@ function autoFindSplinePoints(numPoints) {
                         countY++;
                     }
                     const averageY = (countY > 0) ? sumY / countY : intensity[finalMinIndex];
-                    // --- End Step 3 ---
+                    //   End Step 3  
 
                     newSplinePoints.push({
                         index: finalMinIndex,     
@@ -1888,7 +1888,7 @@ function handleSplinePointListInteraction(e) {
         // With an AND'd filter chain this is cheap (< 2 ms on any machine).
         // ===================================================================
         const SGM = (() => {
-            // --- Build the pooled list once. ---
+            //   Build the pooled list once.  
             const SYSTEMS = ['triclinic','monoclinic','orthorhombic','tetragonal','trigonal','hexagonal','cubic'];
             const CENTERINGS = ['P','A','B','C','I','F','R'];
 
@@ -1927,7 +1927,7 @@ function handleSplinePointListInteraction(e) {
 
             const ALL_SETTINGS = buildAllSettings();
 
-            // --- Modal DOM handles (resolved lazily). ---
+            //   Modal DOM handles (resolved lazily).  
             let nodes = null;
             function grabNodes() {
                 if (nodes) return nodes;
@@ -1948,7 +1948,7 @@ function handleSplinePointListInteraction(e) {
                 return nodes;
             }
 
-            // --- Filter state. Reset() brings everything back to this. ---
+            //   Filter state. Reset() brings everything back to this.  
             const state = {
                 system: null,       // one of SYSTEMS or null
                 centering: null,    // one of CENTERINGS or null
@@ -2209,7 +2209,7 @@ function handleSplinePointListInteraction(e) {
                 n.btnApply.disabled = !state.selected;
             }
 
-            // --- Public API ---
+            //   Public API  
             function open(prefill) {
                 const n = grabNodes();
                 // Either preload from the current SG or start blank.
@@ -2238,7 +2238,7 @@ function handleSplinePointListInteraction(e) {
                 grabNodes().overlay.classList.remove('open');
             }
 
-            // --- Event wiring (idempotent). ---
+            //   Event wiring (idempotent).  
             function wire(onApply) {
                 const n = grabNodes();
                 n.numInput.addEventListener('input', (e) => {
@@ -2327,7 +2327,7 @@ function handleSplinePointListInteraction(e) {
             const firstLine = lines.length > 0 ? lines[0].trim() : '';
             const upperContent = fileContent.substring(0, 500).toUpperCase(); // Check first 500 chars
 
-            // --- Parser Registry ---
+            //   Parser Registry  
             const PARSER_REGISTRY = [
                 { // XRDML
                     test: (name, content) => name.endsWith('.xrdml') || (content.includes('<?xml') && content.includes('<xrdMeasurement')),
@@ -2369,7 +2369,7 @@ function handleSplinePointListInteraction(e) {
                 }
             ];
             
-            // --- Iterate Registry ---
+            //   Iterate Registry  
             for (const rule of PARSER_REGISTRY) {
                 try {
                     if (rule.test(name, fileContent, firstLine, upperContent, lines)) {
@@ -2384,7 +2384,7 @@ function handleSplinePointListInteraction(e) {
                 }
             }
 
-            // --- Fallback for all other 2-column-like formats ---
+            //   Fallback for all other 2-column-like formats  
             // This will attempt to parse: .xy, .csv, .txt, .dat, .asc, etc.
             return parseDataFile(fileContent, fileName);
         };
@@ -2432,7 +2432,7 @@ function handleSplinePointListInteraction(e) {
                 
                 dataStarted = true; // First valid numeric pair found
 
-                // --- vérif
+                //   vérif
                 if (x > 0) positive_x_values++;
 
                 if (last_x !== -Infinity) {
@@ -2450,7 +2450,7 @@ function handleSplinePointListInteraction(e) {
                 intensity.push(y);
             });
 
-            // --- Final checks (log warnings to console) ---
+            //   Final checks (log warnings to console)  
             if (tth.length > 10) { 
                 if (positive_x_values / tth.length < 0.5) {
                     console.warn(`Data File (${fileName}) Warning: Most 2-theta (X) values are zero or negative. This is unusual for XRD data.`);
@@ -2564,7 +2564,7 @@ function handleSplinePointListInteraction(e) {
             workingData.isValid = true;
         }
 
-        // --- Engine delegation ---
+        //   Engine delegation  
         // isReflectionAllowed, getMultiplicityAndCanonicalHKL and the
         // reflection-condition evaluator live in sg_engine.js. Both the
         // main thread and the refinement worker load it. The shims below
@@ -2586,7 +2586,7 @@ function handleSplinePointListInteraction(e) {
  * @returns {Array} A list of raw HKL reflection objects {h_orig, k_orig, l_orig, hkl_list, multiplicity}.
  */
 function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
-    // --- Worker Cache Check (only runs in worker context) ---
+    //   Worker Cache Check (only runs in worker context)  
     // 'hklIndexCache' is defined globally in both contexts.
     let sgNumber = null;
     if (spaceGroup && typeof spaceGroup.number === 'number') {
@@ -2597,7 +2597,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
         }
     }
 
-    // --- Parameter Validation ---
+    //   Parameter Validation  
     const { a, b, c, lambda } = params;
     const sgSystem = spaceGroup ? spaceGroup.system : null;
     const sgLaueClass = spaceGroup ? spaceGroup.laue_class : null;
@@ -2610,12 +2610,12 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
          console.error(`HKL Gen Error: Invalid parameters provided. Lambda: ${lambda}, Laue Class: ${sgLaueClass}, System: ${sgSystem}, a: ${a}`);
          return []; // Return empty if any crucial parameter is invalid
      }
-    // --- End Validation ---
+    //   End Validation  
 
     const maxDim = Math.max(a || 0, b || a || 0, c || a || 0);
     if (maxDim <= 0) return [];
 
-    // --- OPTIMIZATION: Calculate max 1/d^2 for pruning ---
+    //   OPTIMIZATION: Calculate max 1/d^2 for pruning  
     const sinThetaMax = Math.sin(maxTth * Math.PI / 360);
     if (sinThetaMax <= 0) return [];
     const dMin = lambda / (2 * sinThetaMax);
@@ -2631,7 +2631,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     // Handle cases where b or c might not be relevant for the system but are passed in params
     const b_sq = (sgSystem === 'orthorhombic' || sgSystem === 'monoclinic' || sgSystem === 'triclinic') ? ((b && b > 0) ? b * b : a_sq) : a_sq;
     const c_sq = (sgSystem !== 'cubic') ? ((c && c > 0) ? c * c : a_sq) : a_sq;
-    // --- End Optimization Setup ---
+    //   End Optimization Setup  
 
     let rawReflections = [];
     const addedHKLs = new Set();
@@ -2776,18 +2776,18 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     }
 
 
-    // --- Worker Cache Update ---
+    //   Worker Cache Update  
     // Only update cache if in worker context and sgNumber is valid
     if (sgNumber !== null && typeof self !== 'undefined' && typeof importScripts === 'function') {
          hklIndexCache[sgNumber] = rawReflections;
     }
-    // --- End Worker Cache Update ---
+    //   End Worker Cache Update  
 
     return rawReflections;
 }
 
 
-        // --- HKL Position Calculation (Needed for Preview in Main Thread) ---
+        //   HKL Position Calculation (Needed for Preview in Main Thread)  
         function updateHklPositions(hklList, params, system) {
             const { a, b, c, alpha, beta, lambda } = params;
             // Add validation checks at the beginning
@@ -2961,7 +2961,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     }
 
 
-        // --- Profile Shape & Width (Needed for Preview/Tooltips) ---
+        //   Profile Shape & Width (Needed for Preview/Tooltips)  
         function calculatePeakShift(tth, params) {
              if (!params || !params.profileType) return 0;
             const profileType = params.profileType;
@@ -3309,7 +3309,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
             const WINDOW_MULT = CALCULATION_WINDOW_MULTIPLIER;
             const HEIGHT_CUTOFF = PEAK_HEIGHT_CUTOFF;
 
-            // --- K-alpha 1 ---
+            //   K-alpha 1  
             hklList.forEach(peak => {
                 if (!peak || !peak.intensity || peak.intensity <= 0 || !peak.tth || peak.tth < 0 || peak.tth > 180) return;
 
@@ -3341,7 +3341,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                 }
             });
 
-            // --- K-alpha 2 ---
+            //   K-alpha 2  
             const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
             if (doubletEnabled) {
                 const lambdaRatio = lambda2 / lambda1;
@@ -3445,7 +3445,7 @@ function generateMasterHklList() {
             calculatedBackground = calculateTotalBackground(fullExperimentalData.tth, params, backgroundAnchors);
 
             if (mainChart) {
-                // ---Save the current Y-axis zoom state ---
+                //  Save the current Y-axis zoom state  
                 const currentYMin = mainChart.scales.y.min;
                 const currentYMax = mainChart.scales.y.max;
 
@@ -3456,7 +3456,7 @@ function generateMasterHklList() {
                 
                 updatePreviewPattern(); 
                 
-                // --Restore the Y-axis zoom state before updating ---
+                // --Restore the Y-axis zoom state before updating  
                 mainChart.options.scales.y.min = currentYMin;
                 mainChart.options.scales.y.max = currentYMax;
                 
@@ -3655,7 +3655,7 @@ function calculateWilliamsonHall(params, hklList) {
                  startIndex: workingData.startIndex
              };
 
-            // --- Prepare data payload for the worker ---
+            //   Prepare data payload for the worker  
              const workerPayload = {
                  initialParams: currentParams,
                  fitFlags: fitFlags,
@@ -3673,7 +3673,7 @@ function calculateWilliamsonHall(params, hklList) {
                  backgroundAnchors: JSON.parse(JSON.stringify(backgroundAnchors)) 
              };
 
-            // --- Send data to worker ---
+            //   Send data to worker  
             try {
                /* console.log("Sending data to worker:", { // Log subset for brevity
                      algorithm: algorithm,
@@ -4232,7 +4232,7 @@ function debounce(func, wait) {
         const findDataset = (label) => mainChart.data.datasets.find(d => d.label === label);
         const globalYMax = mainChart.options.globalYMax;
 
-        // --- DYNAMIC DIFFERENCE PLOT ALLOCATION ---
+        //   DYNAMIC DIFFERENCE PLOT ALLOCATION  
         let diffPlotHeightRatio = 0.15; // Default allocation
 
         //  difference plot magnitude
@@ -4268,7 +4268,7 @@ function debounce(func, wait) {
         }
 
 
-        // --- Plot TRUE difference from the stored `lastRawDifference` array ---
+        //   Plot TRUE difference from the stored `lastRawDifference` array  
         if (diffData.length > 0 && diffData.length === workingData.tth.length) {
             const constantDiffPlotSpaceTop = -(constantNegSpaceHeight * 0.25);
             const diffPlotZeroLine = -constantNegSpaceHeight + (constantNegSpaceHeight - constantDiffPlotSpaceTop) / 2;
@@ -4364,7 +4364,7 @@ function debounce(func, wait) {
                     return;
                 }
                 
-                // --- Get Ka1 info ---
+                //   Get Ka1 info  
                 const basePos1 = peak.tth + params.zeroShift;
                 const shift1 = calculatePeakShift(basePos1, params);
                 const peakPos1 = basePos1 + shift1;
@@ -4373,7 +4373,7 @@ function debounce(func, wait) {
                 const min_tth1 = peakPos1 - window1;
                 const max_tth1 = peakPos1 + window1;
 
-                // --- Get Ka2 info ---
+                //   Get Ka2 info  
                 let tth2 = null, basePos2 = null, peakPos2 = null, min_tth2 = 0, max_tth2 = 0;
                 if (doubletEnabled) {
                     const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
@@ -4392,7 +4392,7 @@ function debounce(func, wait) {
                     }
                 }
                 
-                // --- Loop over data points to build the full (Ka1+Ka2) scaled profile ---
+                //   Loop over data points to build the full (Ka1+Ka2) scaled profile  
                 for (let i = 0; i < n_points; i++) {
                     const current_tth = expData.tth[i];
                     let total_scaled_val = 0;
@@ -4717,7 +4717,7 @@ function debounce(func, wait) {
             }
 
 
-            // --- ADDED: Background Points Section, version 115, 25 oct 2025 ---
+            //   ADDED: Background Points Section, version 115, 25 oct 2025  
             const backgroundPointsSection = [];
             if (backgroundAnchors && backgroundAnchors.length > 0) {
                  const bgWidths = [15, 18]; // 2theta, Intensity
@@ -4872,7 +4872,7 @@ function debounce(func, wait) {
             ].join('\n');
         }
 
-        // --- EVENT LISTENERS, 8 oct, version 1.0.3; updated le 24 oct v 111
+        //   EVENT LISTENERS, 8 oct, version 1.0.3; updated le 24 oct v 111
 
         document.getElementById('le-bail-button').addEventListener('click', () => runFit('le-bail'));
         document.getElementById('pawley-button').addEventListener('click', () => runFit('pawley'));
@@ -4898,7 +4898,7 @@ function debounce(func, wait) {
         //1.0.4
         const debouncedSimplePreviewUpdate = debounce(handleSimplePreviewUpdate, 350); 
 
-        // --- Attach Listeners to Specific Controls ---
+        //   Attach Listeners to Specific Controls  
         // 1. Triggers for FULL Recalculation (these invalidate the cache)
         // The space-group modal fires the full UI re-layout AND recalculation
         // on Apply because changing system changes the lattice-parameter
@@ -5145,7 +5145,7 @@ controls.tthMinSlider.addEventListener('input', () => {
     }
     controls.tthMinValue.textContent = minVal.toFixed(2);
 
-    // --- UPDATE FIRST SPLINE POINT ---
+    //   UPDATE FIRST SPLINE POINT  
     if (backgroundAnchors.length > 0) {
         const firstPointData = findClosestExperimentalPoint(minVal);
         if (firstPointData) {
@@ -5170,7 +5170,7 @@ controls.tthMaxSlider.addEventListener('input', () => {
     }
     controls.tthMaxValue.textContent = maxVal.toFixed(2);
 
-    // --- UPDATE LAST SPLINE POINT ---
+    //   UPDATE LAST SPLINE POINT  
     if (backgroundAnchors.length > 0) {
         const lastPointData = findClosestExperimentalPoint(maxVal);
         if (lastPointData) {
@@ -5269,9 +5269,6 @@ controls.mainChartCanvas.addEventListener('contextmenu', e => {
             currentProfile = newProfile; 
             if (fullExperimentalData.tth.length > 0) updatePreviewPattern(); 
         });
-        
-        // (The old bravaisLattice listener has been removed; the space-group
-        // input now drives all system-dependent UI updates.)
         
         controls.paramS400.addEventListener('input', updateStephensAnisotropyUI); controls.fitS400.addEventListener('change', updateStephensAnisotropyUI); controls.paramS220.addEventListener('input', updateStephensAnisotropyUI); controls.fitS220.addEventListener('change', updateStephensAnisotropyUI); controls.paramS202.addEventListener('input', updateStephensAnisotropyUI); controls.fitS202.addEventListener('change', updateStephensAnisotropyUI);
 

@@ -1,5 +1,4 @@
 // sg_engine.js
-// ------------------------------------------------------------------
 // Single space-group engine, driven by the cctbx JSON database
 // (sg_database.js). Loaded by both the main thread (via <script>)
 // and the refinement worker (via importScripts).
@@ -21,7 +20,6 @@
 //     centrosymmetric,
 //     reflection_conditions  // copy from the cctbx setting
 //   }
-// ------------------------------------------------------------------
 
 (function (root) {
     'use strict';
@@ -31,10 +29,10 @@
     }
     const DB = root.SG_DATABASE.space_groups;
 
-    // ------------------------------------------------------------------
+    
     // 1. Point-group -> Laue-class map (the 11 centrosymmetric Laue groups).
     //    Source: International Tables Vol. A, Table 3.2.1.4.
-    // ------------------------------------------------------------------
+    
     const POINT_GROUP_TO_LAUE = {
         '1':    '-1',   '-1':   '-1',
         '2':    '2/m',  'm':    '2/m',  '2/m':  '2/m',
@@ -60,13 +58,11 @@
         return sym.trim().charAt(0).toUpperCase() === 'R' ? 'rhombohedral' : 'trigonal';
     }
 
-    // ------------------------------------------------------------------
     // 2. Symbol normalisation.
     //    The user may type "P 21 21 21", "P212121", "p 2_1 2_1 2_1",
     //    "Fd-3m", "Fd3m", "P63/mmc", "R -3 c :H", etc. Strip everything
     //    that doesn't carry meaning and uppercase the first char of each
     //    "word" for matching purposes.
-    // ------------------------------------------------------------------
     function normSymbol(s) {
         if (typeof s != 'string') return '';
         return s
@@ -192,7 +188,6 @@
         return null;
     }
 
-    // ------------------------------------------------------------------
     // 3. Reflection-condition evaluator.
     //    The cctbx JSON uses a tiny grammar:
     //      "<expr>=<d>n"   (e.g. "h+k=2n", "-h+k+l=3n", "2h+l=4n")
@@ -203,7 +198,6 @@
     //    Conditions in the JSON are cumulative, not alternative: e.g.
     //    F-centring yields three rules on 'hkl' ('h+k=2n', 'h+l=2n',
     //    'k+l=2n'), all three of which must be satisfied.
-    // ------------------------------------------------------------------
     function inFamily(h, k, l, family) {
         switch (family) {
             case 'hkl': return true;
@@ -293,12 +287,11 @@
         return true;
     }
 
-    // ------------------------------------------------------------------
     // 4. Multiplicity for the 11 Laue classes. Identical logic to what
     //    was in powder5.html, kept here so both main thread and worker
     //    share a single definition. Operates on unsigned indices and the
     //    standard conventions for each Laue group.
-    // ------------------------------------------------------------------
+
     function getMultiplicity(h, k, l, laue_class) {
         if (h === 0 && k === 0 && l === 0) {
             return { multiplicity: 1, canonical_hkl_obj: [0, 0, 0] };
@@ -409,10 +402,8 @@
         return { multiplicity: m, canonical_hkl_obj: [h, k, l] };
     }
 
-    // ------------------------------------------------------------------
     // 5. Helpers exposed for the UI: list of all 230 standard symbols
     //    for <datalist> autocomplete, and an "is supported" probe.
-    // ------------------------------------------------------------------
     function list() {
         return ALL_STANDARD_SYMBOLS.slice();
     }
