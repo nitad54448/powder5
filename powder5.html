@@ -919,30 +919,9 @@
         <div id="controls-panel">
             
             <div class="control-group" style="padding-top: 16px;">
-                 <div style="display: flex; align-items: center; gap: 10px;">
-                    
-                    <label for="file-input" class="file-input-label" style="flex-grow: 1;">
-                        <span id="file-name">Select Data File</span>
-                    </label>
-                     
-                    <div class="help-tooltip-container">
-    <span class="help-icon">?</span>
-
-    <div class="tooltip-content">
-    <h4>Powder 5 Fit</h4>
-    <p>Analyze powder XRD using the LeBail or Pawley method. <a href="powder5_help.html" target="_blank" style="color: #6495ED;">Method Guide &rarr;</a></p>
-    <hr>
-    <h4>Supported File Formats:</h4>
-    <p>Generic 2-column (2θ intensity), .xrdml, .brml, .ras, .uxd, .udf, GSAS .esd/.xra</p>
-    <hr>
-    <h4>Chart Interaction:</h4>
-    <p><b>Zoom:</b> Use the mouse wheel over the chart or an axis.</p>
-    <p><b>Pan:</b> Click and drag the chart to pan.</p>
-    <p><b>Reset View:</b> Right-click on the chart.</p>
-    <p><b>Add BG Point:</b> Hold <b>Ctrl</b> and click on the chart to manually add a spline point.</p>
-</div>
-</div>
-                </div>
+                <label for="file-input" class="file-input-label" style="display: block; width: 100%; box-sizing: border-box;">
+                    <span id="file-name">Select Data File</span>
+                </label>
                 <input type="file" id="file-input" class="hidden" accept=".brml,.csv,.ras,.txt,.esd,.gsa,.std,.udf,.xra,.xrdml,.xy">
             </div>
 
@@ -1028,23 +1007,37 @@
                          </select>
                     </div>
 
+                    <!--   Profile preset Load / Save  -->
+                    <div id="profile-preset-row"
+                         style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin: -12px 0 16px 0;">
+                        <button type="button" id="profile-load-btn" class="btn btn-secondary"
+                                style="height:36px; font-size:13px; padding:6px 12px;">
+                            ↥ Load preset
+                        </button>
+                        <button type="button" id="profile-save-btn" class="btn btn-secondary"
+                                style="height:36px; font-size:13px; padding:6px 12px;">
+                            ↧ Save preset
+                        </button>
+                    </div>
+                    <input type="file" id="profile-load-input" accept=".json,application/json" style="display:none;">
+
                     <div id="profile-simple-pvoigt-container" class="profile-controls-container">
                         <h3 class="profile-section-header">Gaussian Broadening</h3>
                         <label class="control-label">GU</label>
-                        <input type="number" id="param-gu" value="0.035" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-gu" value="2.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-gu" class="fit-checkbox">
                         <label class="control-label">GV</label>
-                        <input type="number" id="param-gv" value="-0.03" step="0.01" class="control-input">
+                        <input type="number" id="param-gv" value="-2.0" step="0.1" class="control-input">
                         <input type="checkbox" id="fit-gv" class="fit-checkbox" >
                         <label class="control-label">GW</label>
-                        <input type="number" id="param-gw" value="0.02" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-gw" value="5.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-gw" class="fit-checkbox" >
                          <label class="control-label">GP</label>
-                        <input type="number" id="param-gp" value="0.0" step="0.001" class="control-input">
+                        <input type="number" id="param-gp" value="0.0" step="0.01" class="control-input">
                         <input type="checkbox" id="fit-gp" class="fit-checkbox">
                         <h3 class="profile-section-header">Lorentzian Broadening</h3>
                         <label class="control-label">LX</label>
-                        <input type="number" id="param-lx" value="0.05" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-lx" value="1.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-lx" class="fit-checkbox" >
                          <h3 class="profile-section-header">Peak Shape & Position</h3>
                          <label class="control-label">eta (Mixing)</label>
@@ -1061,21 +1054,21 @@
                     <div id="profile-tch-aniso-container" class="profile-controls-container hidden">
                         <h3 class="profile-section-header">Isotropic Gaussian (TCH)</h3>
                         <label class="control-label">U</label>
-                        <input type="number" id="param-u" value="0.04" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-u" value="2.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-u" class="fit-checkbox">
                         <label class="control-label">V</label>
-                        <input type="number" id="param-v" value="-0.03" step="0.01" class="control-input">
+                        <input type="number" id="param-v" value="-2.0" step="0.1" class="control-input">
                         <input type="checkbox" id="fit-v" class="fit-checkbox" >
                         <label class="control-label">W</label>
-                        <input type="number" id="param-w" value="0.02" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-w" value="5.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-w" class="fit-checkbox" >
 
                         <h3 class="profile-section-header">Isotropic Lorentzian (TCH)</h3>
                         <label class="control-label">X</label>
-                        <input type="number" id="param-x" value="0.001" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-x" value="1.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-x" class="fit-checkbox" >
                         <label class="control-label">Y</label>
-                        <input type="number" id="param-y" value="0.005" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-y" value="1.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-y" class="fit-checkbox" >
 
                         <h3 class="profile-section-header">Peak Asymmetry</h3>
@@ -1111,34 +1104,34 @@
                     <div id="profile-split-pvoigt-container" class="profile-controls-container hidden">
                         <h3 class="profile-section-header">Gaussian (Left Side)</h3>
                         <label class="control-label">GU-L</label>
-                        <input type="number" id="param-gu_l" value="0.035" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-gu_l" value="2.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-gu_l" class="fit-checkbox">
                         <label class="control-label">GV-L</label>
-                        <input type="number" id="param-gv_l" value="-0.03" step="0.01" class="control-input">
+                        <input type="number" id="param-gv_l" value="-2.0" step="0.1" class="control-input">
                         <input type="checkbox" id="fit-gv_l" class="fit-checkbox">
                         <label class="control-label">GW-L</label>
-                        <input type="number" id="param-gw_l" value="0.02" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-gw_l" value="5.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-gw_l" class="fit-checkbox">
 
                         <h3 class="profile-section-header">Gaussian (Right Side)</h3>
                         <label class="control-label">GU-R</label>
-                        <input type="number" id="param-gu_r" value="0.035" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-gu_r" value="2.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-gu_r" class="fit-checkbox">
                         <label class="control-label">GV-R</label>
-                        <input type="number" id="param-gv_r" value="-0.03" step="0.01" class="control-input">
+                        <input type="number" id="param-gv_r" value="-2.0" step="0.1" class="control-input">
                         <input type="checkbox" id="fit-gv_r" class="fit-checkbox">
                         <label class="control-label">GW-R</label>
-                        <input type="number" id="param-gw_r" value="0.02" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-gw_r" value="5.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-gw_r" class="fit-checkbox">
 
                         <h3 class="profile-section-header">Lorentzian (Left Side)</h3>
                         <label class="control-label">LX-L</label>
-                        <input type="number" id="param-lx_l" value="0.05" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-lx_l" value="1.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-lx_l" class="fit-checkbox">
 
                         <h3 class="profile-section-header">Lorentzian (Right Side)</h3>
                         <label class="control-label">LX-R</label>
-                        <input type="number" id="param-lx_r" value="0.05" step="0.01" class="control-input" min="0">
+                        <input type="number" id="param-lx_r" value="1.0" step="0.1" class="control-input" min="0">
                         <input type="checkbox" id="fit-lx_r" class="fit-checkbox">
 
                          <h3 class="profile-section-header">Peak Shape</h3>
@@ -1229,6 +1222,29 @@
         <div id="drag-handle"></div>
 
 <div id="results-area" style="position: relative; flex-grow: 1; min-height: 0;">
+
+    <!--   Help / chart-interaction tooltip, anchored to the top-right
+          of the chart area. z-index keeps it above the canvas; the
+          tooltip popup itself flies out to the left via its own CSS. -->
+    <div class="help-tooltip-container"
+         style="position: absolute; top: 12px; right: 16px; z-index: 50;">
+        <span class="help-icon">?</span>
+
+        <div class="tooltip-content">
+            <h4>Powder 5 Fit</h4>
+            <p>Analyze powder XRD using the LeBail or Pawley method. <a href="powder5_help.html" target="_blank" style="color: #6495ED;">Method Guide &rarr;</a></p>
+            <hr>
+            <h4>Supported File Formats:</h4>
+            <p>Generic 2-column (2θ intensity), .xrdml, .brml, .ras, .uxd, .udf, GSAS .esd/.xra</p>
+            <hr>
+            <h4>Chart Interaction:</h4>
+            <p><b>Zoom:</b> Use the mouse wheel over the chart or an axis.</p>
+            <p><b>Pan:</b> Click and drag the chart to pan.</p>
+            <p><b>Reset View:</b> Right-click on the chart.</p>
+            <p><b>Add BG Point:</b> Hold <b>Ctrl</b> and click on the chart to manually add a spline point.</p>
+        </div>
+    </div>
+
     <div id="placeholder" style="width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--system-secondary-label);">
         <svg xmlns="http://www.w3.org/2000/svg" style="width: 64px; height: 64px; margin-bottom: 16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
         <h2 style="font-size: 22px; font-weight: 600; margin-bottom: 8px;">Awaiting Data</h2>
@@ -1244,7 +1260,7 @@
 </div>
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 123, 22 April 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 124, 27 April 2026";
     document.addEventListener('DOMContentLoaded', () => {      
         document.getElementById('app-version-footer').textContent = APP_VERSION_TEXT;
         const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 6
@@ -1889,7 +1905,8 @@ function handleSplinePointListInteraction(e) {
         // ===================================================================
         const SGM = (() => {
             //   Build the pooled list once.  
-            const SYSTEMS = ['triclinic','monoclinic','orthorhombic','tetragonal','trigonal','hexagonal','cubic'];
+            //  Listed high → low symmetry so the most-used systems appear first.
+            const SYSTEMS = ['cubic','hexagonal','trigonal','tetragonal','orthorhombic','monoclinic','triclinic'];
             const CENTERINGS = ['P','A','B','C','I','F','R'];
 
             function buildAllSettings() {
@@ -2315,6 +2332,291 @@ function handleSplinePointListInteraction(e) {
                 });
             }
         }        
+
+
+        /*   ============================================================
+         *   PROFILE PRESET LOAD / SAVE
+         *   ============================================================
+         *   Format: JSON. We pick JSON over XML because it parses natively
+         *   in JS, is half the size, and diffs cleanly in git.
+         *
+         *   Preset shape:
+         *     {
+         *       "format":      "powder5-profile",
+         *       "version":     1,
+         *       "profileType": "simple_pvoigt" | "tch_aniso" | "split_pvoigt",
+         *       "label":       "TCH synchrotron (ID22 default)",   // free text
+         *       "parameters":  { "param-u": "0.04", "fit-u": false, ... }
+         *     }
+         *   The parameters block uses the DOM input IDs as keys, exactly
+         *   like profileParamCache. Numeric values are stored as strings
+         *   to preserve user formatting; checkboxes as booleans.
+         *   Unknown keys are ignored on load (forward-compatible).
+         */
+
+        const PROFILE_PRESET_FORMAT = "powder5-profile";
+        const PROFILE_PRESET_VERSION = 1;
+
+        //   Map of "default file basename" → profile type. We probe these
+        //   at startup so users can drop a Voigt_default.json (etc.) next
+        //   to powder5.html and have the app pick it up automatically.
+        const DEFAULT_PRESET_FILES = {
+            "simple_pvoigt": "Voigt_default.json",
+            "tch_aniso":     "TCH_default.json",
+            "split_pvoigt":  "Split_default.json"
+        };
+
+        function getProfileContainer(profileId) {
+            switch (profileId) {
+                case "simple_pvoigt": return controls.profileSimplePVoigtContainer;
+                case "tch_aniso":     return controls.profileTchAnisoContainer;
+                case "split_pvoigt":  return controls.profileSplitPVoigtContainer;
+                default: return null;
+            }
+        }
+
+        function getProfileLabel(profileId) {
+            return ({
+                "simple_pvoigt": "Simple pVoigt",
+                "tch_aniso":     "TCH (Size/Strain/Aniso)",
+                "split_pvoigt":  "Split pVoigt (Asymmetric)"
+            })[profileId] || profileId;
+        }
+
+        /**  Read the live DOM state for a given profile and return a
+         *   preset-shaped object (suitable for JSON.stringify).
+         */
+        function buildProfilePreset(profileId) {
+            const container = getProfileContainer(profileId);
+            const parameters = {};
+            if (container) {
+                container.querySelectorAll('input[type="number"], input[type="checkbox"]').forEach(input => {
+                    parameters[input.id] = (input.type === 'checkbox') ? input.checked : input.value;
+                });
+            }
+            return {
+                format:      PROFILE_PRESET_FORMAT,
+                version:     PROFILE_PRESET_VERSION,
+                profileType: profileId,
+                label:       getProfileLabel(profileId),
+                savedAt:     new Date().toISOString(),
+                parameters
+            };
+        }
+
+        /**  Validate a parsed object and apply it to the DOM. Returns
+         *   the applied profile type on success, or null on failure.
+         *   - Switches the profile selector if needed.
+         *   - Pushes values into the inputs.
+         *   - Updates profileParamCache so the cached state matches.
+         *   - Re-renders the preview pattern.
+         */
+        function applyProfilePreset(preset, sourceLabel = "preset") {
+            if (!preset || typeof preset !== 'object') {
+                showToast(`Could not load ${sourceLabel}: not a JSON object.`, 'error');
+                return null;
+            }
+            if (preset.format && preset.format !== PROFILE_PRESET_FORMAT) {
+                showToast(`Could not load ${sourceLabel}: wrong format tag "${preset.format}".`, 'error');
+                return null;
+            }
+            const profileId = preset.profileType;
+            if (!["simple_pvoigt","tch_aniso","split_pvoigt"].includes(profileId)) {
+                showToast(`Could not load ${sourceLabel}: unknown profileType "${profileId}".`, 'error');
+                return null;
+            }
+            const container = getProfileContainer(profileId);
+            if (!container) return null;
+            const params = preset.parameters || {};
+
+            //   Save the current profile's state before we switch away.
+            saveProfileState(currentProfile);
+
+            //   Switch the dropdown + visible container if needed.
+            if (controls.profileSelect.value !== profileId) {
+                controls.profileSelect.value = profileId;
+                controls.profileSimplePVoigtContainer.classList.toggle('hidden', profileId !== 'simple_pvoigt');
+                controls.profileTchAnisoContainer.classList.toggle('hidden',     profileId !== 'tch_aniso');
+                controls.profileSplitPVoigtContainer.classList.toggle('hidden',  profileId !== 'split_pvoigt');
+            }
+
+            //   Apply preset values to the inputs of the target profile.
+            let appliedCount = 0, unknownCount = 0;
+            container.querySelectorAll('input[type="number"], input[type="checkbox"]').forEach(input => {
+                if (Object.prototype.hasOwnProperty.call(params, input.id)) {
+                    const v = params[input.id];
+                    if (input.type === 'checkbox') {
+                        input.checked = (v === true || v === 'true');
+                    } else {
+                        //   Coerce to string but keep numeric sanity.
+                        const num = Number(v);
+                        input.value = Number.isFinite(num) ? String(v) : input.value;
+                    }
+                    appliedCount++;
+                }
+            });
+            //   Count unknown keys for diagnostics (forward-compat: ignored).
+            for (const k of Object.keys(params)) {
+                if (!container.querySelector(`#${CSS.escape(k)}`)) unknownCount++;
+            }
+
+            //   Sync the cache and current profile pointer.
+            saveProfileState(profileId);
+            currentProfile = profileId;
+
+            //   Recompute & replot. The preset just changed every visible
+            //   profile parameter, so we want the chart and any HKL-derived
+            //   widths refreshed even if no experimental data is loaded yet.
+            //   updatePreviewPattern() bails internally when prerequisites
+            //   are missing (no data / no space group / no chart), so it's
+            //   safe to call unconditionally.
+            try { updateStephensAnisotropyUI(); } catch (_) {}
+            try { invalidateHklCache(); } catch (_) {}     //   widths feed peak shapes
+            try { updatePreviewPattern(); } catch (_) {}
+
+            const tail = unknownCount > 0 ? ` (${unknownCount} unknown key${unknownCount===1?'':'s'} ignored)` : '';
+            showToast(`Loaded ${getProfileLabel(profileId)}: ${appliedCount} parameter${appliedCount===1?'':'s'}${tail}.`, 'success');
+            return profileId;
+        }
+
+        /**  Trigger a save of the current profile's parameters.
+         *
+         *   Uses window.showSaveFilePicker() (File System Access API) where
+         *   available — that gives the user a real OS Save-As dialog, lets
+         *   them pick the destination directory, and reuses it next time.
+         *   Falls back to the legacy <a download> + window.prompt flow for
+         *   browsers that lack the API (Firefox; iOS Safari; file:// pages
+         *   in some setups).
+         */
+        async function saveCurrentProfilePreset() {
+            const profileId = controls.profileSelect.value;
+            //   Make sure the cache reflects what's on screen, then build.
+            saveProfileState(profileId);
+            const preset = buildProfilePreset(profileId);
+            const json = JSON.stringify(preset, null, 2);
+
+            //   Sensible default filename — matches the auto-load names so
+            //   "Save → keep name" overwrites the active default.
+            const stemDefault = ({
+                "simple_pvoigt": "Voigt_default.json",
+                "tch_aniso":     "TCH_default.json",
+                "split_pvoigt":  "Split_default.json"
+            })[profileId] || "profile.json";
+
+            //   Path 1 (modern browsers): real OS Save-As dialog.
+            if (typeof window.showSaveFilePicker === 'function') {
+                try {
+                    const handle = await window.showSaveFilePicker({
+                        suggestedName: stemDefault,
+                        //   Per-app picker id so the browser remembers the
+                        //   last directory the user chose for presets.
+                        id: 'powder5-profile-presets',
+                        startIn: 'documents',
+                        types: [{
+                            description: 'Powder 5 profile preset',
+                            accept: { 'application/json': ['.json'] }
+                        }]
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(json);
+                    await writable.close();
+                    showToast(`Saved ${handle.name}`, 'success');
+                    return;
+                } catch (err) {
+                    //   AbortError = user closed the dialog. Anything else
+                    //   (permission denied, etc.) we report and fall through
+                    //   to the legacy path so the save still completes.
+                    if (err && err.name === 'AbortError') return;
+                    console.warn('[profile-preset] showSaveFilePicker failed, falling back:', err);
+                }
+            }
+
+            //   Path 2 (fallback): prompt for filename, anchor-download.
+            const suggested = (window.prompt(
+                "Save profile preset as (filename, .json will be appended if missing):",
+                stemDefault
+            ) || "").trim();
+            if (!suggested) return;
+            const fname = /\.json$/i.test(suggested) ? suggested : `${suggested}.json`;
+
+            const blob = new Blob([json], { type: 'application/json' });
+            const url  = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fname;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showToast(`Saved ${fname}`, 'success');
+        }
+
+        /**  Open the file picker; on selection, parse and apply. */
+        function loadProfilePresetFromFile() {
+            const input = document.getElementById('profile-load-input');
+            if (!input) return;
+            input.value = '';   //  allow re-loading the same file
+            input.onchange = (e) => {
+                const file = e.target.files && e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload  = (ev) => {
+                    try {
+                        const preset = JSON.parse(ev.target.result);
+                        applyProfilePreset(preset, file.name);
+                    } catch (err) {
+                        showToast(`Could not parse ${file.name}: ${err.message}`, 'error');
+                    }
+                };
+                reader.onerror = () => showToast(`Failed to read ${file.name}.`, 'error');
+                reader.readAsText(file);
+            };
+            input.click();
+        }
+
+        /**  At startup, silently probe for Voigt_default.json / TCH_default.json
+         *   / Split_default.json. If any are found, cache them in
+         *   profileParamCache so that switching to that profile via the
+         *   dropdown immediately restores the user's preferred defaults.
+         *   The ACTIVE profile (the one selected on load) is also applied
+         *   to its inputs.
+         */
+        async function loadDefaultProfilePresets() {
+            const initialProfile = controls.profileSelect.value;
+            for (const [profileId, fname] of Object.entries(DEFAULT_PRESET_FILES)) {
+                try {
+                    const resp = await fetch(fname, { cache: "no-store" });
+                    if (!resp.ok) continue;     //  404 is fine — no default supplied
+                    const text = await resp.text();
+                    const preset = JSON.parse(text);
+                    if (preset.format && preset.format !== PROFILE_PRESET_FORMAT) continue;
+                    if (preset.profileType !== profileId) continue;
+
+                    //   Cache it so a later switch to this profile picks it up.
+                    profileParamCache[profileId] = preset.parameters || {};
+
+                    //   If this is the currently visible profile, apply now.
+                    if (profileId === initialProfile) {
+                        const container = getProfileContainer(profileId);
+                        if (container) {
+                            const params = preset.parameters || {};
+                            container.querySelectorAll('input[type="number"], input[type="checkbox"]').forEach(input => {
+                                if (Object.prototype.hasOwnProperty.call(params, input.id)) {
+                                    const v = params[input.id];
+                                    if (input.type === 'checkbox') input.checked = (v === true || v === 'true');
+                                    else                            input.value   = String(v);
+                                }
+                            });
+                        }
+                        try { updateStephensAnisotropyUI(); } catch (_) {}
+                    }
+                    console.log(`[profile-preset] Loaded default ${fname} for ${profileId}.`);
+                } catch (err) {
+                    //   fetch() rejects for file:// in some browsers — that's fine.
+                    console.debug(`[profile-preset] No default ${fname}: ${err.message}`);
+                }
+            }
+        }
 
 
         /**
@@ -2988,9 +3290,57 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
             }
         }
 
+        /*  ============================================================
+         *  GSAS profile-function conventions (CW types 3 & 4)
+         *  ============================================================
+         *  Units of the profile parameters follow GSAS exactly:
+         *
+         *    Gaussian (Caglioti):   σ²[cdeg²]/(8·ln2)
+         *                          = GU·tan²θ + GV·tanθ + GW + GP/cos²θ
+         *      → H_G[deg] = √(8·ln2 · σ²) / 100
+         *
+         *    Lorentzian:            γ_L[cdeg]
+         *                          = LX/cosθ + LY·tanθ                (TCH)
+         *                          = LX/cosθ                          (Simple/Split)
+         *      → γ_L[deg] = γ_L[cdeg] / 100
+         *
+         *    Conversions (Kaduk & Reid, Powder Diffr. 26, 88, 2011):
+         *      GSAS_GU = 1803.4 · FullProf_U          (1803.4 = 100²/(8·ln2))
+         *      GSAS_LX = 100   · FullProf_Y_size
+         *      GSAS_LY = 100   · FullProf_X_strain
+         *
+         *  In this UI:
+         *    • Simple pVoigt fields  GU, GV, GW, GP, LX  → GSAS GU, GV, GW, GP, LX
+         *    • TCH fields            U, V, W            → GSAS GU, GV, GW
+         *                            X, Y                → GSAS LY, LX
+         *      (i.e. TCH "X" is the strain Lorentzian × tanθ,
+         *            TCH "Y" is the size   Lorentzian / cosθ — matches
+         *            Thompson-Cox-Hastings 1987 notation, which GSAS adopted.)
+         *    • Split pVoigt fields   GU_L/R, GV_L/R, GW_L/R, LX_L/R → GSAS units
+         *
+         *  Stephens (1999) anisotropic strain (TOPAS / GSAS-II form):
+         *      M_HKL = ΣS_HKL · h^H k^K l^L                (deg-4 polynomial)
+         *      pp    = d² · √max(M_HKL,0) / 1000
+         *      γ_L_aniso[deg] = (1.8/π) · pp · η     · tanθ
+         *      γ_G_aniso[deg] = (1.8/π) · pp · (1−η) · tanθ
+         *
+         *  All width helpers below return widths in DEGREES 2θ.
+         */
+
+        //   √(8·ln2)/100  — converts √(σ²[cdeg²]/(8·ln2)) → FWHM in deg.
+        const GSAS_GAUSSIAN_TO_DEG  = Math.sqrt(8 * Math.LN2) / 100.0;
+        //   1/100  — converts γ_L[cdeg] → γ_L[deg].
+        const GSAS_LORENTZIAN_TO_DEG = 1.0 / 100.0;
+        //   Stephens prefactor: 1.8/π is the canonical TOPAS/GSAS-II value
+        //   (it is sqrt(8 ln 2)/π · 1, written as a rounded literal).
+        const STEPHENS_PREFACTOR = 1.8 / Math.PI;
+        //   Stephens-mixing default when no explicit η is supplied. GSAS-II
+        //   uses Lorentzian-dominated anisotropic strain; we follow suit.
+        const STEPHENS_DEFAULT_ETA = 1.0;
+
         function calculateProfileWidths(tth, hkl, params, side = 'center') {
              if (!params || !params.profileType) return { gamma_G: 1e-4, gamma_L: 1e-4 };
-            
+
             const profileType = params.profileType;
             const thetaRad = tth * (Math.PI / 180) / 2;
 
@@ -3005,68 +3355,105 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
             const cosTheta_safe = Math.max(cosTheta, 1e-9);
             const cosThetaSq_safe = Math.max(cosTheta * cosTheta, 1e-9);
 
-            let gamma_G = 1e-4;
-            let gamma_L = 1e-4;
+            let gamma_G = 1e-4;     //  FWHM in degrees 2θ
+            let gamma_L = 1e-4;     //  FWHM in degrees 2θ
 
             switch (profileType) {
                 case "simple_pvoigt": {
+                    //   Caglioti in GSAS units (centidegrees²/(8 ln2)).
                     const GU = params.GU || 0;
                     const GV = params.GV || 0;
                     const GW = params.GW || 0;
                     const GP = params.GP || 0;
                     const LX = params.LX || 0;
-                    const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
-                    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-                    const calculated_L = LX / cosTheta_safe;
-                    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+                    const sigma_sq_cdeg2 = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
+                    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
+                        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
+                    }
+                    //   Lorentzian (size only) in centidegrees → degrees.
+                    const gL_cdeg = LX / cosTheta_safe;
+                    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
+                        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
+                    }
                     break;
                 }
-                
+
                 case "split_pvoigt": {
+                    //   Same Caglioti / size-Lorentzian as Simple, with
+                    //   independent left/right parameters.
                     let GU, GV, GW, LX;
                     if (side === 'left') {
-                        GU = params.GU_L || 0;
-                        GV = params.GV_L || 0;
-                        GW = params.GW_L || 0;
-                        LX = params.LX_L || 0;
-                    } else { // 'right' or 'center'
-                        GU = params.GU_R || 0;
-                        GV = params.GV_R || 0;
-                        GW = params.GW_R || 0;
-                        LX = params.LX_R || 0;
+                        GU = params.GU_L || 0; GV = params.GV_L || 0;
+                        GW = params.GW_L || 0; LX = params.LX_L || 0;
+                    } else {  //  'right' or 'center'
+                        GU = params.GU_R || 0; GV = params.GV_R || 0;
+                        GW = params.GW_R || 0; LX = params.LX_R || 0;
                     }
-                    const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW; // No GP for split
-                    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-                    const calculated_L = LX / cosTheta_safe;
-                    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+                    const sigma_sq_cdeg2 = GU * tanTheta * tanTheta + GV * tanTheta + GW;
+                    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
+                        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
+                    }
+                    const gL_cdeg = LX / cosTheta_safe;
+                    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
+                        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
+                    }
                     break;
                 }
 
                 case "tch_aniso": {
-                     const U = params.U || 0;
-                     const V = params.V || 0;
-                     const W = params.W || 0;
-                     const X = params.X || 0;
-                     const Y = params.Y || 0;
-                    const gamma_G_sq = U * tanTheta * tanTheta + V * tanTheta + W;
-                    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-                    const calculated_L = X * tanTheta + Y / cosTheta_safe;
-                    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+                    //   TCH/GSAS profile: U,V,W are GSAS GU,GV,GW;
+                    //                     X,Y are GSAS LY (strain), LX (size).
+                    const U = params.U || 0;
+                    const V = params.V || 0;
+                    const W = params.W || 0;
+                    const X = params.X || 0;     //  GSAS LY  (strain · tanθ)
+                    const Y = params.Y || 0;     //  GSAS LX  (size   / cosθ)
 
+                    const sigma_sq_cdeg2 = U * tanTheta * tanTheta + V * tanTheta + W;
+                    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
+                        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
+                    }
+                    const gL_cdeg = X * tanTheta + Y / cosTheta_safe;
+                    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
+                        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
+                    }
+
+                    //   Stephens anisotropic strain — orthorhombic-and-up form.
+                    //   Higher-symmetry systems (cubic, tetragonal, hexagonal,
+                    //   trigonal) collapse via enforceSymmetryConstraints which
+                    //   slaves S040,S004,S220,S202,S022 to S400 (and S220) as
+                    //   appropriate. Lower symmetry (monoclinic, triclinic)
+                    //   would need extra terms (S301, S121, S103, S211, S031,
+                    //   S013, S121, S112, S211); we don't expose those yet.
                     if (hkl && hkl.d && hkl.h_orig !== undefined) {
-                         const d_sq = hkl.d * hkl.d;
-                         if (d_sq > 1e-9) {
-                            const d_inv_sq = 1 / d_sq;
+                        const d_sq = hkl.d * hkl.d;
+                        if (d_sq > 1e-9) {
                             const h_val = hkl.h_orig, k_val = hkl.k_orig, l_val = hkl.l_orig;
                             const h2 = h_val*h_val, k2 = k_val*k_val, l2 = l_val*l_val;
-                            const h4 = h2*h2, k4 = k2*k2, l4 = l2*l2;
+                            const h4 = h2*h2,        k4 = k2*k2,        l4 = l2*l2;
 
                             const S400 = params.S400 || 0, S040 = params.S040 || 0, S004 = params.S004 || 0;
                             const S220 = params.S220 || 0, S202 = params.S202 || 0, S022 = params.S022 || 0;
 
-                            let H_aniso = S400*h4 + S040*k4 + S004*l4 + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
-                            H_aniso *= d_inv_sq * d_inv_sq;
-                            if(isFinite(H_aniso) && H_aniso > 0) gamma_L += H_aniso / 1000.0;
+                            const M_HKL = S400*h4 + S040*k4 + S004*l4
+                                        + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
+                            if (M_HKL > 0 && isFinite(M_HKL)) {
+                                //   pp = d² · √M / 1000   (TOPAS macro / GSAS-II form)
+                                const pp = d_sq * Math.sqrt(M_HKL) / 1000.0;
+                                //   Strain broadens like tanθ.
+                                const aniso_total = STEPHENS_PREFACTOR * pp * tanTheta;
+                                //   Split L / G by η_aniso (default: pure Lorentzian).
+                                const eta_a = (typeof params.eta_aniso === 'number')
+                                              ? Math.max(0, Math.min(1, params.eta_aniso))
+                                              : STEPHENS_DEFAULT_ETA;
+                                const aniso_L = aniso_total * eta_a;
+                                const aniso_G = aniso_total * (1 - eta_a);
+                                if (isFinite(aniso_L) && aniso_L > 0) gamma_L += aniso_L;
+                                if (isFinite(aniso_G) && aniso_G > 0) {
+                                    //   Add in quadrature to the Gaussian width.
+                                    gamma_G = Math.sqrt(gamma_G*gamma_G + aniso_G*aniso_G);
+                                }
+                            }
                         }
                     }
                     break;
@@ -3875,7 +4262,45 @@ function debounce(func, wait) {
                     p.intensity = intensityMap.get(p.hkl_list[0]) || 0;
                 });
             } else {
-                hklList.forEach(p => p.intensity = 1000); 
+                //   No fit yet → seed each peak's intensity from the local
+                //   maximum of the experimental data inside a small window
+                //   around that peak's predicted 2θ. This makes the orange
+                //   "Simulation (Manual)" preview visibly track the data,
+                //   so changes to the profile shape (FWHM, η, etc.) are
+                //   immediately apparent. Falls back to a flat default if
+                //   data isn't available or the window is empty.
+                const FALLBACK_I = 1000;
+                if (workingData && workingData.tth && workingData.tth.length > 0) {
+                    const tthArr = workingData.tth;
+                    const yArr   = workingData.intensity;
+                    //   Pre-compute a local-baseline subtracted maximum per
+                    //   peak in a window scaled to the current FWHM so the
+                    //   seed scales sensibly with the loaded profile.
+                    hklList.forEach(p => {
+                        if (!p || !p.tth) { if (p) p.intensity = FALLBACK_I; return; }
+                        const peakPos = p.tth + params.zeroShift;
+                        //   Use a generous window (~ 1° default) so we catch
+                        //   the peak even when our predicted position is a
+                        //   bit off; refined fits will produce cleaner data.
+                        const win = 0.5;
+                        let localMax = 0;
+                        let localBg  = Infinity;
+                        //   Linear scan is OK; tthArr is sorted and small.
+                        for (let i = 0; i < tthArr.length; i++) {
+                            const t = tthArr[i];
+                            if (t < peakPos - win) continue;
+                            if (t > peakPos + win) break;
+                            const v = yArr[i];
+                            if (v > localMax) localMax = v;
+                            if (v < localBg)  localBg  = v;
+                        }
+                        const above = (isFinite(localBg) && localMax > localBg)
+                                      ? (localMax - localBg) : localMax;
+                        p.intensity = (above > 1) ? above : FALLBACK_I;
+                    });
+                } else {
+                    hklList.forEach(p => p.intensity = FALLBACK_I);
+                }
             }
             
             const minTth = parseFloat(controls.tthMinSlider.value); 
@@ -3914,6 +4339,19 @@ function debounce(func, wait) {
             }
             findDataset('Simulation (Manual)').data = simulationData;
             findDataset('Calculated').data = [];
+
+            //   HKL marker .y values are set by rescalePlot from the live
+            //   pixel scale — without this call, the markers we just put
+            //   into the dataset have no .y and stay invisible until some
+            //   other interaction (zoom, resize) re-runs the layout.
+            rescalePlot(false);
+
+            //   Tell Chart.js to repaint. Without this the dataset arrays
+            //   are mutated in-memory but the canvas keeps showing the old
+            //   curve until something else (zoom, resize, etc.) kicks the
+            //   render loop. Use 'none' to skip animation since this can
+            //   be called frequently while sliders are dragged.
+            mainChart.update('none');
         }
 
 
@@ -5388,6 +5826,14 @@ controls.reportButton.addEventListener('click', async () => {
         controls.algorithmSelect.addEventListener('change', updatePawleyButtonState);
         updatePawleyButtonState();
         updateUIForSystemChange();
+
+        //   Wire the profile preset Load/Save buttons + probe for defaults.
+        const _loadBtn = document.getElementById('profile-load-btn');
+        const _saveBtn = document.getElementById('profile-save-btn');
+        if (_loadBtn) _loadBtn.addEventListener('click', loadProfilePresetFromFile);
+        if (_saveBtn) _saveBtn.addEventListener('click', saveCurrentProfilePreset);
+        //   Fire-and-forget; defaults are silent if no file is present.
+        loadDefaultProfilePresets();
     });
 
 </script>

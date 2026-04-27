@@ -1,0 +1,23 @@
+{
+  "format": "powder5-profile",
+  "version": 1,
+  "profileType": "tch_aniso",
+  "label": "TCH — lab Cu-Kα (GSAS units)",
+  "savedAt": "2026-04-27T00:00:00.000Z",
+  "_units": "U,V,W in centidegrees²/(8 ln2). X (=GSAS LY, strain·tanθ), Y (=GSAS LX, size/cosθ) in centidegrees. S/L,H/L dimensionless.",
+  "parameters": {
+    "param-u":  "2.0",  "fit-u":  false,
+    "param-v":  "-2.0", "fit-v":  false,
+    "param-w":  "5.0",  "fit-w":  true,
+    "param-x":  "1.0",  "fit-x":  false,
+    "param-y":  "1.0",  "fit-y":  true,
+    "param-sl": "0.0",  "fit-sl": false,
+    "param-hl": "0.0",  "fit-hl": false,
+    "param-s400": "0.0", "fit-s400": false,
+    "param-s040": "0.0", "fit-s040": false,
+    "param-s004": "0.0", "fit-s004": false,
+    "param-s220": "0.0", "fit-s220": false,
+    "param-s202": "0.0", "fit-s202": false,
+    "param-s022": "0.0", "fit-s022": false
+  }
+}

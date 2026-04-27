@@ -1,0 +1,18 @@
+{
+  "format": "powder5-profile",
+  "version": 1,
+  "profileType": "simple_pvoigt",
+  "label": "Simple pVoigt — lab Cu-Kα (GSAS units)",
+  "savedAt": "2026-04-27T00:00:00.000Z",
+  "_units": "GU,GV,GW,GP in centidegrees²/(8 ln2). LX in centidegrees.",
+  "parameters": {
+    "param-gu":   "2.0",  "fit-gu":   false,
+    "param-gv":   "-2.0", "fit-gv":   false,
+    "param-gw":   "5.0",  "fit-gw":   true,
+    "param-gp":   "0.0",  "fit-gp":   false,
+    "param-lx":   "1.0",  "fit-lx":   true,
+    "param-eta":  "0.74", "fit-eta":  true,
+    "param-shft": "0",    "fit-shft": false,
+    "param-trns": "0",    "fit-trns": false
+  }
+}

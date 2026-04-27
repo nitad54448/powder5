@@ -505,8 +505,43 @@ function calculatePeakShift(tth, params) {
     }
 }
 
+/*  ============================================================
+ *  GSAS profile-function conventions (CW types 3 & 4)
+ *  ============================================================
+ *  Units of the profile parameters follow GSAS exactly:
+ *
+ *    Gaussian (Caglioti):   σ²[cdeg²]/(8·ln2)
+ *                          = GU·tan²θ + GV·tanθ + GW + GP/cos²θ
+ *      → H_G[deg] = √(8·ln2 · σ²) / 100
+ *
+ *    Lorentzian:            γ_L[cdeg]
+ *                          = LX/cosθ + LY·tanθ                (TCH)
+ *                          = LX/cosθ                          (Simple/Split)
+ *      → γ_L[deg] = γ_L[cdeg] / 100
+ *
+ *  In this UI:
+ *    • Simple pVoigt  GU,GV,GW,GP,LX           = GSAS GU,GV,GW,GP,LX
+ *    • TCH            U,V,W                    = GSAS GU,GV,GW
+ *                     X = GSAS LY (strain),  Y = GSAS LX (size)
+ *    • Split pVoigt   GU_*,GV_*,GW_*,LX_*      = GSAS units
+ *
+ *  Stephens (1999) anisotropic strain (TOPAS / GSAS-II form):
+ *    M_HKL = ΣS_HKL · h^H k^K l^L
+ *    pp    = d² · √max(M_HKL, 0) / 1000
+ *    γ_L_aniso[deg] = (1.8/π) · pp · η_aniso     · tanθ
+ *    γ_G_aniso[deg] = (1.8/π) · pp · (1−η_aniso) · tanθ
+ *
+ *  All width helpers below return widths in DEGREES 2θ.
+ *  These constants & helpers MUST stay in lock-step with the
+ *  main-thread copy in powder5.html (calculateProfileWidths).
+ */
+const GSAS_GAUSSIAN_TO_DEG   = Math.sqrt(8 * Math.LN2) / 100.0;
+const GSAS_LORENTZIAN_TO_DEG = 1.0 / 100.0;
+const STEPHENS_PREFACTOR     = 1.8 / Math.PI;
+const STEPHENS_DEFAULT_ETA   = 1.0;
+
 /**
- * Calculates widths for simple_pvoigt
+ * Calculates widths for simple_pvoigt (GSAS units → degrees 2θ).
  */
 function _calculateWidths_Simple(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
     let gamma_G = 1e-4;
@@ -517,18 +552,23 @@ function _calculateWidths_Simple(tth, hkl, params, safeThetaRad, tanTheta, cosTh
     const GW = params.GW || 0;
     const GP = params.GP || 0;
     const LX = params.LX || 0;
-    
-    const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
-    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-    
-    const calculated_L = LX / cosTheta_safe;
-    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+
+    //   Caglioti in cdeg²/(8 ln2). Convert √σ² to FWHM in degrees.
+    const sigma_sq_cdeg2 = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
+    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
+        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
+    }
+    //   Lorentzian (size only) in centidegrees → degrees.
+    const gL_cdeg = LX / cosTheta_safe;
+    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
+        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
+    }
 
     return { gamma_G, gamma_L };
 }
 
 /**
- * Calculates widths for split_pvoigt
+ * Calculates widths for split_pvoigt (GSAS units → degrees 2θ).
  */
 function _calculateWidths_Split(tth, hkl, params, side, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
     let gamma_G = 1e-4;
@@ -547,17 +587,24 @@ function _calculateWidths_Split(tth, hkl, params, side, safeThetaRad, tanTheta, 
         LX = params.LX_R || 0;
     }
 
-    const gamma_G_sq = GU * tanTheta * tanTheta + GV * tanTheta + GW; // No GP for split
-    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-
-    const calculated_L = LX / cosTheta_safe;
-    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+    const sigma_sq_cdeg2 = GU * tanTheta * tanTheta + GV * tanTheta + GW;  //  no GP for split
+    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
+        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
+    }
+    const gL_cdeg = LX / cosTheta_safe;
+    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
+        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
+    }
 
     return { gamma_G, gamma_L };
 }
 
 /**
- * Calculates widths for tch_aniso
+ * Calculates widths for tch_aniso (GSAS units → degrees 2θ).
+ *   U,V,W   are GSAS GU,GV,GW.
+ *   X       is GSAS LY  (strain · tanθ).
+ *   Y       is GSAS LX  (size   / cosθ).
+ *   Stephens contribution is added in canonical TOPAS / GSAS-II form.
  */
 function _calculateWidths_TCH(tth, hkl, params, safeThetaRad, tanTheta, cosTheta_safe, cosThetaSq_safe) {
     let gamma_G = 1e-4;
@@ -566,33 +613,49 @@ function _calculateWidths_TCH(tth, hkl, params, safeThetaRad, tanTheta, cosTheta
     const U = params.U || 0;
     const V = params.V || 0;
     const W = params.W || 0;
-    const X = params.X || 0;
-    const Y = params.Y || 0;
-    
-    const gamma_G_sq = U * tanTheta * tanTheta + V * tanTheta + W;
-    if (gamma_G_sq > 0 && isFinite(gamma_G_sq)) gamma_G = Math.sqrt(gamma_G_sq);
-    
-    const calculated_L = X * tanTheta + Y / cosTheta_safe;
-    if (calculated_L > 0 && isFinite(calculated_L)) gamma_L = calculated_L;
+    const X = params.X || 0;     //  GSAS LY  (strain · tanθ)
+    const Y = params.Y || 0;     //  GSAS LX  (size   / cosθ)
 
-    // Anisotropic broadening
+    const sigma_sq_cdeg2 = U * tanTheta * tanTheta + V * tanTheta + W;
+    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
+        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
+    }
+    const gL_cdeg = X * tanTheta + Y / cosTheta_safe;
+    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
+        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
+    }
+
+    //   Stephens anisotropic strain (orthorhombic-and-up form).
+    //   Higher-symmetry systems collapse via the symmetry constraints
+    //   applied on the main thread before parameters arrive here.
     if (hkl && hkl.d && hkl.h_orig !== undefined) {
-         const d_sq = hkl.d * hkl.d;
-         if (d_sq > 1e-9) {
-            const d_inv_sq = 1 / d_sq;
+        const d_sq = hkl.d * hkl.d;
+        if (d_sq > 1e-9) {
             const h_val = hkl.h_orig, k_val = hkl.k_orig, l_val = hkl.l_orig;
             const h2 = h_val*h_val, k2 = k_val*k_val, l2 = l_val*l_val;
-            const h4 = h2*h2, k4 = k2*k2, l4 = l2*l2;
+            const h4 = h2*h2,        k4 = k2*k2,        l4 = l2*l2;
 
             const S400 = params.S400 || 0, S040 = params.S040 || 0, S004 = params.S004 || 0;
             const S220 = params.S220 || 0, S202 = params.S202 || 0, S022 = params.S022 || 0;
 
-            let H_aniso = S400*h4 + S040*k4 + S004*l4 + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
-            H_aniso *= d_inv_sq * d_inv_sq;
-            if(isFinite(H_aniso) && H_aniso > 0) gamma_L += H_aniso / 1000.0;
+            const M_HKL = S400*h4 + S040*k4 + S004*l4
+                        + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
+            if (M_HKL > 0 && isFinite(M_HKL)) {
+                const pp = d_sq * Math.sqrt(M_HKL) / 1000.0;
+                const aniso_total = STEPHENS_PREFACTOR * pp * tanTheta;
+                const eta_a = (typeof params.eta_aniso === 'number')
+                              ? Math.max(0, Math.min(1, params.eta_aniso))
+                              : STEPHENS_DEFAULT_ETA;
+                const aniso_L = aniso_total * eta_a;
+                const aniso_G = aniso_total * (1 - eta_a);
+                if (isFinite(aniso_L) && aniso_L > 0) gamma_L += aniso_L;
+                if (isFinite(aniso_G) && aniso_G > 0) {
+                    gamma_G = Math.sqrt(gamma_G*gamma_G + aniso_G*aniso_G);
+                }
+            }
         }
     }
-            
+
     return { gamma_G, gamma_L };
 }
 

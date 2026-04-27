@@ -1,0 +1,25 @@
+{
+  "format": "powder5-profile",
+  "version": 1,
+  "profileType": "simple_pvoigt",
+  "label": "Simple pVoigt",
+  "savedAt": "2026-04-27T20:11:38.656Z",
+  "parameters": {
+    "param-gu": "86.4353",
+    "fit-gu": true,
+    "param-gv": "-78.9122",
+    "fit-gv": true,
+    "param-gw": "8.1612",
+    "fit-gw": true,
+    "param-gp": "26.2038",
+    "fit-gp": true,
+    "param-lx": "10.6814",
+    "fit-lx": true,
+    "param-eta": "0.5221",
+    "fit-eta": true,
+    "param-shft": "0.0000",
+    "fit-shft": false,
+    "param-trns": "0.0000",
+    "fit-trns": false
+  }
+}
