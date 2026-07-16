@@ -186,7 +186,7 @@
             case 'h0l': return k === 0;
             case '0kl': return h === 0;
             case 'hk0': return l === 0;
-            case 'hhl': return h === k;
+            case 'hhl': return Math.abs(h) === Math.abs(k);
             default:    return false;
         }
     }
