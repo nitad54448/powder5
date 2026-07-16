@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Powder 5</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,9 +14,6 @@
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-
-    <script src="sg_database.js"></script>
-    <script src="sg_engine.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js"></script>
     <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
@@ -1641,8 +1638,8 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     <!-- Brand mark / model number — top-left, hardware-style label -->
     <div id="brand-mark" aria-hidden="true">
         <span class="led"></span>
-        <span class="mark">Powder</span>
-        <span class="model">MODEL 5 · v125</span>
+        <span class="mark">Powder 5</span>
+
     </div>
 
     <!-- Light / dark mode toggle -->
@@ -1698,9 +1695,29 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 </div>
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 125, 2 May 2026";
-    document.addEventListener('DOMContentLoaded', () => {      
-        document.getElementById('app-version-footer').textContent = APP_VERSION_TEXT;
+    const APP_VERSION_TEXT = "Powder 5, version 126, 15 July 2026";
+  
+document.addEventListener('DOMContentLoaded', async () => {      
+    try {
+        const resp = await fetch('cctbx_space_groups_all_settings_v2.json');
+        globalThis.SG_DATABASE = await resp.json();
+        
+        // Load sg_engine.js AFTER database is in memory:
+        await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'sg_engine.js';
+            script.onload = resolve;
+            script.onerror = reject;
+            document.head.appendChild(script);
+        });
+
+    } catch (e) {
+        alert("Failed to load space groups database or engine.");
+        return;
+    }
+    document.getElementById('app-version-footer').textContent = APP_VERSION_TEXT;
+
+       
         const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 6
         const PEAK_HEIGHT_CUTOFF = 0.002; // 0.01 Corresponds to 1%
  
@@ -3552,113 +3569,134 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     return rawReflections;
 }
 
+function updateHklPositions(hklList, params, system) {
+    const { a, b, c, alpha, beta, gamma, lambda } = params;
+    if (!hklList || hklList.length === 0) return;
+    if (!params || !lambda || lambda <= 0 || !a || a <= 0) {
+         hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
+         return;
+    }
 
-        //   HKL Position Calculation (Needed for Preview in Main Thread)  
-        function updateHklPositions(hklList, params, system) {
-            const { a, b, c, alpha, beta, lambda } = params;
-            // Add validation checks at the beginning
-            if (!hklList || hklList.length === 0) return; // No HKLs to update
-            if (!params || !lambda || lambda <= 0 || !a || a <= 0) {
-                 // console.warn("updateHklPositions: Invalid parameters (lambda or a).");
-                 // Set all tth/d to null if params are bad
-                 hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
-                 return;
-             }
+    const deg2rad = Math.PI / 180;
+    const lambda_sq_over_4 = (lambda * lambda) / 4.0;
+    const a_sq = a * a;
 
+    let b_sq, c_sq, sin_beta_sq, cos_beta;
+    let a_star_sq, b_star_sq, c_star_sq, ab_star, bc_star, ac_star;
 
-            const deg2rad = Math.PI / 180;
-            const lambda_sq_over_4 = (lambda * lambda) / 4.0;
-            const a_sq = a * a;
+    if (system === 'triclinic') {
+        const al = (alpha || 90) * deg2rad;
+        const be = (beta || 90) * deg2rad;
+        const ga = (gamma || 90) * deg2rad;
+        const b_val = b || a;
+        const c_val = c || a;
+        
+        const cosA = Math.cos(al), cosB = Math.cos(be), cosG = Math.cos(ga);
+        const sinA = Math.sin(al), sinB = Math.sin(be), sinG = Math.sin(ga);
+        
+        const volume_factor = 1 - cosA*cosA - cosB*cosB - cosG*cosG + 2*cosA*cosB*cosG;
+        if (volume_factor <= 1e-9 || Math.abs(sinA) < 1e-9 || Math.abs(sinB) < 1e-9 || Math.abs(sinG) < 1e-9) {
+             hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
+             return;
+        }
+        const V = a * b_val * c_val * Math.sqrt(volume_factor);
+        
+        const a_star = b_val * c_val * sinA / V;
+        const b_star = a * c_val * sinB / V;
+        const c_star = a * b_val * sinG / V;
 
-            let b_sq, c_sq, sin_beta_sq, cos_beta;
-            if (system === 'monoclinic') {
-                const beta_rad = (beta || 90) * deg2rad; // Default to 90 if undefined
-                sin_beta_sq = Math.sin(beta_rad);
-                sin_beta_sq *= sin_beta_sq;
-                cos_beta = Math.cos(beta_rad);
-                // Use 'a' as default if b or c are missing/invalid
-                b_sq = (b && b > 0) ? (b * b) : a_sq;
-                c_sq = (c && c > 0) ? (c * c) : a_sq;
-                 // Add check for sin_beta_sq being too small (beta near 0 or 180)
-                 if (Math.abs(sin_beta_sq) < 1e-9) {
-                     // console.warn("updateHklPositions: Monoclinic beta angle is too close to 0 or 180.");
-                     hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
-                     return;
-                 }
-            } else if (system === 'tetragonal' || system === 'hexagonal' || system === 'rhombohedral' || system === 'trigonal') {
-                 c_sq = (c && c > 0) ? (c * c) : a_sq; // Use 'a' if c is invalid
-            } else if (system === 'orthorhombic') {
-                 b_sq = (b && b > 0) ? (b * b) : a_sq;
-                 c_sq = (c && c > 0) ? (c * c) : a_sq;
+        const cosA_star = (cosB * cosG - cosA) / (sinB * sinG);
+        const cosB_star = (cosA * cosG - cosB) / (sinA * sinG);
+        const cosG_star = (cosA * cosB - cosG) / (sinA * sinB);
+
+        a_star_sq = a_star * a_star;
+        b_star_sq = b_star * b_star;
+        c_star_sq = c_star * c_star;
+        ab_star = 2 * a_star * b_star * cosG_star;
+        bc_star = 2 * b_star * c_star * cosA_star;
+        ac_star = 2 * a_star * c_star * cosB_star;
+        
+    } else if (system === 'monoclinic') {
+        const beta_rad = (beta || 90) * deg2rad;
+        sin_beta_sq = Math.sin(beta_rad);
+        sin_beta_sq *= sin_beta_sq;
+        cos_beta = Math.cos(beta_rad);
+        b_sq = (b && b > 0) ? (b * b) : a_sq;
+        c_sq = (c && c > 0) ? (c * c) : a_sq;
+         if (Math.abs(sin_beta_sq) < 1e-9) {
+             hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
+             return;
+         }
+    } else if (system === 'tetragonal' || system === 'hexagonal' || system === 'rhombohedral' || system === 'trigonal') {
+         c_sq = (c && c > 0) ? (c * c) : a_sq;
+    } else if (system === 'orthorhombic') {
+         b_sq = (b && b > 0) ? (b * b) : a_sq;
+         c_sq = (c && c > 0) ? (c * c) : a_sq;
+    }
+
+    hklList.forEach(peak => {
+        if (!peak || peak.h_orig === undefined || peak.k_orig === undefined || peak.l_orig === undefined) {
+             if(peak) { peak.tth = null; peak.d = null; }
+             return;
+        }
+        const h = peak.h_orig;
+        const k = peak.k_orig;
+        const l = peak.l_orig;
+        const h2 = h * h;
+        const k2 = k * k;
+        const l2 = l * l;
+
+        let inv_d_sq = 0;
+        try {
+            switch(system) {
+                case 'cubic':
+                    inv_d_sq = (h2 + k2 + l2) / a_sq;
+                    break;
+                case 'tetragonal':
+                    inv_d_sq = (h2 + k2) / a_sq + l2 / c_sq;
+                    break;
+                case 'orthorhombic':
+                    inv_d_sq = h2/a_sq + k2/b_sq + l2/c_sq;
+                    break;
+                case 'hexagonal':
+                case 'rhombohedral':
+                case 'trigonal':
+                     if (a_sq <= 0 || c_sq <= 0) throw new Error("Invalid lattice param");
+                    inv_d_sq = 4 * (h2 + h*k + k2) / (3 * a_sq) + l2 / c_sq;
+                    break;
+                case 'monoclinic':
+                     if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0 || a <= 0 || c <= 0) throw new Error("Invalid lattice param");
+                    inv_d_sq = (1/sin_beta_sq) * (h2/a_sq + k2*sin_beta_sq/b_sq + l2/c_sq - (2*h*l*cos_beta)/(a*c));
+                    break;
+                case 'triclinic':
+                    if (a_star_sq === undefined) throw new Error("Invalid lattice param");
+                    inv_d_sq = h2 * a_star_sq + k2 * b_star_sq + l2 * c_star_sq + h * k * ab_star + k * l * bc_star + h * l * ac_star;
+                    break;
+                default:
+                    throw new Error(`Unknown system: ${system}`);
             }
 
-
-            hklList.forEach(peak => {
-                if (!peak || peak.h_orig === undefined || peak.k_orig === undefined || peak.l_orig === undefined) {
-                     if(peak) { peak.tth = null; peak.d = null; } // Invalidate if indices missing
-                     return;
+            if (!isFinite(inv_d_sq) || inv_d_sq <= 1e-12) {
+                peak.tth = null;
+                peak.d = null;
+            } else {
+                const sinThetaSq = lambda_sq_over_4 * inv_d_sq;
+                if (sinThetaSq <= 1 && sinThetaSq > 0) {
+                     const thetaRad = Math.asin(Math.sqrt(sinThetaSq));
+                     peak.tth = 2 * thetaRad / deg2rad;
+                    peak.d = 1 / Math.sqrt(inv_d_sq);
+                } else {
+                    peak.tth = null;
+                    peak.d = null;
                 }
-                const h = peak.h_orig;
-                const k = peak.k_orig;
-                const l = peak.l_orig;
-                const h2 = h * h;
-                const k2 = k * k;
-                const l2 = l * l;
-
-                let inv_d_sq = 0;
-                try { // Add try-catch for safety
-                    switch(system) {
-                        case 'cubic':
-                            inv_d_sq = (h2 + k2 + l2) / a_sq;
-                            break;
-                        case 'tetragonal':
-                            inv_d_sq = (h2 + k2) / a_sq + l2 / c_sq;
-                            break;
-                        case 'orthorhombic':
-                            inv_d_sq = h2/a_sq + k2/b_sq + l2/c_sq;
-                            break;
-                        case 'hexagonal':
-                        case 'rhombohedral': // Using hexagonal axes
-                        case 'trigonal':     // Using hexagonal axes
-                             // Check for division by zero
-                             if (a_sq <= 0 || c_sq <= 0) throw new Error("Invalid lattice param");
-                            inv_d_sq = 4 * (h2 + h*k + k2) / (3 * a_sq) + l2 / c_sq;
-                            break;
-                        case 'monoclinic':
-                             // Check for division by zero (already checked sin_beta_sq)
-                             if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0 || a <= 0 || c <= 0) throw new Error("Invalid lattice param");
-                            inv_d_sq = (1/sin_beta_sq) * (h2/a_sq + k2*sin_beta_sq/b_sq + l2/c_sq - (2*h*l*cos_beta)/(a*c));
-                            break;
-                         // Add triclinic if needed, complex formula
-                         // case 'triclinic': ...
-                        default:
-                            throw new Error(`Unknown system: ${system}`);
-                    }
-
-                    // Validate inv_d_sq
-                    if (!isFinite(inv_d_sq) || inv_d_sq <= 1e-12) { // Allow slightly negative due to float errors? No, should be positive.
-                        peak.tth = null;
-                        peak.d = null;
-                    } else {
-                        const sinThetaSq = lambda_sq_over_4 * inv_d_sq;
-                        if (sinThetaSq <= 1 && sinThetaSq > 0) {
-                             const thetaRad = Math.asin(Math.sqrt(sinThetaSq));
-                             peak.tth = 2 * thetaRad / deg2rad; // Convert back to degrees
-                            peak.d = 1 / Math.sqrt(inv_d_sq);
-                        } else {
-                            peak.tth = null; // Cannot calculate angle (sin^2 > 1 or <= 0)
-                            peak.d = null;
-                        }
-                    }
-                } catch (error) {
-                     // console.error(`Error calculating d-spacing for HKL (${h},${k},${l}) in ${system}: ${error.message}`);
-                     peak.tth = null;
-                     peak.d = null;
-                }
-
-            }); // end forEach peak
+            }
+        } catch (error) {
+             peak.tth = null;
+             peak.d = null;
         }
-    
+    });
+}
+
 
         /**
      * Calculates the total background contribution using monotonic cubic spline interpolation.
@@ -3899,8 +3937,14 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                             const S400 = params.S400 || 0, S040 = params.S040 || 0, S004 = params.S004 || 0;
                             const S220 = params.S220 || 0, S202 = params.S202 || 0, S022 = params.S022 || 0;
 
-                            const M_HKL = S400*h4 + S040*k4 + S004*l4
-                                        + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
+                            let M_HKL = 0;
+            if (params.system === 'hexagonal' || params.system === 'trigonal' || params.system === 'rhombohedral') {
+                const hk_term = h2 + h_val * k_val + k2;
+                M_HKL = S400 * hk_term * hk_term + S004 * l4 + S202 * hk_term * l2;
+            } else {
+                M_HKL = S400*h4 + S040*k4 + S004*l4 + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
+            }
+
                             if (M_HKL > 0 && isFinite(M_HKL)) {
                                 //   pp = d² · √M / 1000   (TOPAS macro / GSAS-II form)
                                 const pp = d_sq * Math.sqrt(M_HKL) / 1000.0;
@@ -4066,81 +4110,77 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
         }
 
 
-        /**
-         * Calculates the pseudo-Voigt peak shape value. Runs in main thread for previews.
-         */
-        function pseudoVoigt(x, x0, tth_peak, hkl, params) {
-             if (!params) return 0.0;
-
-            const corrected_delta = applyAsymmetry(x, x0, tth_peak, params);
-            const Cg = 2.772588722239781; // 4 * ln(2)
-            let result = 0.0;
-
-            try {
-                switch (params.profileType) {
-                    case "simple_pvoigt": {
-                        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-                        const H_G = Math.max(1e-9, gamma_G);
-                        const H_L = Math.max(1e-9, gamma_L);
-                        if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
-
-                        const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-                        const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
-                        const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
-                        const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
-                        const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
-                        result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
-                        break;
-                    }
-                    
-                    case "split_pvoigt": {
-                        let H_G, H_L;
-                        if (corrected_delta < 0) { // Left side
-                            const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
-                            H_G = Math.max(1e-9, gamma_G);
-                            H_L = Math.max(1e-9, gamma_L);
-                        } else { // Right side
-                            const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'right');
-                            H_G = Math.max(1e-9, gamma_G);
-                            H_L = Math.max(1e-9, gamma_L);
-                        }
-                        if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
-
-                        const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
-                        const delta_over_Hg_sq = Math.pow(corrected_delta / H_G, 2);
-                        const delta_over_Hl_sq = Math.pow(corrected_delta / H_L, 2);
-                        const gaussianShape = Math.exp(-Cg * delta_over_Hg_sq);
-                        const lorentzianShape = 1 / (1 + 4 * delta_over_Hl_sq);
-                        result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
-                        break;
-                    }
-
-                    case "tch_aniso": {
-                        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-                        const H_G = Math.max(1e-9, gamma_G);
-                        const H_L = Math.max(1e-9, gamma_L);
-                        if (Math.abs(corrected_delta) > 10 * (H_G + H_L)) return 0.0;
-
-                        const fwhm = getPeakFWHM(H_G, H_L);
-                        if (fwhm <= 1e-9) return Math.abs(corrected_delta) < 1e-6 ? 1.0 : 0.0;
-
-                        const ratio = H_L / fwhm;
-                        const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-                        const currentEta = Math.max(0, Math.min(1, eta_calc));
-                        const delta_over_fwhm_sq = Math.pow(corrected_delta / fwhm, 2);
-                        const gaussianShape = Math.exp(-Cg * delta_over_fwhm_sq);
-                        const lorentzianShape = 1 / (1 + 4 * delta_over_fwhm_sq);
-                        result = currentEta * lorentzianShape + (1 - currentEta) * gaussianShape;
-                        break;
-                    }
-                }
-            } catch (calcError) {
-                 console.warn("Error in pseudoVoigt calculation:", calcError);
-                 return 0.0;
-            }
-             return (isFinite(result) && result >= 0) ? result : 0.0;
+function prepareVoigt(tth_peak, x0, hkl, params) {
+    if (!params) return null;
+    const profileType = params.profileType;
+    const Cg = 2.772588722239781; // 4 * ln(2)
+    
+    // Precompute asymmetry coefficient once per peak (for TCH)
+    let asym_param = 0;
+    if (profileType === "tch_aniso" && (params.SL || params.HL) && tth_peak >= 0.1 && tth_peak < 180) {
+        const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
+        const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
+        const tan_theta = Math.tan(safe_theta_rad);
+        if (Math.abs(tan_theta) >= 1e-9) {
+            asym_param = (params.SL || 0) / tan_theta + (params.HL || 0);
         }
+    }
 
+    if (profileType === "simple_pvoigt") {
+        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+        const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
+        const eta = Math.max(0, Math.min(1, params.eta || 0.5));
+        return { type: 1, x0, asym_param, H_G, H_L, eta, max_d: 10 * (H_G + H_L), Cg };
+    } else if (profileType === "split_pvoigt") {
+        const wL = calculateProfileWidths(tth_peak, hkl, params, 'left');
+        const wR = calculateProfileWidths(tth_peak, hkl, params, 'right');
+        const H_G_L = Math.max(1e-9, wL.gamma_G), H_L_L = Math.max(1e-9, wL.gamma_L);
+        const H_G_R = Math.max(1e-9, wR.gamma_G), H_L_R = Math.max(1e-9, wR.gamma_L);
+        const eta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+        return { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta, max_d: 10 * Math.max(H_G_L + H_L_L, H_G_R + H_L_R), Cg };
+    } else { // tch_aniso
+        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
+        const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
+        const fwhm = getPeakFWHM(H_G, H_L);
+        let eta = 0;
+        if (fwhm > 1e-9) {
+            const ratio = H_L / fwhm;
+            eta = Math.max(0, Math.min(1, 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3)));
+        }
+        return { type: 3, x0, asym_param, fwhm: Math.max(1e-9, fwhm), eta, max_d: 10 * (H_G + H_L), Cg };
+    }
+}
+
+function evalVoigt(x, p) {
+    if (!p) return 0.0;
+    let delta = x - p.x0;
+    if (p.asym_param !== 0 && Math.abs(delta) >= 1e-9) {
+        const factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(p.asym_param * Math.abs(delta)), 0.95));
+        delta /= factor;
+    }
+    if (Math.abs(delta) > p.max_d) return 0.0;
+
+    let hg, hl;
+    if (p.type === 1) {
+        hg = p.H_G; hl = p.H_L;
+    } else if (p.type === 2) {
+        hg = delta < 0 ? p.H_G_L : p.H_G_R;
+        hl = delta < 0 ? p.H_L_L : p.H_L_R;
+    } else {
+        hg = hl = p.fwhm;
+    }
+
+    const dg = (delta / hg) * (delta / hg);
+    const dl = (delta / hl) * (delta / hl);
+    const g = Math.exp(-p.Cg * dg);
+    const l = 1.0 / (1.0 + 4.0 * dl);
+    return p.eta * l + (1.0 - p.eta) * g;
+}
+
+// Keep pseudoVoigt as a backward-compatible wrapper for any legacy call sites
+function pseudoVoigt(x, x0, tth_peak, hkl, params) {
+    return evalVoigt(x, prepareVoigt(tth_peak, x0, hkl, params));
+}
 
         /**
          * Calculates the overall diffraction pattern. Runs in main thread for previews.
@@ -4252,7 +4292,7 @@ function generateMasterHklList() {
     const selectedSg = currentSG;
     if (!selectedSg) {
         masterHklList = [];
-        console.error("Cannot generate HKL list: no space group resolved.");
+                console.error("Cannot generate HKL list: no space group resolved.");
         updatePreviewPattern();
         return;
     }
@@ -4280,7 +4320,7 @@ function generateMasterHklList() {
 
     // Add a default intensity property for preview purposes
     masterHklList.forEach(peak => {
-        peak.intensity = peak.intensity || 0;
+        peak.intensity = peak.intensity || 1000;
     });
 
     updatePreviewPattern();
@@ -4417,7 +4457,6 @@ function calculateWilliamsonHall(params, hklList) {
             const currentYMax = mainChart.scales.y.max;
 
             updateWorkingData();
-
             if (!fitResults) {
                 updatePreviewPattern();
             } else {
@@ -4426,10 +4465,21 @@ function calculateWilliamsonHall(params, hklList) {
                 
                 const background_sliced = calculateTotalBackground(workingData.tth, params, backgroundAnchors);
                 const unscaledPeakPattern_sliced = calculatePattern(workingData.tth, fitResults.hklList, params);
-                const totalCalcPattern = math.add(math.multiply(Array.from(unscaledPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
-                const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
+               
+               
+                const len = workingData.intensity.length;
+                const totalCalcPattern = new Float64Array(len);
+                const diff = new Float64Array(len);
+                for (let i = 0; i < len; i++) {
+                    totalCalcPattern[i] = unscaledPeakPattern_sliced[i] * scaleFactor + background_sliced[i];
+                    diff[i] = workingData.intensity[i] - totalCalcPattern[i];
+                }
                 workingData.lastRawDifference = diff;
                 
+
+
+
+
                 const findDataset = (label) => mainChart.data.datasets.find(d => d.label === label);
                 
                 const calculatedData = [];
@@ -4565,6 +4615,7 @@ function calculateWilliamsonHall(params, hklList) {
             });
 
             const { system } = getSystemAndCentering();
+            params.system = system;
             switch(system) {
                 case 'cubic': case 'tetragonal': case 'orthorhombic': 
                     params.alpha = params.beta = params.gamma = 90; 
@@ -4703,7 +4754,6 @@ function debounce(func, wait) {
 
         function enforceSymmetryConstraints(params) { const { system } = getSystemAndCentering(); switch (system) { case 'cubic': if (params.S400 !== undefined) params.S040 = params.S004 = params.S400; if (params.S220 !== undefined) params.S202 = params.S022 = params.S220; break; case 'hexagonal': case 'tetragonal': case 'rhombohedral': if (params.S400 !== undefined) params.S040 = params.S400; if (params.S202 !== undefined) params.S022 = params.S202; break; } }
 
-
         function updatePreviewPattern() {
             if (!mainChart || !workingData.isValid || isFitting) return;
 
@@ -4770,31 +4820,56 @@ function debounce(func, wait) {
             const minTth = parseFloat(controls.tthMinSlider.value); 
             const maxTth = parseFloat(controls.tthMaxSlider.value);
 
-            findDataset('HKL Markers').data = hklList
-                .filter(hkl => {
-                    if (!hkl.tth) return false;
-                    const peakPos = hkl.tth + params.zeroShift;
-                    return peakPos >= minTth && peakPos <= maxTth;
-                })
-                .map(hkl => ({
-                    x: hkl.tth + params.zeroShift,
-                    hkl: `${hkl.hkl_list[0]} [m=${hkl.multiplicity}]`
-                }));
+            const ka1Markers = [];
+            const ka2Markers = [];
+            const deg2rad = Math.PI / 180;
+            const doubletEnabled = params.ratio > 1e-6 && params.lambda2 > 1e-6 && Math.abs(params.lambda - params.lambda2) > 1e-6;
+            const lambdaRatio = doubletEnabled ? (params.lambda2 / params.lambda) : 1.0;
+
+            hklList.forEach(hkl => {
+                if (!hkl.tth) return;
+                const pos1 = hkl.tth + params.zeroShift;
+                if (pos1 >= minTth && pos1 <= maxTth) {
+                    ka1Markers.push({ x: pos1, hkl: `${hkl.hkl_list[0]} [m=${hkl.multiplicity}]` });
+                }
+                
+                // Calculate Ka2 marker position if doublet is active
+                if (doubletEnabled) {
+                    const sinTheta1 = Math.sin(hkl.tth * deg2rad / 2.0);
+                    const sinTheta2 = sinTheta1 * lambdaRatio;
+                    if (Math.abs(sinTheta2) < 1) {
+                        const pos2 = (2 * Math.asin(sinTheta2) / deg2rad) + params.zeroShift;
+                        if (pos2 >= minTth && pos2 <= maxTth) {
+                            ka2Markers.push({ x: pos2, hkl: `${hkl.hkl_list[0]} Ka2` });
+                        }
+                    }
+                }
+            });
+
+            findDataset('Ka1').data = ka1Markers;
+            const ka2Dataset = findDataset('Ka2');
+            if (ka2Dataset) ka2Dataset.data = ka2Markers;
 
             // *** PASS SPLINE POINTS (backgroundAnchors) TO BACKGROUND CALCULATION ***
             const background_sliced = calculateTotalBackground(workingData.tth, params, backgroundAnchors);
             const unscaledPeakPattern_sliced = calculatePattern(workingData.tth, hklList, params);
-            const y_obs_net_sliced = new Float64Array(workingData.intensity.length);
-            for(let i = 0; i < y_obs_net_sliced.length; i++) {
-                y_obs_net_sliced[i] = Math.max(0, workingData.intensity[i] - background_sliced[i]);
+           
+                const len = workingData.intensity.length;
+            let sum_obs_calc = 0, sum_calc_sq = 0;
+            for (let i = 0; i < len; i++) {
+                const y_net = Math.max(0, workingData.intensity[i] - background_sliced[i]);
+                const y_calc = unscaledPeakPattern_sliced[i];
+                sum_obs_calc += y_net * y_calc;
+                sum_calc_sq += y_calc * y_calc;
             }
-            
-            const sum_obs_calc = math.dot(Array.from(y_obs_net_sliced), Array.from(unscaledPeakPattern_sliced));
-            const sum_calc_sq = math.dot(Array.from(unscaledPeakPattern_sliced), Array.from(unscaledPeakPattern_sliced));
             const scaleFactor = (sum_calc_sq > 1e-9) ? sum_obs_calc / sum_calc_sq : 1.0;
-            const totalCalcPattern = math.add(math.multiply(Array.from(unscaledPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
-            const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
+            const totalCalcPattern = new Float64Array(len);
+            const diff = new Float64Array(len);
+            for (let i = 0; i < len; i++) {
+                totalCalcPattern[i] = unscaledPeakPattern_sliced[i] * scaleFactor + background_sliced[i];
+                diff[i] = workingData.intensity[i] - totalCalcPattern[i];
+            }
             workingData.lastRawDifference = diff;
 
             const simulationData = [];
@@ -4817,7 +4892,6 @@ function debounce(func, wait) {
             //   be called frequently while sliders are dragged.
             mainChart.update('none');
         }
-
 
 
         function updatePawleyButtonState() {
@@ -4969,12 +5043,19 @@ function debounce(func, wait) {
             // 1. Hide the manual simulation line, as we now have a real fit
             findDataset('Simulation (Manual)').data = [];
 
-            // 2. Calculate the total pattern and the raw difference array
-            const totalCalcPattern = math.add(math.multiply(Array.from(netPeakPattern_sliced), scaleFactor), Array.from(background_sliced));
-            const diff = math.subtract(Array.from(workingData.intensity), totalCalcPattern);
 
-            // This global variable is now ready for rescalePlot to use
-            workingData.lastRawDifference = diff; 
+
+
+            // 2. Calculate the total pattern and the raw difference array
+            const len = workingData.intensity.length;
+            const totalCalcPattern = new Float64Array(len);
+            const diff = new Float64Array(len);
+            for (let i = 0; i < len; i++) {
+                totalCalcPattern[i] = netPeakPattern_sliced[i] * scaleFactor + background_sliced[i];
+                diff[i] = workingData.intensity[i] - totalCalcPattern[i];
+            }
+            workingData.lastRawDifference = diff;
+
 
             // 3. Prepare the data for the 'Calculated' and 'Background' datasets
             const calculatedData = [];
@@ -5031,7 +5112,8 @@ function debounce(func, wait) {
                         { label: 'Background', data: [], borderColor: 'rgba(2, 9, 206, 0.8)', borderWidth: 1.5, pointRadius: 0, borderDash: [5, 5], order: 4 },
                         { label: 'Difference', data: [], borderColor: 'rgba(239, 68, 68, 0.8)', borderWidth: 1.5, pointRadius: 0, order: 5 },
                         { label: 'Difference Zero', data: [], borderColor: 'rgba(156, 163, 175, 0.8)', borderWidth: 1, pointRadius: 0, borderDash: [2, 2], order: 6 },
-                        { type: 'bar', label: 'HKL Markers', data: [], backgroundColor: 'rgba(22, 163, 74, 0.9)', barThickness: 1, categoryPercentage: 1.0, barPercentage: 1.0, order: 0 },
+                        { type: 'bar', label: 'Ka1', data: [], backgroundColor: 'rgba(22, 163, 74, 0.9)', barThickness: 1, categoryPercentage: 1.0, barPercentage: 1.0, order: 0 },
+                        { type: 'bar', label: 'Ka2', data: [], backgroundColor: 'rgba(134, 239, 172, 0.6)', barThickness: 1, categoryPercentage: 1.0, barPercentage: 1.0, order: 0 },
                         {
                             label: 'Spline Points', 
                             type: 'scatter',
@@ -5156,18 +5238,21 @@ function debounce(func, wait) {
             mainChart.options.scales.y.min = -constantNegSpaceHeight;
         }
         
-        // Draw HKL Markers
-        const hklDataset = findDataset('HKL Markers');
-        if (hklDataset && hklDataset.data.length > 0) {
-            const HKL_MARKER_PIXEL_HEIGHT = 20;
-            const y_scale = mainChart.scales.y;
-            const zeroLineValue = 0; 
-            const bottomPixel = y_scale.getPixelForValue(zeroLineValue);
-            const topPixel = bottomPixel + HKL_MARKER_PIXEL_HEIGHT;
-            const markerBottom = zeroLineValue;
-            const markerTop = y_scale.getValueForPixel(topPixel);
-            hklDataset.data.forEach(point => point.y = [markerTop, markerBottom]);
-        }
+        // Draw HKL Markers (Ka1 and Ka2 separately with different heights)
+        const formatMarkers = (label, pixelHeight) => {
+            const ds = findDataset(label);
+            if (ds && ds.data.length > 0) {
+                const y_scale = mainChart.scales.y;
+                const zeroVal = 0; 
+                const bottomPx = y_scale.getPixelForValue(zeroVal);
+                const topPx = bottomPx + pixelHeight;
+                const topVal = y_scale.getValueForPixel(topPx);
+                ds.data.forEach(pt => pt.y = [topVal, zeroVal]);
+            }
+        };
+
+        formatMarkers('Ka1', 20);      // Ka1: 20px tall
+        formatMarkers('Ka2', 12);  // Ka2: 12px tall (shorter)
 
 
         //   Plot TRUE difference from the stored `lastRawDifference` array  
@@ -5192,6 +5277,7 @@ function debounce(func, wait) {
             findDataset('Difference Zero').data = [];
         }
     }
+
 
         function downloadTextFile(content, filename) {
             const element = document.createElement('a');
@@ -6289,6 +6375,15 @@ controls.reportButton.addEventListener('click', async () => {
 });
         controls.algorithmSelect.addEventListener('change', updatePawleyButtonState);
         updatePawleyButtonState();
+
+if (!currentSG && globalThis.SG_ENGINE) {
+            const defaultSettings = SG_ENGINE.listSettings(225);
+            if (defaultSettings && defaultSettings.length > 0) {
+                currentSG = defaultSettings[0];
+            }
+        }
+        // -----------------------------------------------------
+
         updateUIForSystemChange();
 
         //   Wire the profile preset Load/Save buttons + probe for defaults.

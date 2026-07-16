@@ -1,25 +1,4 @@
-// sg_engine.js
-// Single space-group engine, driven by the cctbx JSON database
-// (sg_database.js). Loaded by both the main thread (via <script>)
-// and the refinement worker (via importScripts).
-//
-// Public API exposed as SG_ENGINE on `window` / `self`:
-//
-//   SG_ENGINE.resolve(input)                -> normalised SG record or null
-//   SG_ENGINE.list()                        -> array of all standard symbols (autocomplete)
-//   SG_ENGINE.isReflectionAllowed(h,k,l,sg) -> boolean
-//   SG_ENGINE.getMultiplicity(h,k,l,laue)   -> {multiplicity, canonical_hkl_obj}
-//
-// A resolved SG record has the shape:
-//   {
-//     number, symbol, setting_description, hall,
-//     system,           // 'cubic' | 'tetragonal' | 'orthorhombic' | ...
-//     laue_class,       // 'm-3m' | 'm-3' | '6/mmm' | ... (standard 11 Laue classes)
-//     point_group,
-//     centering,        // 'P' | 'I' | 'F' | 'C' | 'A' | 'B' | 'R'
-//     centrosymmetric,
-//     reflection_conditions  // copy from the cctbx setting
-//   }
+
 
 (function (root) {
     'use strict';
@@ -287,27 +266,22 @@
         return true;
     }
 
-    // 4. Multiplicity for the 11 Laue classes. Identical logic to what
-    //    was in powder5.html, kept here so both main thread and worker
-    //    share a single definition. Operates on unsigned indices and the
-    //    standard conventions for each Laue group.
-
-    function getMultiplicity(h, k, l, laue_class) {
+    //mod 16 july 2026
+function getMultiplicity(h, k, l, laue_class) {
         if (h === 0 && k === 0 && l === 0) {
             return { multiplicity: 1, canonical_hkl_obj: [0, 0, 0] };
         }
         const abs_h = Math.abs(h);
         const abs_k = Math.abs(k);
         const abs_l = Math.abs(l);
+        
+        // Sorting is strictly only valid for Cubic systems (m-3m, m-3)
         const sorted = [abs_h, abs_k, abs_l].sort((a, b) => b - a);
         const h_p = sorted[0], k_p = sorted[1], l_p = sorted[2];
         let m = 0;
 
         switch (laue_class) {
             case 'm-3m':
-                // Special forms first (they must take precedence over the
-                // general h>k>=l branches, which would otherwise swallow
-                // them because 0 >= 0 is true).
                 if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;            // {h00}
                 else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;    // {hh0}
                 else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;   // {hhh}
@@ -328,7 +302,7 @@
                 else m = 1;
                 break;
             case '6/mmm':
-                if (l_p > 0) {
+                if (abs_l > 0) {
                     if (abs_h === 0 && abs_k === 0) m = 2;
                     else if (abs_h > 0 && abs_k === 0) m = 12;
                     else if (abs_h === abs_k && abs_k > 0) m = 12;
@@ -343,11 +317,11 @@
                 }
                 break;
             case '6/m':
-                if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 12 : 2;
+                if (abs_l > 0) m = (abs_h > 0 || abs_k > 0) ? 12 : 2;
                 else m = (abs_h > 0 || abs_k > 0) ? 6 : 1;
                 break;
             case '-3m':
-                if (l_p !== 0) {
+                if (abs_l !== 0) {
                     if (abs_h === 0 && abs_k === 0) m = 2;
                     else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 12;
                     else m = 24;
@@ -358,12 +332,12 @@
                 }
                 break;
             case '-3':
-                if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1;
+                if (abs_h === 0 && abs_k === 0 && abs_l === 0) m = 1;
                 else if (abs_h === 0 && abs_k === 0) m = 2;
                 else m = 6;
                 break;
             case '4/mmm':
-                if (l_p > 0) {
+                if (abs_l > 0) {
                     if (abs_h === 0 && abs_k === 0) m = 2;
                     else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 8;
                     else m = 16;
@@ -374,25 +348,25 @@
                 }
                 break;
             case '4/m':
-                if (l_p > 0) m = (abs_h > 0 || abs_k > 0) ? 8 : 2;
+                if (abs_l > 0) m = (abs_h > 0 || abs_k > 0) ? 8 : 2;
                 else m = (abs_h > 0 || abs_k > 0) ? 4 : 1;
                 break;
             case 'mmm':
-                if (abs_h > 0 && abs_k > 0 && l_p > 0) m = 8;
-                else if ((abs_h > 0 && abs_k > 0 && l_p === 0) ||
-                         (abs_h > 0 && abs_k === 0 && l_p > 0) ||
-                         (abs_h === 0 && abs_k > 0 && l_p > 0)) m = 4;
-                else if (abs_h > 0 || abs_k > 0 || l_p > 0) m = 2;
+                if (abs_h > 0 && abs_k > 0 && abs_l > 0) m = 8;
+                else if ((abs_h > 0 && abs_k > 0 && abs_l === 0) ||
+                         (abs_h > 0 && abs_k === 0 && abs_l > 0) ||
+                         (abs_h === 0 && abs_k > 0 && abs_l > 0)) m = 4;
+                else if (abs_h > 0 || abs_k > 0 || abs_l > 0) m = 2;
                 else m = 1;
                 break;
             case '2/m':
                 // Unique axis b: the k axis is special.
                 if (abs_k > 0) m = 4;
-                else if (abs_k === 0 && (abs_h !== 0 || l_p !== 0)) m = 2;
+                else if (abs_k === 0 && (abs_h !== 0 || abs_l !== 0)) m = 2;
                 else m = 1;
                 break;
             case '-1':
-                if (abs_h === 0 && abs_k === 0 && l_p === 0) m = 1;
+                if (abs_h === 0 && abs_k === 0 && abs_l === 0) m = 1;
                 else m = 2;
                 break;
             default:
@@ -408,71 +382,27 @@
         return ALL_STANDARD_SYMBOLS.slice();
     }
 
-    // Return every setting of a given space group. Merges pairs that are
-    // physically equivalent for powder diffraction (same HM symbol, same
-    // description, identical reflection conditions — the typical "origin
-    // choice 1 vs 2" redundancy found in SG 59, 68, 70, 85-88, 125, 129,
-    // 130, 133, 141, 142, 201, 203, 222, 224, 227, 228, ...). Genuinely
-    // different settings (axis permutations, hex vs. rhombohedral axes on
-    // R-centred groups) are kept separate and get a clarifying suffix
-    // added to the `display_label`.
-    function listSettings(input) {
-        const head = resolve(input);
-        if (!head) return [];
-        const sgEntry = DB[String(head.number)];
-        if (!sgEntry) return [];
-        const rawSettings = sgEntry.settings || [];
 
-        // Group by (symbol, description) -- these are the entries the user
-        // currently sees as duplicates.
-        const buckets = new Map();
-        rawSettings.forEach(s => {
-            const key = s.symbol + '|' + (s.description || '');
-            if (!buckets.has(key)) buckets.set(key, []);
-            buckets.get(key).push(s);
-        });
+    function listSettings(n) {
+    const db = globalThis.SG_DATABASE;
+    if (!db || !db.space_groups) return [];
+    const sg = db.space_groups[n.toString()];
+    if (!sg) return [];
 
-        const out = [];
-        const condSig = (s) => JSON.stringify(s.reflection_conditions || {}, Object.keys(s.reflection_conditions || {}).sort());
-        const isRhomb = (s) => (s.hall || '').indexOf('3*') !== -1;
-
-        for (const [, group] of buckets) {
-            // Partition by whether the Hall symbol marks rhombohedral axes.
-            const hex = group.filter(s => !isRhomb(s));
-            const rho = group.filter(s =>  isRhomb(s));
-
-            // Within each axis choice, dedupe by reflection-condition
-            // signature: identical conditions => same powder pattern =>
-            // only emit one record (arbitrarily the first). Keep all
-            // Hall symbols so advanced callers can still pick one.
-            const emitFromPartition = (partition, axisLabel) => {
-                if (partition.length === 0) return;
-                const seen = new Map();
-                partition.forEach(s => {
-                    const sig = condSig(s);
-                    if (!seen.has(sig)) seen.set(sig, []);
-                    seen.get(sig).push(s);
-                });
-                seen.forEach(dupes => {
-                    const rec = buildRecord(sgEntry, dupes[0]);
-                    rec.display_label = rec.symbol
-                        + (rec.setting_description && rec.setting_description !== 'standard'
-                            ? `  (${rec.setting_description})` : '')
-                        + (axisLabel ? `  [${axisLabel}]` : '');
-                    rec.alternate_halls = dupes.map(d => d.hall);
-                    out.push(rec);
-                });
-            };
-            // Only tag an axis choice when both exist (otherwise it'd be noise).
-            if (hex.length && rho.length) {
-                emitFromPartition(hex, 'hex. axes');
-                emitFromPartition(rho, 'rhomb. axes');
-            } else {
-                emitFromPartition(hex.length ? hex : rho, null);
-            }
-        }
-        return out;
-    }
+    return sg.settings.map(setting => ({
+        number: sg.number,
+        standard_symbol: sg.standard_symbol,
+        system: sg.crystal_system,
+        point_group: sg.point_group,
+        laue_class: POINT_GROUP_TO_LAUE[sg.point_group] || sg.point_group,
+        centrosymmetric: sg.centrosymmetric,
+        symbol: setting.symbol,
+        setting_description: setting.description,
+        hall: setting.hall,
+        centering: setting.symbol.charAt(0),
+        reflection_conditions: setting.reflection_conditions
+    }));
+}
 
     root.SG_ENGINE = {
         resolve:              resolve,
