@@ -6,7 +6,7 @@
     <title>Powder Pattern Decomposition - Help</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
     <script>
         MathJax = {
@@ -23,170 +23,387 @@
     </script>
 
     <style>
-        :root {
-            --system-blue: #007AFF;
-            --system-gray-1: #8E8E93;
-            --system-gray-2: #AEAEB2;
-            --system-gray-3: #C7C7CC;
-            --system-gray-4: #D1D1D6;
-            --system-gray-5: #E5E5EA;
-            --system-gray-6: #F2F2F7;
-            --system-background: #FFFFFF;
-            --system-grouped-background: #F2F2F7;
-            --system-label: #000000;
-            --system-secondary-label: rgba(60, 60, 67, 0.6);
-            --system-separator: rgba(60, 60, 67, 0.29);
-        }
+/* ==========================================================================
+   Powder Pattern Decomposition — Help
+   Restyled to match the powder5 "Studio Monitor" theme: brushed-metal
+   surfaces, hairline rules, monospace technical readouts, a single muted
+   cool-blue accent, and a restrained amber LED detail. Light + dark.
+   ========================================================================== */
+:root {
+    color-scheme: light;
+    --font-sans: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Roboto Mono", Menlo, Consolas, monospace;
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
-            margin: 0;
-            background-color: var(--system-grouped-background);
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            color: var(--system-label);
-            line-height: 1.7;
-            font-size: 16px;
-        }
+    --bg-app:        #e6e7e9;
+    --bg-panel:      #f3f4f5;
+    --bg-stage:      #ffffff;
+    --bg-inset:      #dcdee1;
+    --bg-elevated:   #ffffff;
+    --bg-hover:      rgba(0,0,0,0.045);
 
-        #app-container {
-            display: flex;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-        }
+    --metal:         linear-gradient(180deg, #f6f7f8 0%, #ebecee 100%);
 
-        #nav-panel {
-            width: 280px;
-            min-width: 240px;
-            flex-shrink: 0;
-            padding: 24px;
-            background-color: var(--system-background);
-            border-right: 1px solid var(--system-separator);
-            overflow-y: auto;
-        }
+    --fg:            #1a1c1f;
+    --fg-2:          #4a4e54;
+    --fg-3:          #7a7f86;
+    --fg-4:          #a0a4ab;
 
-        #nav-panel h2 {
-            font-size: 18px;
-            margin-top: 0;
-            margin-bottom: 24px;
-            color: var(--system-label);
-        }
+    --rule:          #c4c7cb;
+    --rule-soft:     #d8dadd;
+    --rule-strong:   #9ea2a8;
 
-        #nav-panel ul {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
+    --accent:        #4a7fb5;
+    --accent-hover:  #3d6fa3;
+    --accent-tint:   rgba(74,127,181,0.14);
 
-        #nav-panel li a {
-            display: block;
-            padding: 8px 12px;
-            text-decoration: none;
-            color: var(--system-secondary-label);
-            border-radius: 8px;
-            font-weight: 500;
-            transition: all 0.2s ease;
-            font-size: 15px;
-        }
+    --led:           #d68a2a;
 
-        #nav-panel li a.sub-link {
-            padding-left: 28px;
-            font-size: 14px;
-            font-weight: 400;
-        }
+    --warning-bg:    #fffbeb;
+    --warning-border:#f59e0b;
+    --warning-text:  #92400e;
 
-        #nav-panel li a:hover {
-            background-color: var(--system-gray-6);
-            color: var(--system-label);
-        }
+    --shadow-1:      0 1px 0 rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-2:      0 8px 24px rgba(0,0,0,0.12);
 
-        #nav-panel li a.active {
-            background-color: var(--system-blue);
-            color: white;
-            font-weight: 600;
-        }
+    --r-1: 2px;
+    --r-2: 3px;
+    --r-3: 4px;
+}
 
+[data-theme="dark"] {
+    color-scheme: dark;
+    --bg-app:        #1a1c1e;
+    --bg-panel:      #232629;
+    --bg-stage:      #15171a;
+    --bg-inset:      #14161a;
+    --bg-elevated:   #2a2d31;
+    --bg-hover:      rgba(255,255,255,0.05);
 
-        #content-area {
-            flex-grow: 1;
-            padding: 32px 48px;
-            overflow-y: auto;
-            background-color: var(--system-background);
-        }
+    --metal:         linear-gradient(180deg, #2c2f33 0%, #232629 100%);
 
-        #content-area h2 {
-            font-size: 28px;
-            font-weight: 700;
-            margin-top: 0;
-            padding-bottom: 16px;
-            border-bottom: 1px solid var(--system-separator);
-            margin-bottom: 24px;
-        }
+    --fg:            #e8eaed;
+    --fg-2:          #c0c4c9;
+    --fg-3:          #8a8f96;
+    --fg-4:          #50545a;
 
-        #content-area h3 {
-            font-size: 22px;
-            font-weight: 600;
-            margin-top: 40px;
-            margin-bottom: 16px;
-            padding-bottom: 8px;
-            border-bottom: 1px solid var(--system-gray-5);
-        }
+    --rule:          #44474c;
+    --rule-soft:     #3a3d42;
+    --rule-strong:   #4a4e54;
 
-        #content-area h4 {
-            font-size: 18px;
-            font-weight: 600;
-            margin-top: 24px;
-            margin-bottom: 12px;
-            color: var(--system-secondary-label);
-        }
+    --accent:        #5b91c7;
+    --accent-hover:  #6ea3d8;
+    --accent-tint:   rgba(91,145,199,0.18);
 
-        code {
-            background-color: var(--system-gray-6);
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: 'SF Mono', 'Menlo', 'monospace';
-            font-size: 0.9em;
-            border: 1px solid var(--system-gray-4);
-        }
+    --led:           #e09a3a;
 
-        .reference-item {
-            margin-bottom: 1em;
-        }
+    --warning-bg:    #2a2416;
+    --warning-border:#e0b04a;
+    --warning-text:  #e0b04a;
 
-        .note {
-            background-color: #eef6ff; /* Light blue background */
-            border-left: 4px solid var(--system-blue);
-            padding: 16px;
-            margin: 24px 0;
-            border-radius: 0 8px 8px 0;
-        }
-        /* --- Added Warning Note Style --- */
-        .warning-note {
-            background-color: #fffbeb; /* Light yellow background */
-            border-left: 4px solid #f59e0b; /* Amber/Yellow border */
-            padding: 16px;
-            margin: 24px 0;
-            border-radius: 0 8px 8px 0;
-        }
-        .warning-note strong {
-             color: #b45309; /* Darker amber text */
-        }
-        /* Added style for links in About section */
-        #about a {
-            color: var(--system-blue);
-            text-decoration: none;
-        }
-        #about a:hover {
-            text-decoration: underline;
-        }
+    --shadow-1:      0 1px 0 rgba(0,0,0,0.40), 0 1px 2px rgba(0,0,0,0.30);
+    --shadow-2:      0 8px 24px rgba(0,0,0,0.55);
+}
+
+* { box-sizing: border-box; }
+
+body {
+    font-family: var(--font-sans);
+    margin: 0;
+    background-color: var(--bg-app);
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    color: var(--fg);
+    line-height: 1.7;
+    font-size: 15.5px;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+#app-container {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* ---------- Nav panel ---------- */
+
+#nav-panel {
+    width: 280px;
+    min-width: 240px;
+    flex-shrink: 0;
+    padding: 22px 18px;
+    background: var(--bg-panel);
+    border-right: 1px solid var(--rule);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+#nav-panel h2 {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    margin: 0 0 18px 6px;
+    border: none;
+    padding: 0;
+}
+
+#nav-panel .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin: 2px 6px 22px 6px;
+}
+#nav-panel .brand .name {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+    letter-spacing: 0.02em;
+}
+#nav-panel .brand .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--led);
+    box-shadow: 0 0 6px var(--led);
+    flex-shrink: 0;
+}
+
+#theme-toggle {
+    display: flex;
+    gap: 2px;
+    margin: 0 6px 20px 6px;
+    background: var(--bg-inset);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-2);
+    padding: 2px;
+}
+#theme-toggle button {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--fg-3);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 6px 0;
+    border-radius: 1px;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+}
+#theme-toggle button:hover { color: var(--fg); }
+#theme-toggle button.active {
+    background: var(--bg-elevated);
+    color: var(--fg);
+    box-shadow: var(--shadow-1);
+}
+
+#nav-panel ul { list-style: none; padding: 0; margin: 0; }
+#nav-panel ul > blockquote { margin: 0; padding: 0; border: none; }
+
+#nav-panel li a {
+    display: block;
+    padding: 7px 10px;
+    text-decoration: none;
+    color: var(--fg-2);
+    border-radius: var(--r-1);
+    font-weight: 500;
+    font-size: 13.5px;
+    transition: background-color 0.12s, color 0.12s;
+    border-left: 2px solid transparent;
+}
+#nav-panel li a.sub-link {
+    padding-left: 22px;
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--fg-3);
+}
+#nav-panel li a:hover { background-color: var(--bg-hover); color: var(--fg); }
+#nav-panel li a.active {
+    background-color: var(--accent-tint);
+    color: var(--accent);
+    font-weight: 600;
+    border-left-color: var(--accent);
+}
+#nav-panel li a.sub-link.active { color: var(--accent); }
+
+/* ---------- Content area ---------- */
+
+#content-area {
+    flex-grow: 1;
+    padding: 40px 56px;
+    overflow-y: auto;
+    background-color: var(--bg-stage);
+    max-width: 900px;
+}
+
+#content-area hr {
+    border: none;
+    border-top: 1px solid var(--rule-soft);
+    margin: 2.5em 0;
+}
+
+#content-area h2 {
+    font-family: var(--font-sans);
+    font-size: 24px;
+    font-weight: 700;
+    margin-top: 0;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 22px;
+    color: var(--fg);
+    letter-spacing: -0.01em;
+}
+
+#content-area h3 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-top: 2.2em;
+    margin-bottom: 14px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--rule-soft);
+    color: var(--fg);
+}
+
+#content-area h4 {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.10em;
+    text-transform: uppercase;
+    margin-top: 1.8em;
+    margin-bottom: 10px;
+    color: var(--fg-3);
+    border: none;
+    padding: 0;
+}
+
+p, li { margin-bottom: 1em; color: var(--fg-2); }
+strong, b { color: var(--fg); font-weight: 600; }
+ul, ol { padding-left: 1.4em; }
+
+a { color: var(--accent); text-decoration: none; font-weight: 500; }
+a:hover { text-decoration: underline; color: var(--accent-hover); }
+
+code {
+    font-family: var(--font-mono);
+    background-color: var(--bg-inset);
+    color: var(--fg);
+    padding: 2px 6px;
+    border-radius: var(--r-1);
+    font-size: 0.86em;
+    border: 1px solid var(--rule-soft);
+}
+
+.reference-item { margin-bottom: 1.1em; color: var(--fg-2); }
+.reference-item strong { display: block; margin-bottom: 2px; }
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 1.5em;
+    font-size: 13.5px;
+    border: 1px solid var(--rule);
+    border-radius: var(--r-2);
+    overflow: hidden;
+}
+th, td {
+    padding: 9px 14px;
+    border: 1px solid var(--rule-soft);
+    text-align: left;
+    color: var(--fg-2);
+}
+th {
+    background: var(--metal);
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+}
+td code { white-space: nowrap; }
+
+.note {
+    background-color: var(--accent-tint);
+    border-left: 3px solid var(--accent);
+    padding: 14px 18px;
+    margin: 22px 0;
+    border-radius: 0 var(--r-2) var(--r-2) 0;
+    color: var(--fg-2);
+}
+.note strong:first-child, .note h4 {
+    color: var(--fg);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 6px;
+}
+.note h4 { margin-top: 0; }
+
+.warning-note {
+    background-color: var(--warning-bg);
+    border-left: 3px solid var(--warning-border);
+    padding: 14px 18px;
+    margin: 22px 0;
+    border-radius: 0 var(--r-2) var(--r-2) 0;
+    color: var(--fg-2);
+}
+.warning-note strong { color: var(--warning-text); }
+
+blockquote {
+    margin: 1.5em 0;
+    padding: 0.5em 0 0.5em 18px;
+    border-left: 3px solid var(--rule-strong);
+}
+
+#about a { color: var(--accent); text-decoration: none; }
+#about a:hover { text-decoration: underline; }
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-4); }
     </style>
 </head>
 <body>
 
+<script>
+    // Theme init — same mechanism and storage key as the main powder5 app,
+    // so a preference set in either place carries over to the other.
+    (function () {
+        var saved = null;
+        try { saved = localStorage.getItem('powder5-theme'); } catch (e) {}
+        var theme = saved || 'dark';
+        document.documentElement.setAttribute('data-theme', theme);
+        window.__powder5SetTheme = function (m) {
+            document.documentElement.setAttribute('data-theme', m);
+            try { localStorage.setItem('powder5-theme', m); } catch (e) {}
+            document.querySelectorAll('#theme-toggle button').forEach(function (b) {
+                b.classList.toggle('active', b.getAttribute('data-mode') === m);
+            });
+        };
+        document.addEventListener('DOMContentLoaded', function () {
+            window.__powder5SetTheme(document.documentElement.getAttribute('data-theme'));
+            document.querySelectorAll('#theme-toggle button').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    window.__powder5SetTheme(b.getAttribute('data-mode'));
+                });
+            });
+        });
+    })();
+</script>
+
 <div id="app-container">
     <nav id="nav-panel">
+        <div class="brand"><span class="dot"></span><span class="name">powder5</span></div>
+        <div id="theme-toggle">
+            <button type="button" data-mode="light">Light</button>
+            <button type="button" data-mode="dark">Dark</button>
+        </div>
         <h2>Help Topics</h2>
         <ul id="nav-links">
             <li><a href="#introduction">Introduction</a></li>
@@ -237,6 +454,9 @@
                 <li><b>Generic Data:</b> Standard two-column ASCII files (<code>.xy</code>, <code>.csv</code>, <code>.txt</code>, <code>.dat</code>, <code>.asc</code> etc.) containing $2\theta$ and intensity values are also supported. The parser accommodates space, comma, or semicolon delimiters. Comment lines prefixed with <code>#</code>, <code>!</code>, <code>;</code> or <code>//</code> are ignored, as are non-numeric header lines.</li>
                 <li><b>Metadata Parsing:</b> For many instrument-specific formats, instrument parameters such as the X-ray wavelength for Kα1 are read from the file's metadata and used to populate the relevant fields in the user interface. It is incumbent upon the user to verify the correctness of these automatically populated values.</li>
             </ul>
+            <div class="note">
+                <strong>Before loading any data:</strong> the chart already shows a live theoretical stick pattern ($2\theta$ positions and relative Kα1/Kα2 markers) for the currently selected space group and lattice parameters, updating as you change them. <code>Save Report</code> is active even without a data file, exporting this theoretical <code>hkl</code> / $d$ / $2\theta$ list — useful for previewing where reflections are expected before you have a scan in hand.
+            </div>
         </section>
 
         <hr>
@@ -275,8 +495,8 @@
             <ol>
                 <li><b>Initialization:</b> A theoretical pattern is calculated from the user-supplied lattice, profile, and background parameters (defined by the spline points). The heights ($I_{hkl}$) of all reflections are initially assumed to be equal (e.g., 1000).</li>
                 <li><b>Intensity Extraction (Height Partitioning):</b> The observed net intensity ($y_{i,obs} - y_{i,bkg}$) at each data point is partitioned among the calculated Bragg peaks contributing to that point. The contribution of each peak is proportional to its profile function value at that point. Summing these partitioned intensities for each reflection yields a new set of "observed" integrated intensities. These are then converted back to estimated peak heights using the current profile function's area.</li>
-                <li><b>Parameter Refinement:</b> These newly extracted peak heights are held constant, and a non-linear least-squares refinement is performed on the lattice and profile parameters (the background is fixed by the spline points) to minimize the difference between the calculated and observed patterns.</li>
-                <li><b>Iteration:</b> The refined parameters from Step 3 are used to restart the process from Step 2 (Intensity Extraction). This cycle repeats until the parameters and R-factors converge (typically 4 cycles).</li>
+                <li><b>Continuous Refinement:</b> Rather than alternating between a fixed outer loop of extraction and refinement passes, this step is performed <em>internally at every function evaluation</em> of a single non-linear least-squares run: each time the optimizer (LM or PT) proposes a set of lattice/profile parameters, intensities are re-extracted from the current profile shapes before the residual is computed, and the lattice and profile parameters (not the heights) are what the optimizer actually adjusts. The background remains fixed by the spline points throughout.</li>
+                <li><b>Convergence:</b> Because extraction and refinement are coupled at every evaluation, one press of <code>Run Le Bail</code> already converges self-consistently — you do not need to repeat the click for the intensities and parameters to reach agreement. Re-running is only useful if you want to restart from a different algorithm (see <a href="#strategy">Recommended Refinement Strategy</a>) or after changing a fixed input (e.g., background points).</li>
             </ol>
 
             <h3 id="pawley-method">The Pawley Method</h3>
@@ -511,7 +731,7 @@
                         <div class="note">
                 <h4>Technical Note on Calculation Parameters</h4>
                 <p>
-                    The theoretical pattern is calculated using a hybrid approach for performance and accuracy. A search window (defined by <code>CALCULATION_WINDOW_MULTIPLIER</code>, currently 8.0 times the peak FWHM) is used to find all potential contributions to a given data point. However, only points where the calculated peak height is greater than a defined threshold (<code>PEAK_HEIGHT_CUTOFF</code>, currently 0.1%) relative to its maximum are included in the final sum.
+                    The theoretical pattern is calculated using a hybrid approach for performance and accuracy. A search window (defined by <code>CALCULATION_WINDOW_MULTIPLIER</code>, currently 8.0 times the peak FWHM) is used to find all potential contributions to a given data point. However, only points where the calculated peak height is greater than a defined threshold (<code>PEAK_HEIGHT_CUTOFF</code>, currently 0.2%) relative to its maximum are included in the final sum.
                 </p>
             </div>
 
@@ -565,7 +785,7 @@
             <blockquote>
             <h3 id="results-wh">Williamson-Hall Size-Strain Analysis</h3>
             <p>
-                For refinements utilizing <strong>Profile Function #3 (Anisotropic TCH)</strong>, the application can automatically perform a Williamson-Hall analysis to extract approximate microstructural information. This method separates the contributions of crystallite size and microstrain to the total peak broadening by analyzing their different dependencies on the diffraction angle, $\theta$.
+                For refinements utilizing the <strong>TCH (Size/Strain/Aniso)</strong> profile function, the application can automatically perform a Williamson-Hall analysis to extract approximate microstructural information. This method separates the contributions of crystallite size and microstrain to the total peak broadening by analyzing their different dependencies on the diffraction angle, $\theta$.
             </p>
             <p>
                 The analysis is based on the linear Williamson-Hall equation, where $\beta$ is the total physical peak breadth (FWHM) in radians derived from the refined sample-only broadening parameters (<code>U</code>, <code>X</code>, <code>Y</code>), excluding instrumental contributions (<code>V</code>, <code>W</code>):
@@ -588,7 +808,12 @@
 
             <h3>Data Export</h3>
             <ul>
-                <li><b>Save Report:</b> Generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), the Williamson-Hall analysis results (if applicable), the list of background spline points used, a list of reflections with calculated and observed integrated intensities (areas), and a point-by-point list of observed, calculated, background, and difference intensities across the fitted range.</li> <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters and statistics, suitable for archival or reporting.</li>
+                <li><b>Save Report:</b> Behavior depends on whether experimental data is loaded.
+                    <ul>
+                        <li><em>With data loaded, after a refinement:</em> generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), the Williamson-Hall analysis results (if applicable), the list of background spline points used, a list of reflections with calculated and observed integrated intensities (areas), and a point-by-point list of observed, calculated, background, and difference intensities across the fitted range.</li>
+                        <li><em>With no data loaded:</em> the button remains active and instead exports a theoretical reflection list for the current space group, lattice parameters, and wavelength(s) — <code>h k l</code>, $d$-spacing, and $2\theta$ for Kα1 (and Kα2 if the intensity ratio is greater than 0), together with the multiplicity of each reflection. No refinement is required for this mode; the chart itself also displays this theoretical stick pattern live as you change the space group or lattice, so you can preview expected peak positions before ever loading a scan.</li>
+                    </ul>
+                </li> <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters and statistics, suitable for archival or reporting. This requires a completed refinement.</li>
             </ul>
         </section>
 

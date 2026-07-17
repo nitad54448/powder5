@@ -199,31 +199,48 @@ input[type="text"].sg-search-row input,
     min-width: 320px;
     max-width: 500px;
     flex-shrink: 0;
-    padding: 14px 14px 14px 16px;
     background: var(--bg-panel);
     border-right: 1px solid var(--rule);
     display: flex;
     flex-direction: column;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: hidden;
     position: relative;
     z-index: 20;
     box-shadow: none;
     border-radius: 0;
 }
 
-/* Keep the four action buttons pinned to the bottom of the controls panel
-   so scrolling the panel never moves them out of view. `sticky` keeps them
-   in the normal flow (they sit after the results) but glued to the bottom
-   edge of the scroll container. The negative margins + padding let the
-   background span the panel's full width and cover content scrolling under. */
+/* The only element inside #controls-panel that scrolls. Everything that
+   isn't the action-button-bar footer lives in here, so the footer itself
+   never has to "catch up" via position:sticky — it simply isn't part of
+   the scrolling flow, and is always visible regardless of tab content
+   height or scroll position. */
+#controls-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 14px 14px 14px 16px;
+    display: flex;
+    flex-direction: column;
+}
+#controls-scroll::-webkit-scrollbar { width: 8px; }
+#controls-scroll::-webkit-scrollbar-track { background: transparent; }
+#controls-scroll::-webkit-scrollbar-thumb { background: var(--rule); border-radius: 4px; }
+#controls-scroll::-webkit-scrollbar-thumb:hover { background: var(--rule-strong); }
+
+/* A true fixed footer (flex-shrink:0, outside #controls-scroll) rather than
+   a sticky element inside the scroll flow — sticky only keeps an element
+   from scrolling OUT of view once you've already scrolled to it; it does
+   nothing for the very first render, so on tall panels (e.g. Profile with
+   many parameters) the buttons stayed below the fold until manually
+   scrolled down. As a direct, non-scrolling flex child of #controls-panel,
+   this bar is visible immediately on every tab, with no scrolling needed. */
 #action-button-bar {
-    position: sticky;
-    bottom: 0;
+    flex-shrink: 0;
     display: flex;
     flex-direction: column;
     gap: 16px;
-    margin: 16px -14px -14px -16px;   /* cancel #controls-panel padding: 14px 14px 14px 16px */
     padding: 12px 14px 14px 16px;
     background: var(--bg-panel);
     border-top: 1px solid var(--rule);
@@ -453,26 +470,31 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 
 .file-input-label {
     display: block;
-    padding: 9px 14px;
-    background: var(--metal);
-    color: var(--fg);
+    padding: 10px 14px;
+    background: var(--accent);
+    color: #fff;
     border-radius: var(--r-1);
     text-align: center;
     cursor: pointer;
-    transition: border-color 0.12s, background 0.12s, color 0.12s;
-    font-weight: 500;
+    transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+    font-weight: 600;
     font-size: 12px;
-    letter-spacing: 0.04em;
-    border: 1px solid var(--rule);
-    box-shadow: var(--shadow-1);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border: 1px solid var(--accent);
+    box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, var(--shadow-1);
 }
 .file-input-label:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--bg-stage);
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
+    color: #fff;
+}
+.file-input-label:active {
+    background: var(--accent-hover);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.20) inset;
 }
 [data-theme="dark"] .file-input-label:hover {
-    background: var(--bg-elevated);
+    background: var(--accent-hover);
 }
 
 /* ---------- Results grid (numeric readout cards) ---------- */
@@ -885,19 +907,6 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 }
 
 .hidden { display: none !important; }
-
-/* ---------- Scrollbar (panel) ---------- */
-
-#controls-panel::-webkit-scrollbar { width: 8px; }
-#controls-panel::-webkit-scrollbar-track {
-    background: transparent;
-}
-#controls-panel::-webkit-scrollbar-thumb {
-    background: var(--rule);
-    border-radius: 4px;
-    border: 2px solid var(--bg-panel);
-}
-#controls-panel::-webkit-scrollbar-thumb:hover { background: var(--rule-strong); }
 
 /* ---------- Progress bar ---------- */
 
@@ -1347,6 +1356,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 
 <div id="app-container">
         <div id="controls-panel">
+            <div id="controls-scroll">
             
             <div class="control-group" style="padding-top: 16px;">
                 <label for="file-input" class="file-input-label" style="display: block; width: 100%; box-sizing: border-box;">
@@ -1630,7 +1640,9 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
                         </div>
                      </div>
                 </div>
-                <div id="action-button-bar">
+            </div>
+            </div>
+            <div id="action-button-bar">
     <div style="display: flex; gap: 10px;">
         <button id="le-bail-button" class="btn btn-primary" style="flex: 1;" disabled>Run Le Bail</button>
         <button id="pawley-button" class="btn btn-primary" style="flex: 1;" disabled>Run Pawley</button>
@@ -1640,7 +1652,6 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
         <button id="save-data-button" class="btn btn-secondary" style="flex: 1;" disabled>Save Report</button>
         <button id="report-button" class="btn btn-secondary" style="flex: 1;" disabled>Generate PDF</button>
     </div>
-                </div>
             </div>
         </div>
 
@@ -1703,7 +1714,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 </div>
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 127, 17 July 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 128, 18 July 2026";
   
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
@@ -4919,6 +4930,146 @@ function debounce(func, wait) {
             mainChart.update('none');
         }
 
+        // ===================================================================
+        // THEORETICAL (data-free) MODE
+        // When no experimental file is loaded, the chart still shows a live
+        // "stick pattern" of the allowed reflections for the current space
+        // group + lattice + wavelength, and Save Report exports that list.
+        // Reuses the exact same physics as the refinement path
+        // (generateAndCacheHklIndices + updateHklPositions).
+        // ===================================================================
+        const THEO_TTH_MIN = 5;    // fixed 2θ window for the theoretical pattern
+        const THEO_TTH_MAX = 120;
+
+        function hasExperimentalData() {
+            return !!(fullExperimentalData && fullExperimentalData.tth && fullExperimentalData.tth.length > 0);
+        }
+
+        // Build the allowed-reflection list for the current settings over the
+        // fixed theoretical window. Returns [{h_orig,k_orig,l_orig,d,tth,multiplicity}].
+        function computeTheoreticalHklList() {
+            const sg = currentSG;
+            if (!sg) return [];
+            const params = getAllParams();
+            if (!(params.lambda > 0) || !(params.a > 0)) return [];
+            const raw = generateAndCacheHklIndices(sg, THEO_TTH_MAX, params);
+            let list = JSON.parse(JSON.stringify(raw));
+            updateHklPositions(list, params, sg.system);
+            return list
+                .filter(p => p.tth != null && isFinite(p.tth) && p.tth >= THEO_TTH_MIN && p.tth <= THEO_TTH_MAX)
+                .sort((a, b) => a.tth - b.tth);
+        }
+
+        // Draw / refresh the theoretical stick pattern on the main chart.
+        function drawTheoreticalPreview() {
+            if (hasExperimentalData()) return;   // the data path owns the chart
+            if (!currentSG) return;
+            if (!mainChart) initializeChart();   // empty-data init is fine
+
+            const params = getAllParams();
+            const list = computeTheoreticalHklList();
+            masterHklList = list;
+            lastGeneratedHklList = list;
+
+            const findDataset = (label) => mainChart.data.datasets.find(d => d.label === label);
+            const deg2rad = Math.PI / 180;
+            const z = params.zeroShift || 0;
+            const doubletEnabled = params.ratio > 1e-6 && params.lambda2 > 1e-6 &&
+                                   Math.abs(params.lambda - params.lambda2) > 1e-6;
+            const lambdaRatio = doubletEnabled ? (params.lambda2 / params.lambda) : 1.0;
+
+            const ka1 = [], ka2 = [];
+            list.forEach(hkl => {
+                if (!hkl.tth) return;
+                const pos1 = hkl.tth + z;
+                if (pos1 >= THEO_TTH_MIN && pos1 <= THEO_TTH_MAX) {
+                    ka1.push({ x: pos1, y: [1, 0], hkl: `${hkl.hkl_list[0]} [m=${hkl.multiplicity}]` });
+                }
+                if (doubletEnabled) {
+                    const s2 = Math.sin(hkl.tth * deg2rad / 2) * lambdaRatio;
+                    if (Math.abs(s2) < 1) {
+                        const pos2 = 2 * Math.asin(s2) / deg2rad + z;
+                        if (pos2 >= THEO_TTH_MIN && pos2 <= THEO_TTH_MAX) {
+                            ka2.push({ x: pos2, y: [0.6, 0], hkl: `${hkl.hkl_list[0]} Ka2` });
+                        }
+                    }
+                }
+            });
+
+            // Clear the experimental / fit curves; show only the sticks.
+            ['Experimental','Simulation (Manual)','Calculated','Background','Difference','Difference Zero']
+                .forEach(lbl => { const ds = findDataset(lbl); if (ds) ds.data = []; });
+            findDataset('Ka1').data = ka1;
+            const d2 = findDataset('Ka2'); if (d2) d2.data = ka2;
+
+            mainChart.options.scales.x.min = THEO_TTH_MIN;
+            mainChart.options.scales.x.max = THEO_TTH_MAX;
+            mainChart.options.scales.y.min = -0.12;
+            mainChart.options.scales.y.max = 1.12;
+            mainChart.options.scales.y.ticks.display = false;
+            mainChart.options.scales.y.title.text = 'Reflections (theoretical)';
+            mainChart.update('none');
+        }
+
+        // Build the plain-text theoretical report saved by "Save Report"
+        // when no experimental data is loaded.
+        function generateTheoreticalReport() {
+            const sg = currentSG;
+            const p = getAllParams();
+            const list = computeTheoreticalHklList();
+            const doublet = p.ratio > 1e-6 && p.lambda2 > 1e-6 && Math.abs(p.lambda - p.lambda2) > 1e-6;
+            const deg2rad = Math.PI / 180;
+            const z = p.zeroShift || 0;
+            const now = new Date();
+            const L = [];
+            L.push('Theoretical HKL / 2-theta list');
+            L.push('========================================================================');
+            L.push('');
+            L.push(APP_VERSION_TEXT);
+            L.push(`Report Generated: ${now.toLocaleString()}`);
+            L.push('(no experimental data loaded)');
+            L.push('');
+            if (sg) {
+                L.push(`Space Group : #${sg.number}  ${sg.symbol || sg.standard_symbol}`
+                    + (sg.setting_description && sg.setting_description !== 'standard'
+                       ? ` (setting: ${sg.setting_description})` : ''));
+                L.push(`System      : ${sg.system}`);
+                L.push(`Laue class  : ${sg.laue_class}`);
+                L.push(`Centering   : ${sg.centering}`);
+            }
+            const cell = [`a=${p.a}`];
+            if (p.b != null && !isNaN(p.b)) cell.push(`b=${p.b}`);
+            if (p.c != null && !isNaN(p.c)) cell.push(`c=${p.c}`);
+            cell.push(`alpha=${p.alpha}`, `beta=${p.beta}`, `gamma=${p.gamma}`);
+            L.push('Cell        : ' + cell.join('  '));
+            L.push(`Wavelength 1: ${p.lambda} A`);
+            if (doublet) L.push(`Wavelength 2: ${p.lambda2} A   (ratio I2/I1 = ${p.ratio})`);
+            L.push(`Zero shift  : ${z} deg`);
+            L.push(`2-theta range: ${THEO_TTH_MIN} - ${THEO_TTH_MAX} deg`);
+            L.push(`Reflections : ${list.length}`);
+            L.push('');
+
+            const w = doublet ? [4, 4, 4, 10, 11, 11, 6] : [4, 4, 4, 10, 11, 6];
+            const pad = (s, i) => String(s).padStart(w[i]);
+            const head = doublet ? ['h', 'k', 'l', 'd(A)', '2th_Ka1', '2th_Ka2', 'mult']
+                                 : ['h', 'k', 'l', 'd(A)', '2theta', 'mult'];
+            L.push(head.map(pad).join(' '));
+            list.forEach(r => {
+                const t1 = (r.tth + z).toFixed(4);
+                const d  = (r.d != null) ? r.d.toFixed(4) : '-';
+                let t2 = '-';
+                if (doublet && r.d) {
+                    const s2 = p.lambda2 / (2 * r.d);
+                    if (s2 <= 1) t2 = (2 * Math.asin(s2) / deg2rad + z).toFixed(4);
+                }
+                const cols = doublet
+                    ? [r.h_orig, r.k_orig, r.l_orig, d, t1, t2, r.multiplicity]
+                    : [r.h_orig, r.k_orig, r.l_orig, d, t1, r.multiplicity];
+                L.push(cols.map(pad).join(' '));
+            });
+            return L.join('\n');
+        }
+
 
         function updatePawleyButtonState() {
     // Safety check to ensure DOM elements exist before accessing them
@@ -4964,9 +5115,11 @@ function debounce(func, wait) {
         // Disable Le Bail if fitting OR no file loaded
         leBailButton.disabled = fitting || (fullExperimentalData && fullExperimentalData.tth.length === 0);
 
-        // Disable Report/Save if fitting OR no results exist
+        // Disable Report/Save if fitting OR no results exist.
+        // Exception: with no experimental data loaded, Save Report stays
+        // active so the user can export the theoretical HKL list.
         controls.reportButton.disabled = fitting || !fitResults;
-        controls.saveDataButton.disabled = fitting || !fitResults;
+        controls.saveDataButton.disabled = fitting || (!fitResults && hasExperimentalData());
 
         // Update text content during refinement
         if (fitting) {
@@ -5898,8 +6051,10 @@ function debounce(func, wait) {
 
         // Helper function to handle a full HKL list recalculation, including cache invalidation.
         const handleFullHklRecalculation = () => {
-            if (!mainChart || isFitting) return;
+            if (isFitting) return;
             invalidateHklCache();
+            if (!hasExperimentalData()) { drawTheoreticalPreview(); return; }
+            if (!mainChart) return;
             generateMasterHklList();
             rescalePlot(false);
             mainChart.update('none');
@@ -5909,7 +6064,9 @@ function debounce(func, wait) {
         const debouncedBackgroundUpdate = debounce(updateBackgroundForPreview, 350);
         // Helper function for simple preview updates that DON'T require HKL recalculation.
         const handleSimplePreviewUpdate = () => {
-            if (!mainChart || isFitting) return;
+            if (isFitting) return;
+            if (!hasExperimentalData()) { drawTheoreticalPreview(); return; }
+            if (!mainChart) return;
             updatePreviewPattern();
             rescalePlot(false);
             mainChart.update('none');
@@ -6022,6 +6179,10 @@ document.getElementById('profile-function-select').addEventListener('change', ha
                     
                     document.getElementById('le-bail-button').disabled = false;
                     updatePawleyButtonState();
+                    // Fresh data, no fit yet: revert Save Report to its
+                    // normal "refine first" state (it was active in the
+                    // data-free theoretical mode).
+                    controls.saveDataButton.disabled = true;
                     
                     initializeChart();
                     
@@ -6293,7 +6454,11 @@ controls.mainChartCanvas.addEventListener('contextmenu', e => {
 
 
     controls.saveDataButton.addEventListener('click', () => {
-    if (!fitResults) {
+    // Three cases:
+    //  1. A refinement exists            -> full refinement report (as before)
+    //  2. No fit AND no data loaded      -> theoretical HKL / 2θ list
+    //  3. No fit but data is loaded      -> ask the user to refine first
+    if (!fitResults && hasExperimentalData()) {
         showToast("Please run a refinement before saving data.", 'error');
         return;
     }
@@ -6301,19 +6466,27 @@ controls.mainChartCanvas.addEventListener('contextmenu', e => {
     controls.saveDataButton.textContent = 'Saving...';
     controls.saveDataButton.disabled = true;
     try {
-        const textContent = generateReportContent('full');
         const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '_');
-        
-        // Determine the filename based on the refinement mode from the results
-        const modeName = fitResults.refinementMode === 'pawley' ? 'Pawley' : 'LeBail';
-        downloadTextFile(textContent, `${modeName}-Data-${timestamp}.txt`);
 
-        showToast("Report saved successfully!", 'success');
+        if (fitResults) {
+            const textContent = generateReportContent('full');
+            const modeName = fitResults.refinementMode === 'pawley' ? 'Pawley' : 'LeBail';
+            downloadTextFile(textContent, `${modeName}-Data-${timestamp}.txt`);
+            showToast("Report saved successfully!", 'success');
+        } else {
+            // Theoretical (data-free) export.
+            const textContent = generateTheoreticalReport();
+            const tag = currentSG ? `SG${currentSG.number}` : 'HKL';
+            downloadTextFile(textContent, `Theoretical-${tag}-${timestamp}.txt`);
+            showToast("Theoretical HKL list saved.", 'success');
+        }
     } catch (error) {
         console.error("Failed to save data:", error);
+        showToast("Save failed: " + (error && error.message ? error.message : error), 'error');
     } finally {
         controls.saveDataButton.textContent = 'Save Report';
-        controls.saveDataButton.disabled = false;
+        // Re-evaluate: stay enabled in theoretical mode, otherwise require a fit.
+        controls.saveDataButton.disabled = isFitting || (!fitResults && hasExperimentalData());
     }
 });
 
@@ -6416,6 +6589,18 @@ if (!currentSG && globalThis.SG_ENGINE) {
         // -----------------------------------------------------
 
         updateUIForSystemChange();
+
+        // If the app opens with no experimental data, still show a live
+        // theoretical stick pattern for the current space group + lattice,
+        // and keep Save Report active so the user can export the HKL / 2θ
+        // list. Loading a file later replaces this automatically.
+        if (!hasExperimentalData()) {
+            controls.placeholder.style.display = 'none';
+            controls.resultsContainer.style.display = 'flex';
+            initializeChart();
+            drawTheoreticalPreview();
+            controls.saveDataButton.disabled = false;
+        }
 
         //   Wire the profile preset Load/Save buttons + probe for defaults.
         const _loadBtn = document.getElementById('profile-load-btn');
