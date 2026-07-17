@@ -212,6 +212,24 @@ input[type="text"].sg-search-row input,
     border-radius: 0;
 }
 
+/* Keep the four action buttons pinned to the bottom of the controls panel
+   so scrolling the panel never moves them out of view. `sticky` keeps them
+   in the normal flow (they sit after the results) but glued to the bottom
+   edge of the scroll container. The negative margins + padding let the
+   background span the panel's full width and cover content scrolling under. */
+#action-button-bar {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin: 16px -14px -14px -16px;   /* cancel #controls-panel padding: 14px 14px 14px 16px */
+    padding: 12px 14px 14px 16px;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--rule);
+    z-index: 5;
+}
+
 #drag-handle {
     width: 1px;
     cursor: col-resize;
@@ -1612,10 +1630,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
                         </div>
                      </div>
                 </div>
-                <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;">
-
-
-                    <div style="display: flex; flex-direction: column; gap: 16px; margin-top: 16px;">
+                <div id="action-button-bar">
     <div style="display: flex; gap: 10px;">
         <button id="le-bail-button" class="btn btn-primary" style="flex: 1;" disabled>Run Le Bail</button>
         <button id="pawley-button" class="btn btn-primary" style="flex: 1;" disabled>Run Pawley</button>
@@ -1625,7 +1640,6 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
         <button id="save-data-button" class="btn btn-secondary" style="flex: 1;" disabled>Save Report</button>
         <button id="report-button" class="btn btn-secondary" style="flex: 1;" disabled>Generate PDF</button>
     </div>
-</div>
                 </div>
             </div>
         </div>
@@ -1635,12 +1649,6 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 
 <div id="results-area" style="position: relative; flex-grow: 1; min-height: 0;">
 
-    <!-- Brand mark / model number — top-left, hardware-style label -->
-    <div id="brand-mark" aria-hidden="true">
-        <span class="led"></span>
-        <span class="mark">Powder 5</span>
-
-    </div>
 
     <!-- Light / dark mode toggle -->
     <div id="mode-toggle" role="group" aria-label="Theme">
@@ -1695,11 +1703,11 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 </div>
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 126, 15 July 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 127, 17 July 2026";
   
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
-        const resp = await fetch('cctbx_space_groups_all_settings_v2.json');
+        const resp = await fetch('cctbx_space_groups_all_settings_v4.json');
         globalThis.SG_DATABASE = await resp.json();
         
         // Load sg_engine.js AFTER database is in memory:
@@ -1896,6 +1904,12 @@ if (tooltipContainer && tooltipContent) {
                     showToast(`Refinement Error: ${message}`, 'error');
                     setUIState(false); // Unlock UI on error
                     controls.progressBar.style.width = '0%'; // Reset progress bar
+                    // FIX: on init failure the worker self.close()s; drop the
+                    // dead reference so future fits show a clear error
+                    // instead of silently hanging on "Refining...".
+                    if (message && message.indexOf('initialization failed') !== -1) {
+                        refinementWorker = null;
+                    }
                 }
             };
 
@@ -3336,7 +3350,7 @@ setTimeout(() => {
             const n = workingData.intensity.length;
             workingData.weights = new Float64Array(n);
             
-            const yMax = Math.max(...workingData.intensity);
+            const yMax = workingData.intensity.reduce((m, v) => (v > m ? v : m), -Infinity); // FIX: spread overflows the stack on large scans
             const floor = 0.0001 * yMax; // Floor is 0.01% of maximum, in GSAS is 0.1%
 
             for (let i = 0; i < n; i++) {
@@ -3371,12 +3385,14 @@ setTimeout(() => {
 function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     //   Worker Cache Check (only runs in worker context)  
     // 'hklIndexCache' is defined globally in both contexts.
-    let sgNumber = null;
-    if (spaceGroup && typeof spaceGroup.number === 'number') {
-        sgNumber = spaceGroup.number;
-        // Check worker cache *only if* in worker and cache exists for this SG
-        if (typeof self !== 'undefined' && typeof importScripts === 'function' && hklIndexCache[sgNumber]) {
-             return hklIndexCache[sgNumber]; // Return cached version from worker
+    // FIX: cache key encodes everything the list depends on (SG, lattice,
+    // wavelength, 2-theta range), not just the SG number, so a stale list
+    // can never be reused after a parameter change.
+    let cacheKey = null;
+    if (spaceGroup && typeof spaceGroup.number === 'number' && params) {
+        cacheKey = `${spaceGroup.number}|${params.a}|${params.b}|${params.c}|${params.lambda}|${maxTth}`;
+        if (typeof self !== 'undefined' && typeof importScripts === 'function' && hklIndexCache[cacheKey]) {
+             return hklIndexCache[cacheKey]; // Return cached version from worker
         }
     }
 
@@ -3442,16 +3458,28 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     const maxI = maxIndex;
 
     // Use sgSystem consistently
-    if (sgSystem === 'monoclinic' || sgSystem === 'triclinic') {
-        // Asymmetric unit for 2/m (unique axis b) - k>=0, l>=0. h can be +/-.
-        // For -1 (triclinic), asymmetric unit is more complex, usually h>=0 or covering half sphere.
-        // Let's stick to the 2/m unit for simplicity here, might overgenerate slightly for triclinic.
+    if (sgSystem === 'monoclinic') {
+        // Laue 2/m (unique axis b): wedge k>=0, l>=0, h free.
+        // FIX: for l=0, (h,k,0) and (-h,k,0) are 2/m-equivalent, so require
+        // h>=0 there to avoid duplicated peaks at the same position.
         for (let h = -maxI; h <= maxI; h++) {
             for (let k = 0; k <= maxI; k++) {
                 for (let l = 0; l <= maxI; l++) {
-                     if (k === 0 && l === 0 && h <= 0) continue; // Avoid double counting h00/-h00, and origin
-                     if (k === 0 && h === 0 && l === 0) continue; // Origin
-                     // Further monoclinic constraints might apply depending on unique axis, assuming 'b' here
+                    if (h === 0 && k === 0 && l === 0) continue; // Origin
+                    if (l === 0 && h < 0) continue;
+                    loopAndAdd(h, k, l);
+                }
+            }
+        }
+    } else if (sgSystem === 'triclinic') {
+        // FIX: Laue -1 only relates (h,k,l) to (-h,-k,-l). The old k>=0, l>=0
+        // wedge missed every reflection with mixed signs, e.g. (2,1,-3).
+        // Friedel-unique hemisphere:
+        //   l > 0, or (l = 0 and k > 0), or (l = 0, k = 0, h > 0).
+        for (let h = -maxI; h <= maxI; h++) {
+            for (let k = -maxI; k <= maxI; k++) {
+                for (let l = 0; l <= maxI; l++) {
+                    if (l === 0 && (k < 0 || (k === 0 && h <= 0))) continue;
                     loopAndAdd(h, k, l);
                 }
             }
@@ -3510,59 +3538,48 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                 }
             }
         }
-    } else { // Cubic, Tetragonal
-        // Asymmetric unit h>=k>=l>=0
-        const isTetragonal = (sgSystem === 'tetragonal');
-        if (a_sq <= 0 || (isTetragonal && c_sq <= 0)) return [];
-
+    } else if (sgSystem === 'tetragonal') {
+        // FIX: tetragonal previously shared the cubic h>=k>=l wedge, which is
+        // only valid when the axes are interchangeable. In tetragonal, l is a
+        // distinct axis, so restricting l<=k dropped every reflection with
+        // l > k (e.g. 001, 101, 102, 112). Correct wedge: h>=k>=0, l>=0 free.
+        if (a_sq <= 0 || c_sq <= 0) return [];
         for (let h = 0; h <= maxI; h++) {
-            const h_term_factor = (h*h); // Calculate h^2 once
-
-            for (let k = 0; k <= h; k++) { // Use h >= k
-                const hk_term_factor = h_term_factor + (k*k); // Calculate h^2+k^2 once
-
-                for (let l = 0; l <= k; l++) { // Use k >= l
+            const h_term = (h*h) / a_sq;
+            if (h_term > inv_d_sq_max && h > 0) break;
+            for (let k = 0; k <= h; k++) {
+                const hk_term = h_term + (k*k) / a_sq;
+                if (hk_term > inv_d_sq_max && k > 0) break;
+                for (let l = 0; l <= maxI; l++) {
                     if (h === 0 && k === 0 && l === 0) continue; // Skip origin
-
-                    let inv_d_sq_term;
-                    if (isTetragonal) {
-                        inv_d_sq_term = hk_term_factor / a_sq + (l*l) / c_sq;
-                    } else { // Cubic
-                        inv_d_sq_term = (hk_term_factor + l*l) / a_sq;
-                    }
-
-                    if (inv_d_sq_term > inv_d_sq_max) {
-                         // Since l increases, if l fails, all larger l for this h,k will fail
-                         break; // Break l loop
-                    }
+                    const hkl_term = hk_term + (l*l) / c_sq;
+                    if (hkl_term > inv_d_sq_max) break; // l increasing: no larger l can pass
                     loopAndAdd(h, k, l);
-                } // end l loop
-                 // Optimization: If the loop broke with l=0, then increasing k won't help either
-                 // This requires careful check: test hk term with l=0.
-                 let l0_term;
-                 if(isTetragonal) l0_term = hk_term_factor / a_sq;
-                 else l0_term = hk_term_factor / a_sq;
-                 if (l0_term > inv_d_sq_max && k > 0) {
-                     break; // Break k loop if even l=0 exceeds limit
-                 }
-
-            } // end k loop
-             // Optimization: If the k loop broke with k=0, then increasing h won't help either
-             // Test h term with k=0, l=0
-             let k0l0_term;
-             if(isTetragonal) k0l0_term = h_term_factor / a_sq; // l=0, k=0
-             else k0l0_term = h_term_factor / a_sq; // l=0, k=0
-             if (k0l0_term > inv_d_sq_max && h > 0) {
-                 break; // Break h loop if even k=0, l=0 exceeds limit
-             }
-        } // end h loop
+                }
+            }
+        }
+    } else { // Cubic: h >= k >= l >= 0 wedge is valid (axes interchangeable)
+        if (a_sq <= 0) return [];
+        for (let h = 0; h <= maxI; h++) {
+            const h_term_factor = (h*h);
+            if (h_term_factor / a_sq > inv_d_sq_max && h > 0) break;
+            for (let k = 0; k <= h; k++) {
+                const hk_term_factor = h_term_factor + (k*k);
+                if (hk_term_factor / a_sq > inv_d_sq_max && k > 0) break;
+                for (let l = 0; l <= k; l++) {
+                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
+                    if ((hk_term_factor + l*l) / a_sq > inv_d_sq_max) break;
+                    loopAndAdd(h, k, l);
+                }
+            }
+        }
     }
 
 
     //   Worker Cache Update  
-    // Only update cache if in worker context and sgNumber is valid
-    if (sgNumber !== null && typeof self !== 'undefined' && typeof importScripts === 'function') {
-         hklIndexCache[sgNumber] = rawReflections;
+    // Only update cache if in worker context and cacheKey is valid
+    if (cacheKey !== null && typeof self !== 'undefined' && typeof importScripts === 'function') {
+         hklIndexCache[cacheKey] = rawReflections;
     }
     //   End Worker Cache Update  
 
@@ -4297,7 +4314,7 @@ function generateMasterHklList() {
         return;
     }
 
-    const maxTth = Math.max(...fullExperimentalData.tth) + 2.0;
+    const maxTth = fullExperimentalData.tth.reduce((m, v) => (v > m ? v : m), -Infinity) + 2.0; // FIX: no spread on large arrays
     const params = getAllParams();
 
    // console.log("Params for HKL gen:", JSON.stringify(params));, corrigé le 24 nov
@@ -4620,6 +4637,7 @@ function calculateWilliamsonHall(params, hklList) {
                 case 'cubic': case 'tetragonal': case 'orthorhombic': 
                     params.alpha = params.beta = params.gamma = 90; 
                     break;
+                case 'trigonal':
                 case 'rhombohedral':
                 case 'hexagonal': 
                     params.alpha = params.beta = 90; params.gamma = 120; 
@@ -4698,7 +4716,7 @@ function calculateWilliamsonHall(params, hklList) {
                     const { system } = getSystemAndCentering();
                     switch (system) {
                         case 'cubic': flags.S040 = flags.S004 = flags.S202 = flags.S022 = false; break;
-                        case 'hexagonal': case 'tetragonal': case 'rhombohedral': flags.S040 = flags.S022 = false; break;
+                        case 'hexagonal': case 'tetragonal': case 'rhombohedral': case 'trigonal': flags.S040 = flags.S022 = false; break;
                     }
                     break;
                 case "split_pvoigt":
@@ -4724,10 +4742,9 @@ function calculateWilliamsonHall(params, hklList) {
  * This forces a full recalculation on the next request.
  */
 function invalidateHklCache() {
-    const selectedSgNumber = currentSG ? currentSG.number : null;
-    if (selectedSgNumber && hklIndexCache[selectedSgNumber]) {
-        delete hklIndexCache[selectedSgNumber];
-    }
+    // Cache keys now encode SG number + lattice + wavelength + range;
+    // clearing everything is cheap and always safe.
+    hklIndexCache = {};
 }
 
 
@@ -4752,7 +4769,7 @@ function debounce(func, wait) {
 
 
 
-        function enforceSymmetryConstraints(params) { const { system } = getSystemAndCentering(); switch (system) { case 'cubic': if (params.S400 !== undefined) params.S040 = params.S004 = params.S400; if (params.S220 !== undefined) params.S202 = params.S022 = params.S220; break; case 'hexagonal': case 'tetragonal': case 'rhombohedral': if (params.S400 !== undefined) params.S040 = params.S400; if (params.S202 !== undefined) params.S022 = params.S202; break; } }
+        function enforceSymmetryConstraints(params) { const { system } = getSystemAndCentering(); switch (system) { case 'cubic': if (params.S400 !== undefined) params.S040 = params.S004 = params.S400; if (params.S220 !== undefined) params.S202 = params.S022 = params.S220; break; case 'hexagonal': case 'tetragonal': case 'rhombohedral': case 'trigonal': if (params.S400 !== undefined) params.S040 = params.S400; if (params.S202 !== undefined) params.S022 = params.S202; break; } }
 
         function updatePreviewPattern() {
             if (!mainChart || !workingData.isValid || isFitting) return;
@@ -4817,9 +4834,18 @@ function debounce(func, wait) {
                 }
             }
             
-            const minTth = parseFloat(controls.tthMinSlider.value); 
-            const maxTth = parseFloat(controls.tthMaxSlider.value);
+            const sliderMin = parseFloat(controls.tthMinSlider.value); 
+            const sliderMax = parseFloat(controls.tthMaxSlider.value);
 
+            // FIX: also clamp markers to where experimental data actually
+            // exists. The slider max can sit past the last data point (e.g.
+            // data ends ~81 deg but the slider is at 82), which previously
+            // drew reflection ticks in the empty region beyond the pattern.
+            const dataLen = fullExperimentalData.tth.length;
+            const dataMin = dataLen > 0 ? fullExperimentalData.tth[0] : -Infinity;
+            const dataMax = dataLen > 0 ? fullExperimentalData.tth[dataLen - 1] : Infinity;
+            const minTth = Math.max(sliderMin, dataMin);
+            const maxTth = Math.min(sliderMax, dataMax);
             const ka1Markers = [];
             const ka2Markers = [];
             const deg2rad = Math.PI / 180;
@@ -5101,7 +5127,7 @@ function debounce(func, wait) {
                 experimentalPoints.push({ x: fullExperimentalData.tth[i], y: fullExperimentalData.intensity[i] });
             }
             
-            const yMax = Math.max(...fullExperimentalData.intensity) || 1000;
+            const yMax = fullExperimentalData.intensity.reduce((m, v) => (v > m ? v : m), 0) || 1000; // FIX: no spread on large arrays
             mainChart = new Chart(controls.mainChartCanvas, {
                 type: 'line',
                 data: { 
@@ -5191,7 +5217,7 @@ function debounce(func, wait) {
             // Recalculate Y-axis if needed
             if (recalculateYMax) {
                 // Find the max intensity within the current workingData range
-                const currentMaxY = Math.max(...workingData.intensity);
+                const currentMaxY = workingData.intensity.reduce((m, v) => (v > m ? v : m), -Infinity); // FIX: no spread on large arrays
                 let newYMax = currentMaxY * 1.1; // Add 10% padding
                 if (newYMax < 100) newYMax = 100; // Minimum Y-max
 
@@ -5223,7 +5249,7 @@ function debounce(func, wait) {
         const diffData = workingData.lastRawDifference || [];
         
         if (diffData.length > 0) {
-            const maxAbsDiff = Math.max(...diffData.map(Math.abs));
+            const maxAbsDiff = diffData.reduce((m, v) => (Math.abs(v) > m ? Math.abs(v) : m), 0); // FIX: no spread on large arrays
             if (globalYMax > 0) {
                 const requiredRatio = (maxAbsDiff * DIFF_PLOT_PADDING) / globalYMax;
                 diffPlotHeightRatio = Math.max(DIFF_PLOT_MIN_RATIO, Math.min(DIFF_PLOT_MAX_RATIO, requiredRatio));
@@ -5492,8 +5518,13 @@ function debounce(func, wait) {
             const profileName = profileNameMap[profileType] || "Unknown Profile";
 
             const selectedSg = currentSG;
+            // FIX: report the SELECTED setting's symbol (e.g. "Pcnm"), not the
+            // general/standard symbol (e.g. "Pnma"). Fall back to standard if
+            // no setting-specific symbol is present. Note the setting name too.
             const spaceGroupName = selectedSg
-                ? `${selectedSg.number} – ${selectedSg.standard_symbol}`
+                ? `${selectedSg.number} – ${selectedSg.symbol || selectedSg.standard_symbol}`
+                  + (selectedSg.setting_description && selectedSg.setting_description !== 'standard'
+                     ? ` (setting: ${selectedSg.setting_description})` : '')
                 : 'N/A';
 
             const statsSection = [
@@ -5602,7 +5633,7 @@ function debounce(func, wait) {
                  }
             } else if (algorithm !== 'lm') {
                 esdWarning = "ESDs only available for Levenberg-Marquardt.";
-            } else if (!JtJ || !parameterInfo || ss_res === undefined || !workerWorkingData || !workerWorkingData.intensity || !workerWorkingData.intensity.length === 0) {
+            } else if (!JtJ || !parameterInfo || ss_res === undefined || !workerWorkingData || !workerWorkingData.intensity || workerWorkingData.intensity.length === 0) {
                  esdWarning = "Required data for ESD calculation is missing (JtJ, parameterInfo, ss_res, or workingData).";
             }
 

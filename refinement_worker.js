@@ -1,7 +1,8 @@
 // refinement_worker.js
-// version 122, 22 april 202, 
+// version 123 (fixes: init race, tetragonal/triclinic HKL generation, LM step clamp)
 // Spline Background in nov 2025, version 115
-const initPromise = fetch('cctbx_space_groups_all_settings_v2.json')
+// FIX: must match the file the main thread loads (was stale "_v2", -> 404).
+const initPromise = fetch('cctbx_space_groups_all_settings_v4.json')
     .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -358,11 +359,14 @@ function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
  * Checks cache first in the worker context.
  */
 function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
-    let sgNumber = null;
-    if (spaceGroup && typeof spaceGroup.number === 'number') {
-        sgNumber = spaceGroup.number;
-        if (typeof self !== 'undefined' && typeof importScripts === 'function' && hklIndexCache[sgNumber]) {
-             return hklIndexCache[sgNumber];
+    // FIX: cache key encodes everything the list depends on (SG, lattice,
+    // wavelength, 2-theta range), not just the SG number, so a stale list
+    // can never be reused after a parameter change.
+    let cacheKey = null;
+    if (spaceGroup && typeof spaceGroup.number === 'number' && params) {
+        cacheKey = `${spaceGroup.number}|${params.a}|${params.b}|${params.c}|${params.lambda}|${maxTth}`;
+        if (typeof self !== 'undefined' && typeof importScripts === 'function' && hklIndexCache[cacheKey]) {
+             return hklIndexCache[cacheKey];
         }
     }
 
@@ -417,12 +421,28 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
 
     const maxI = maxIndex;
 
-    if (sgSystem === 'monoclinic' || sgSystem === 'triclinic') {
+    if (sgSystem === 'monoclinic') {
+        // Laue 2/m (unique axis b): wedge k>=0, l>=0, h free.
+        // FIX: for l=0, (h,k,0) and (-h,k,0) are 2/m-equivalent, so require
+        // h>=0 there to avoid duplicated peaks at the same position.
         for (let h = -maxI; h <= maxI; h++) {
             for (let k = 0; k <= maxI; k++) {
                 for (let l = 0; l <= maxI; l++) {
-                     if (k === 0 && l === 0 && h <= 0) continue;
-                     if (k === 0 && h === 0 && l === 0) continue;
+                    if (h === 0 && k === 0 && l === 0) continue;
+                    if (l === 0 && h < 0) continue;
+                    loopAndAdd(h, k, l);
+                }
+            }
+        }
+    } else if (sgSystem === 'triclinic') {
+        // FIX: Laue -1 only relates (h,k,l) to (-h,-k,-l). The old k>=0, l>=0
+        // wedge missed every reflection with mixed signs, e.g. (2,1,-3).
+        // Friedel-unique hemisphere:
+        //   l > 0, or (l = 0 and k > 0), or (l = 0, k = 0, h > 0).
+        for (let h = -maxI; h <= maxI; h++) {
+            for (let k = -maxI; k <= maxI; k++) {
+                for (let l = 0; l <= maxI; l++) {
+                    if (l === 0 && (k < 0 || (k === 0 && h <= 0))) continue;
                     loopAndAdd(h, k, l);
                 }
             }
@@ -471,50 +491,45 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
                 }
             }
         }
-    } else { // Cubic, Tetragonal
-        const isTetragonal = (sgSystem === 'tetragonal');
-        if (a_sq <= 0 || (isTetragonal && c_sq <= 0)) return [];
-
+    } else if (sgSystem === 'tetragonal') {
+        // FIX: tetragonal previously shared the cubic h>=k>=l wedge, which is
+        // only valid when the axes are interchangeable. In tetragonal, l is a
+        // distinct axis, so restricting l<=k dropped every reflection with
+        // l > k (e.g. 001, 101, 102, 112). Correct wedge: h>=k>=0, l>=0 free.
+        if (a_sq <= 0 || c_sq <= 0) return [];
         for (let h = 0; h <= maxI; h++) {
-            const h_term_factor = (h*h);
-
+            const h_term = (h*h) / a_sq;
+            if (h_term > inv_d_sq_max && h > 0) break;
             for (let k = 0; k <= h; k++) {
-                const hk_term_factor = h_term_factor + (k*k);
-
-                for (let l = 0; l <= k; l++) {
+                const hk_term = h_term + (k*k) / a_sq;
+                if (hk_term > inv_d_sq_max && k > 0) break;
+                for (let l = 0; l <= maxI; l++) {
                     if (h === 0 && k === 0 && l === 0) continue;
-
-                    let inv_d_sq_term;
-                    if (isTetragonal) {
-                        inv_d_sq_term = hk_term_factor / a_sq + (l*l) / c_sq;
-                    } else { // Cubic
-                        inv_d_sq_term = (hk_term_factor + l*l) / a_sq;
-                    }
-
-                    if (inv_d_sq_term > inv_d_sq_max) {
-                         break;
-                    }
+                    const hkl_term = hk_term + (l*l) / c_sq;
+                    if (hkl_term > inv_d_sq_max) break;
                     loopAndAdd(h, k, l);
                 }
-                 let l0_term;
-                 if(isTetragonal) l0_term = hk_term_factor / a_sq;
-                 else l0_term = hk_term_factor / a_sq;
-                 if (l0_term > inv_d_sq_max && k > 0) {
-                     break;
-                 }
-
             }
-             let k0l0_term;
-             if(isTetragonal) k0l0_term = h_term_factor / a_sq;
-             else k0l0_term = h_term_factor / a_sq;
-             if (k0l0_term > inv_d_sq_max && h > 0) {
-                 break;
-             }
+        }
+    } else { // Cubic: h >= k >= l >= 0 wedge is valid (axes interchangeable)
+        if (a_sq <= 0) return [];
+        for (let h = 0; h <= maxI; h++) {
+            const h_term_factor = (h*h);
+            if (h_term_factor / a_sq > inv_d_sq_max && h > 0) break;
+            for (let k = 0; k <= h; k++) {
+                const hk_term_factor = h_term_factor + (k*k);
+                if (hk_term_factor / a_sq > inv_d_sq_max && k > 0) break;
+                for (let l = 0; l <= k; l++) {
+                    if (h === 0 && k === 0 && l === 0) continue;
+                    if ((hk_term_factor + l*l) / a_sq > inv_d_sq_max) break;
+                    loopAndAdd(h, k, l);
+                }
+            }
         }
     }
 
-    if (sgNumber !== null && typeof self !== 'undefined' && typeof importScripts === 'function') {
-         hklIndexCache[sgNumber] = rawReflections;
+    if (cacheKey !== null && typeof self !== 'undefined' && typeof importScripts === 'function') {
+         hklIndexCache[cacheKey] = rawReflections;
     }
     return rawReflections;
 }
@@ -1402,17 +1417,14 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, p
                      // set() won't silently clamp it and zero the column.
                      const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
                      const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
+                     // Near the upper bound, step down so set() cannot
+                     // silently clamp the perturbed point and zero the
+                     // Jacobian column. (FIX: the old guard required a finite
+                     // LOWER bound, so parameters bounded only above never
+                     // flipped.) If hemmed in on both sides, fall back to +.
                      let fd_sign = 1;
-                     if (isFinite(minV) && (originalValue + fd_step > maxV || originalValue - fd_step < minV)) {
-                         // near upper bound -> step down; near lower bound -> step up.
-                         // If hemmed in on both sides (unusual), fall back to +.
-                         if (originalValue + fd_step > maxV && originalValue - fd_step >= minV) {
-                             fd_sign = -1;
-                         } else if (originalValue - fd_step < minV && originalValue + fd_step <= maxV) {
-                             fd_sign = 1;
-                         } else {
-                             fd_sign = 1;
-                         }
+                     if (originalValue + fd_step > maxV && originalValue - fd_step >= minV) {
+                         fd_sign = -1;
                      }
 
                      mapping.set(params, workingHklList, originalValue + fd_sign * fd_step);
@@ -1487,7 +1499,12 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, p
                  
                  // CRITICAL IMPROVEMENT: Prevent wild steps from locking params at boundaries
 const p_step_clamped = p_step.map((step, idx) => {
-    const maxAllowedStep = (paramMapping[idx].step || 0.2) * 4.0; 
+    // FIX: the clamp must be relative to the parameter's typical magnitude.
+    // The old absolute clamp (step*4) froze Pawley intensities (values of
+    // ~1e3-1e5 counts capped at +/-1.2 per iteration) and throttled large
+    // Caglioti terms. `scale` is the typical magnitude captured at mapping
+    // creation (createMapping / intensity mappings).
+    const maxAllowedStep = (paramMapping[idx].step || 0.2) * 4.0 * (paramMapping[idx].scale || 1.0);
     return Math.max(-maxAllowedStep, Math.min(maxAllowedStep, step));
 });
                  
@@ -1885,6 +1902,16 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
 
 //   4. Worker Message Handler  
 self.onmessage = async function(e) {
+    // FIX: wait for async init (SG database + mathjs + sg_engine). Without
+    // this, a fit posted before init completed crashed with
+    // "SG_ENGINE is not defined".
+    try {
+        await initPromise;
+    } catch (initErr) {
+        postMessage({ type: 'error', message: `Worker initialization failed: ${initErr && initErr.message ? initErr.message : initErr}` });
+        return;
+    }
+
     const {
         initialParams,
         fitFlags,

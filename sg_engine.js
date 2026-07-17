@@ -51,6 +51,17 @@
             .toUpperCase();
     }
 
+    // Rhombohedral-axes (":R") settings are not supported: the app's
+    // d-spacing math and lattice UI assume hexagonal axes for R groups,
+    // and the :R reflection conditions differ from :H. They are therefore
+    // never indexed; resolve() maps ":R" input to the hexagonal setting
+    // with a console warning.
+    function isRhombAxesSetting(setting) {
+        const sym = (setting && setting.symbol) ? String(setting.symbol) : '';
+        const hall = (setting && setting.hall) ? String(setting.hall) : '';
+        return /:R$/i.test(sym.replace(/\s+/g, '')) || hall.indexOf('*') !== -1;
+    }
+
     // "Short" Hermann-Mauguin symbol: drop positions that are just "1".
     //   "P 1 21/c 1"   -> "P 21/c"   -> normalised "P21/C"
     //   "P 1 2 1"      -> "P 2"      -> "P2"
@@ -84,7 +95,7 @@
         // Prefer a setting marked 'standard'. For monoclinic, none are; in
         // that case prefer the 'b' (unique axis b) setting, which is what
         // the HKL generator assumes. Otherwise fall back to the first.
-        const settings = sgEntry.settings || [];
+        const settings = (sgEntry.settings || []).filter(s => !isRhombAxesSetting(s));
         let s = settings.find(x => x.description === 'standard');
         if (s) return s;
         s = settings.find(x => x.description === 'b');
@@ -126,6 +137,7 @@
             // Index every setting of every group by its symbol, Hall name,
             // AND the short-form symbol ("P 1 21/c 1" -> "P21/C").
             (sgEntry.settings || []).forEach(setting => {
+                if (isRhombAxesSetting(setting)) return;  // never index :R settings
                 const rec = buildRecord(sgEntry, setting);
                 const sKey = normSymbol(setting.symbol);
                 if (sKey && !BY_SYMBOL.has(sKey)) BY_SYMBOL.set(sKey, rec);
@@ -156,6 +168,11 @@
                 const n = parseInt(trimmed, 10);
                 return BY_NUMBER[n] || null;
             }
+            // Rhombohedral-axes input is not supported; fall through to the
+            // hexagonal setting (normSymbol strips the :R tag) but say so.
+            if (/:R$/i.test(trimmed.replace(/\s+/g, ''))) {
+                console.warn('SG_ENGINE: rhombohedral-axes setting ":R" is not supported; resolving to the hexagonal-axes setting.');
+            }
             // First try the user's input verbatim (normalised).
             const key = normSymbol(trimmed);
             const direct = BY_SYMBOL.get(key) || BY_HALL.get(key);
@@ -168,15 +185,6 @@
     }
 
     // 3. Reflection-condition evaluator.
-    //    The cctbx JSON uses a tiny grammar:
-    //      "<expr>=<d>n"   (e.g. "h+k=2n", "-h+k+l=3n", "2h+l=4n")
-    //    plus the family key ("hkl", "h00", "0k0", "00l", "h0l", "0kl",
-    //    "hk0", "hhl"). A reflection is ALLOWED iff, for every family
-    //    it belongs to, ALL conditions listed for that family hold.
-    //
-    //    Conditions in the JSON are cumulative, not alternative: e.g.
-    //    F-centring yields three rules on 'hkl' ('h+k=2n', 'h+l=2n',
-    //    'k+l=2n'), all three of which must be satisfied.
     function inFamily(h, k, l, family) {
         switch (family) {
             case 'hkl': return true;
@@ -321,10 +329,13 @@ function getMultiplicity(h, k, l, laue_class) {
                 else m = (abs_h > 0 || abs_k > 0) ? 6 : 1;
                 break;
             case '-3m':
+                // NOTE: -3m1 and -31m are not distinguished; special-form
+                // values (h0l / hhl) are setting-dependent (6 or 12), the
+                // ones below are indicative. General hkl = group order = 12.
                 if (abs_l !== 0) {
                     if (abs_h === 0 && abs_k === 0) m = 2;
                     else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 12;
-                    else m = 24;
+                    else m = 12;   // FIX: was 24 - cannot exceed |Laue -3m| = 12
                 } else {
                     if (abs_h === 0 && abs_k === 0) m = 1;
                     else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 6;
@@ -361,7 +372,8 @@ function getMultiplicity(h, k, l, laue_class) {
                 break;
             case '2/m':
                 // Unique axis b: the k axis is special.
-                if (abs_k > 0) m = 4;
+                if (abs_k > 0 && (abs_h > 0 || abs_l > 0)) m = 4;
+                else if (abs_k > 0) m = 2;   // FIX: (0k0) has multiplicity 2, was 4
                 else if (abs_k === 0 && (abs_h !== 0 || abs_l !== 0)) m = 2;
                 else m = 1;
                 break;
@@ -389,10 +401,11 @@ function getMultiplicity(h, k, l, laue_class) {
     const sg = db.space_groups[n.toString()];
     if (!sg) return [];
 
-    return sg.settings.map(setting => ({
+    return sg.settings.filter(s => !isRhombAxesSetting(s)).map(setting => ({
         number: sg.number,
         standard_symbol: sg.standard_symbol,
-        system: sg.crystal_system,
+        system: deriveSystem(sg),   // FIX: was raw crystal_system; R groups need 'rhombohedral'
+
         point_group: sg.point_group,
         laue_class: POINT_GROUP_TO_LAUE[sg.point_group] || sg.point_group,
         centrosymmetric: sg.centrosymmetric,
