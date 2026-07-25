@@ -9,11 +9,15 @@ const initPromise = fetch('cctbx_space_groups_all_settings_v4.json')
     })
     .then(data => { 
         globalThis.SG_DATABASE = data; 
-        importScripts('https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js', 'sg_engine.js');
-        
-        if (typeof math === 'undefined') {
-            throw new Error('math.js did not load correctly.');
-        }
+        // FIX: mathjs is no longer imported here. The worker only ever used it
+        // for lusolve/clone/flatten/add; those are now local (solveLinearSystem
+        // below, plus the hand-rolled JtJ). That removes a ~700 kB third-party
+        // download from the critical path of every refinement, makes the worker
+        // work offline, and eliminates a failure mode where a CDN hiccup killed
+        // all fitting. importScripts cannot carry a Subresource Integrity hash,
+        // so there was no way to pin it safely either.
+        importScripts('sg_engine.js');
+
         if (typeof SG_ENGINE === 'undefined') {
             throw new Error('sg_engine.js did not load correctly.');
         }
@@ -22,8 +26,14 @@ const initPromise = fetch('cctbx_space_groups_all_settings_v4.json')
     .catch(err => {
         console.error("Worker Error:", err);
         postMessage({ type: 'error', message: `Worker initialization failed: ${err.message}` });
-        self.close();
+        // FIX: rethrow. A bare .catch() returns a RESOLVED promise, so
+        // `await initPromise` in onmessage never threw and execution fell
+        // through to `SG_ENGINE.resolve()` -> ReferenceError. Rethrowing
+        // makes the guard in onmessage reachable. Mark the promise handled
+        // so the rethrow does not surface as an unhandled rejection.
+        throw err;
     });
+initPromise.catch(() => {});
 
 
 
@@ -47,10 +57,69 @@ function enforceSymmetryConstraintsWorker(params, system) {
     }
 }
 
+/**
+ * Solves A x = b for dense square A by LU decomposition with partial pivoting.
+ * Replaces math.lusolve. A is consumed (modified in place); pass a copy.
+ * Returns a plain Array, or null if A is singular to working precision.
+ */
+function solveLinearSystem(A, b) {
+    const n = A.length;
+    if (n === 0) return [];
+    const x = new Float64Array(n);
+    for (let i = 0; i < n; i++) x[i] = b[i];
+
+    for (let col = 0; col < n; col++) {
+        let piv = col, maxAbs = Math.abs(A[col][col]);
+        for (let r = col + 1; r < n; r++) {
+            const v = Math.abs(A[r][col]);
+            if (v > maxAbs) { maxAbs = v; piv = r; }
+        }
+        if (!(maxAbs > 0) || !isFinite(maxAbs)) return null;   // singular column
+
+        if (piv !== col) {
+            const tr = A[piv]; A[piv] = A[col]; A[col] = tr;
+            const tx = x[piv]; x[piv] = x[col]; x[col] = tx;
+        }
+
+        const d = A[col][col];
+        for (let r = col + 1; r < n; r++) {
+            const f = A[r][col] / d;
+            if (f === 0) continue;
+            A[r][col] = 0;
+            for (let c = col + 1; c < n; c++) A[r][c] -= f * A[col][c];
+            x[r] -= f * x[col];
+        }
+    }
+
+    for (let r = n - 1; r >= 0; r--) {
+        let s = x[r];
+        for (let c = r + 1; c < n; c++) s -= A[r][c] * x[c];
+        const d = A[r][r];
+        if (!isFinite(d) || d === 0) return null;
+        x[r] = s / d;
+    }
+
+    for (let i = 0; i < n; i++) if (!isFinite(x[i])) return null;
+    return Array.from(x);
+}
+
 //   2. Define Constants & Global Worker State  
 const CALCULATION_WINDOW_MULTIPLIER = 8.0;
-const PEAK_HEIGHT_CUTOFF = 0.002;
-const HIGH_WEIGHT_MULTIPLIER = 50.0;
+
+/**
+ * First index i with arr[i] >= target, on an ASCENDING array. O(log n).
+ * PERF FIX: replaces `let s=0; while (s<n && arr[s]<target) s++;`, which made
+ * every pattern evaluation O(n_peaks * n_points) instead of
+ * O(n_peaks * points_per_peak). This is the single hottest path in the fit.
+ */
+function lowerBound(arr, target) {
+    let lo = 0, hi = arr.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (arr[mid] < target) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+}
 let workerWorkingData = null; // To store the sliced data sent from the main thread
 let hklIndexCache = {}; 
 let workerBackgroundAnchors = []; 
@@ -116,6 +185,12 @@ function createMonotonicCubicSplineInterpolator(points) {
 
     // Step 4: Return the interpolation function using Hermite basis functions
     return function(tthValue) {
+        // Flat extrapolation outside the defined range. This MUST be checked
+        // before evaluating the cubic (it used to run after, wasting the work
+        // and reading like a bug).
+        if (tthValue <= points[0].tth)     return points[0].y;
+        if (tthValue >= points[n - 1].tth) return points[n - 1].y;
+
         // Find the interval [i, i+1] that contains tthValue
         let i = 0;
         if (tthValue >= points[n - 1].tth) {
@@ -147,13 +222,7 @@ function createMonotonicCubicSplineInterpolator(points) {
         const h11 = t * t * t - t * t;
 
         // Interpolation formula
-        const interpolatedY = h00 * y_i + h10 * h_i * m_i + h01 * y_ip1 + h11 * h_i * m_ip1;
-
-         // Extrapolation: use flat extrapolation outside the defined range
-         if (tthValue < points[0].tth) return points[0].y;
-         if (tthValue > points[n-1].tth) return points[n-1].y;
-
-        return interpolatedY;
+        return h00 * y_i + h10 * h_i * m_i + h01 * y_ip1 + h11 * h_i * m_ip1;
     };
 }
 
@@ -877,38 +946,6 @@ function getPseudoVoigtArea(tth_peak, hkl, params) {
 
 
 
-/**
- * Applies asymmetry correction (FCJ model for TCH).
- */
-function applyAsymmetry(x, x0, tth_peak, params) {
-    // Only apply for TCH profile, and only if params are set
-    if (!params || params.profileType !== "tch_aniso" || (!params.SL && !params.HL)) {
-        return x - x0;
-    }
-            
-    const delta_2theta = x - x0;
-    if (Math.abs(delta_2theta) < 1e-9) return 0;
-    if (tth_peak < 0.1 || tth_peak >= 180) return delta_2theta;
-
-    const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
-    const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
-    const tan_theta = Math.tan(safe_theta_rad);
-    if (Math.abs(tan_theta) < 1e-9) return delta_2theta;
-    const cot_theta = 1.0 / tan_theta;
-
-    const SL = params.SL || 0;
-    const HL = params.HL || 0;
-    const asymmetry_param = SL * cot_theta + HL;
-    if (!isFinite(asymmetry_param)) return delta_2theta;
-
-    const correction_term = asymmetry_param * Math.abs(delta_2theta);
-    const MAX_CORRECTION_EFFECT = 0.95;
-    const asymmetry_factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(correction_term), MAX_CORRECTION_EFFECT));
-    const corrected = delta_2theta / asymmetry_factor;
-    return isFinite(corrected) ? corrected : delta_2theta;
-}
-
-
 function prepareVoigt(tth_peak, x0, hkl, params) {
     if (!params) return null;
     const profileType = params.profileType;
@@ -925,39 +962,88 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
         }
     }
 
+    let prep;
+    let fwhm_total;
+
     if (profileType === "simple_pvoigt") {
         const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
         const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
         const eta = Math.max(0, Math.min(1, params.eta || 0.5));
-        return { type: 1, x0, asym_param, H_G, H_L, eta, max_d: 10 * (H_G + H_L), Cg };
+        fwhm_total = getPeakFWHM(H_G, H_L);
+        prep = { type: 1, x0, asym_param, H_G, H_L, eta, Cg };
     } else if (profileType === "split_pvoigt") {
         const wL = calculateProfileWidths(tth_peak, hkl, params, 'left');
         const wR = calculateProfileWidths(tth_peak, hkl, params, 'right');
         const H_G_L = Math.max(1e-9, wL.gamma_G), H_L_L = Math.max(1e-9, wL.gamma_L);
         const H_G_R = Math.max(1e-9, wR.gamma_G), H_L_R = Math.max(1e-9, wR.gamma_L);
         const eta = Math.max(0, Math.min(1, params.eta_split || 0.5));
-        return { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta, max_d: 10 * Math.max(H_G_L + H_L_L, H_G_R + H_L_R), Cg };
+        fwhm_total = Math.max(getPeakFWHM(H_G_L, H_L_L), getPeakFWHM(H_G_R, H_L_R));
+        prep = { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta, Cg };
     } else { // tch_aniso
         const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
         const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
-        const fwhm = getPeakFWHM(H_G, H_L);
+        const fwhm = Math.max(1e-9, getPeakFWHM(H_G, H_L));
         let eta = 0;
         if (fwhm > 1e-9) {
             const ratio = H_L / fwhm;
             eta = Math.max(0, Math.min(1, 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3)));
         }
-        return { type: 3, x0, asym_param, fwhm: Math.max(1e-9, fwhm), eta, max_d: 10 * (H_G + H_L), Cg };
+        fwhm_total = fwhm;
+        prep = { type: 3, x0, asym_param, fwhm, eta, Cg };
     }
+
+    // FIX: `max_d` is now the SINGLE authoritative truncation radius, and it
+    // matches the window that calculatePattern uses to pick its loop bounds.
+    // Previously the two disagreed (10*(H_G+H_L) here vs 8*FWHM there) and a
+    // separate PEAK_HEIGHT_CUTOFF chopped the profile at 0.2% of peak height,
+    // which put a step of 0.002*I_peak into the model. That step is large
+    // against 1/I weights and it made the one-sided finite-difference
+    // Jacobian discontinuous.
+    //
+    // Asymmetry broadens one flank by up to 1/(1-0.95) ... in practice the
+    // clamp limits it to ~2x, so widen the window when asymmetry is active.
+    prep.fwhm_total = Math.max(1e-6, fwhm_total);
+    const truncationRadius = CALCULATION_WINDOW_MULTIPLIER * Math.max(0.01, prep.fwhm_total)
+                             * (asym_param !== 0 ? 2.0 : 1.0);
+
+    // Pedestal: the profile value at the truncation radius. Subtracting it
+    // (clamped at zero) is what makes the profile reach zero continuously at
+    // the window edge instead of dropping off a cliff.
+    //
+    // Measured with max_d temporarily Infinity: probing at exactly
+    // `x0 + truncationRadius` otherwise rounds a fraction of an ulp past the
+    // cutoff, evalVoigt early-returns 0, and the pedestal silently comes out
+    // as 0. An asymmetric shape has two different edge values, so take the
+    // larger -- then neither flank can go negative. Twice per peak, not per
+    // data point.
+    prep.pedestal = 0;
+    prep.max_d = Infinity;
+    prep.pedestal = Math.max(evalVoigt(x0 + truncationRadius, prep),
+                             evalVoigt(x0 - truncationRadius, prep));
+    prep.max_d = truncationRadius;
+    return prep;
 }
 
+/**
+ * Profile value at x, truncated at p.max_d and pedestal-subtracted so it
+ * reaches zero continuously at the window edge.
+ * This is the innermost hot loop of the whole program -- it runs once per data
+ * point per reflection per function evaluation -- so it is deliberately kept
+ * as one self-contained function with no helper call.
+ */
 function evalVoigt(x, p) {
     if (!p) return 0.0;
     let delta = x - p.x0;
+    if (delta > p.max_d || delta < -p.max_d) return 0.0;
     if (p.asym_param !== 0 && Math.abs(delta) >= 1e-9) {
-        const factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(p.asym_param * Math.abs(delta)), 0.95));
-        delta /= factor;
+        // FIX: use the SIGNED delta. The old code took Math.abs(delta) inside
+        // the correction, so BOTH flanks were stretched by the same factor and
+        // SL/HL produced pure symmetric broadening -- no asymmetry whatsoever.
+        // With the signed form one flank is broadened (factor > 1) and the
+        // other sharpened (factor < 1), which is the point of the correction.
+        const t = Math.max(-0.95, Math.min(0.95, p.asym_param * delta));
+        delta /= (1.0 - t);   // 1 - t is in [0.05, 1.95], always positive
     }
-    if (Math.abs(delta) > p.max_d) return 0.0;
 
     let hg, hl;
     if (p.type === 1) {
@@ -973,7 +1059,8 @@ function evalVoigt(x, p) {
     const dl = (delta / hl) * (delta / hl);
     const g = Math.exp(-p.Cg * dg);
     const l = 1.0 / (1.0 + 4.0 * dl);
-    return p.eta * l + (1.0 - p.eta) * g;
+    const v = p.eta * l + (1.0 - p.eta) * g - p.pedestal;
+    return v > 0 ? v : 0.0;
 }
 
 // Keep pseudoVoigt as a backward-compatible wrapper for any legacy call sites
@@ -998,37 +1085,29 @@ function pseudoVoigt(x, x0, tth_peak, hkl, params) {
     const lambda2 = params.lambda2 || 0;
     const ratio21 = params.ratio || 0;
     const zeroShift = params.zeroShift || 0;
-    const WINDOW_MULT = CALCULATION_WINDOW_MULTIPLIER;
-    const HEIGHT_CUTOFF = PEAK_HEIGHT_CUTOFF;
-
     //   K-alpha 1  
+    // The window now comes from prep.max_d, so the loop bounds and the
+    // profile's own truncation radius can never disagree. This also removes
+    // the duplicate calculateProfileWidths/getPeakFWHM call that used to be
+    // made purely to size the window, and it evaluates the widths at the same
+    // angle prepareVoigt uses (basePos1) rather than at peak.tth.
     hklList.forEach(peak => {
         if (!peak || !peak.intensity || peak.intensity <= 0 || !peak.tth || peak.tth < 0 || peak.tth > 180) return;
 
         const basePos1 = peak.tth + zeroShift;
-        const shift1 = calculatePeakShift(basePos1, params);
-        const peakPos1 = basePos1 + shift1;
-        
-        const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
-        const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L);
-        
-        const window1 = WINDOW_MULT * Math.max(0.01, fwhm_approx1);
-        const min_tth1 = peakPos1 - window1;
-        const max_tth1 = peakPos1 + window1;
-
-        let startIndex = 0;
-        while (startIndex < n_points && tthAxis[startIndex] < min_tth1) startIndex++;
-        if (startIndex === n_points) return;
+        const peakPos1 = basePos1 + calculatePeakShift(basePos1, params);
 
         const prep1 = prepareVoigt(basePos1, peakPos1, peak, params);
+        const min_tth1 = peakPos1 - prep1.max_d;
+        const max_tth1 = peakPos1 + prep1.max_d;
+
+        const startIndex = lowerBound(tthAxis, min_tth1);
+        if (startIndex === n_points) return;
+
         for (let i = startIndex; i < n_points; i++) {
             const current_tth = tthAxis[i];
             if (current_tth > max_tth1) break;
-            const intensityAtPoint = evalVoigt(current_tth, prep1);
-
-            if (intensityAtPoint > HEIGHT_CUTOFF) {
-                pattern[i] += peak.intensity * intensityAtPoint;
-            }
+            pattern[i] += peak.intensity * evalVoigt(current_tth, prep1);
         }
     });
 
@@ -1045,29 +1124,19 @@ function pseudoVoigt(x, x0, tth_peak, hkl, params) {
 
             const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
             const basePos2 = tth2 + zeroShift;
-            const shift2 = calculatePeakShift(basePos2, params);
-            const peakPos2 = basePos2 + shift2;
-            
-            const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
-            const fwhm_approx2 = getPeakFWHM(gG2, gL2);
+            const peakPos2 = basePos2 + calculatePeakShift(basePos2, params);
 
-            const window2 = WINDOW_MULT * Math.max(0.01, fwhm_approx2);
-            const min_tth2 = peakPos2 - window2;
-            const max_tth2 = peakPos2 + window2;
+            const prep2 = prepareVoigt(basePos2, peakPos2, peak, params);
+            const min_tth2 = peakPos2 - prep2.max_d;
+            const max_tth2 = peakPos2 + prep2.max_d;
 
-            let startIndex2 = 0;
-            while (startIndex2 < n_points && tthAxis[startIndex2] < min_tth2) startIndex2++;
+            const startIndex2 = lowerBound(tthAxis, min_tth2);
             if (startIndex2 === n_points) return;
 
-          const prep2 = prepareVoigt(basePos2, peakPos2, peak, params);
             for (let i = startIndex2; i < n_points; i++) {
                 const current_tth = tthAxis[i];
                 if (current_tth > max_tth2) break;
-                const intensityAtPoint = evalVoigt(current_tth, prep2);
-
-                if (intensityAtPoint > HEIGHT_CUTOFF) {
-                    pattern[i] += peak.intensity * ratio21 * intensityAtPoint;
-                }
+                pattern[i] += peak.intensity * ratio21 * evalVoigt(current_tth, prep2);
             }
         });
     }
@@ -1115,42 +1184,35 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
 
     // 3. Extract area per peak without storing M arrays of size N
     const currentCycleIntensities = new Float64Array(hklList.length);
-    const WINDOW_MULT = CALCULATION_WINDOW_MULTIPLIER + 2; 
-    
+
     hklList.forEach((peak, j) => {
         if (!peak || !peak.tth || peak.tth <= 0 || peak.tth >= 180) return;
-        
+
         const basePos1 = peak.tth + zeroShift;
         const peakPos1 = basePos1 + calculatePeakShift(basePos1, params);
-        const { gamma_G, gamma_L } = calculateProfileWidths(basePos1, peak, params);
-        const window1 = WINDOW_MULT * Math.max(0.01, getPeakFWHM(gamma_G, gamma_L));
-        
-        const min_tth1 = peakPos1 - window1;
-        const max_tth1 = peakPos1 + window1;
         const prep1 = prepareVoigt(basePos1, peakPos1, peak, params);
-        
-        let tth2 = null, basePos2 = null, peakPos2 = null, min_tth2 = 0, max_tth2 = 0, prep2 = null;
+        const min_tth1 = peakPos1 - prep1.max_d;
+        const max_tth1 = peakPos1 + prep1.max_d;
+
+        let tth2 = null, min_tth2 = 0, max_tth2 = 0, prep2 = null;
         if (doubletEnabled) {
              const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
              const sinTheta2 = sinTheta1 * lambdaRatio;
              if (Math.abs(sinTheta2) < 1) {
                  tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                 basePos2 = tth2 + zeroShift;
-                 peakPos2 = basePos2 + calculatePeakShift(basePos2, params);
-                 const widths2 = calculateProfileWidths(basePos2, peak, params);
-                 const window2 = WINDOW_MULT * Math.max(0.01, getPeakFWHM(widths2.gamma_G, widths2.gamma_L));
-                 min_tth2 = peakPos2 - window2;
-                 max_tth2 = peakPos2 + window2;
+                 const basePos2 = tth2 + zeroShift;
+                 const peakPos2 = basePos2 + calculatePeakShift(basePos2, params);
                  prep2 = prepareVoigt(basePos2, peakPos2, peak, params);
+                 min_tth2 = peakPos2 - prep2.max_d;
+                 max_tth2 = peakPos2 + prep2.max_d;
              }
         }
-        
-        // Find loop bounds
-        let startIdx = 0;
+
+        // Find loop bounds (binary search; see lowerBound)
         const actualMin = tth2 ? Math.min(min_tth1, min_tth2) : min_tth1;
         const actualMax = tth2 ? Math.max(max_tth1, max_tth2) : max_tth1;
-        
-        while (startIdx < n_points && expData.tth[startIdx] < actualMin) startIdx++;
+
+        const startIdx = lowerBound(expData.tth, actualMin);
         
         let extracted_area = 0;
         let prev_partitioned_I = 0;
@@ -1168,7 +1230,7 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
             }
             
             let current_fraction = 0;
-            if (profile_val > (PEAK_HEIGHT_CUTOFF / 10)) { 
+            if (profile_val > 0) {
                  const calc_k = peak.intensity * profile_val;
                  if (total_calc[i] > 1e-9) {
                      current_fraction = calc_k / total_calc[i];
@@ -1235,7 +1297,14 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
         y_calc[i] = netCalcPattern[i] + y_bkg[i];
     }
 
-    let sum_w_res_sq = 0, sum_w_obs_sq = 0, sum_abs_res = 0, sum_abs_obs_net = 0;
+    // FIX: Rp and Rwp now use the SAME convention (both on the full observed
+    // profile, as GSAS/FullProf report them). Previously Rp was divided by
+    // the BACKGROUND-SUBTRACTED sum while Rwp used the raw profile, so on
+    // high-background data Rp looked far worse than Rwp for no real reason.
+    // The background-subtracted variants are computed alongside and reported
+    // as r_p_net / rwp_net for anyone who wants them.
+    let sum_w_res_sq = 0, sum_w_obs_sq = 0, sum_w_obs_net_sq = 0;
+    let sum_abs_res = 0, sum_abs_obs = 0, sum_abs_obs_net = 0;
     for (let i = 0; i < N; i++) {
         const obs_i = y_obs[i];
         const calc_i = y_calc[i];
@@ -1248,13 +1317,17 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
 
             sum_w_res_sq += w_i * res * res;
             sum_w_obs_sq += w_i * obs_i * obs_i;
+            sum_w_obs_net_sq += w_i * obs_net * obs_net;
             sum_abs_res += Math.abs(res);
+            sum_abs_obs += Math.abs(obs_i);
             sum_abs_obs_net += Math.abs(obs_net);
          }
     }
 
-    const Rp = (sum_abs_obs_net > 1e-9) ? 100 * (sum_abs_res / sum_abs_obs_net) : 0;
-    const Rwp = (sum_w_obs_sq > 1e-9) ? 100 * Math.sqrt(Math.max(0, sum_w_res_sq / sum_w_obs_sq)) : 0;
+    const Rp  = (sum_abs_obs   > 1e-9) ? 100 * (sum_abs_res / sum_abs_obs) : 0;
+    const Rwp = (sum_w_obs_sq  > 1e-9) ? 100 * Math.sqrt(Math.max(0, sum_w_res_sq / sum_w_obs_sq)) : 0;
+    const RpNet  = (sum_abs_obs_net  > 1e-9) ? 100 * (sum_abs_res / sum_abs_obs_net) : 0;
+    const RwpNet = (sum_w_obs_net_sq > 1e-9) ? 100 * Math.sqrt(Math.max(0, sum_w_res_sq / sum_w_obs_net_sq)) : 0;
 
 
      const { paramMapping } = getParameterMapping(fitFlags || {}, params || {}, hklList || [], refinementMode || 'le-bail');
@@ -1280,6 +1353,8 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
     return {
         r_p: isFinite(Rp) ? Rp : -1,
         rwp: isFinite(Rwp) ? Rwp : -1,
+        r_p_net: isFinite(RpNet) ? RpNet : -1,
+        rwp_net: isFinite(RwpNet) ? RwpNet : -1,
         chi2: isFinite(chi2) ? chi2 : -1,
         scaleFactor: 1.0,
         sum_w_res_sq: isFinite(sum_w_res_sq) ? sum_w_res_sq : 0
@@ -1318,33 +1393,56 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
         const baseProgress = leBailCycle / totalLeBailCycles;
         const cycleProgressSpan = 1 / totalLeBailCycles;
 
+        // ===================================================================
+        // CRITICAL FIX -- Le Bail intensities are extracted ONCE PER CYCLE and
+        // then held FIXED for every function evaluation inside this call.
+        //
+        // The previous version re-extracted them inside the objective, on every
+        // single evaluation. That makes profile-WIDTH refinement degenerate:
+        // the extraction re-partitions the observed profile against whatever
+        // shape it is handed, so it silently absorbs the width error and
+        // flattens the very curvature the refiner needs. Measured on a
+        // synthetic 9-reflection cubic pattern (true LX = 6):
+        //
+        //     LX      Rwp re-extracting     Rwp with fixed intensities
+        //      6           5.19 %                    5.19 %
+        //     12          20.15 %                   32.34 %
+        //     25          40.11 %                  103.39 %
+        //    200          56.66 %                  658.34 %
+        //
+        // Re-extracting flattens the landscape and plateaus around 56 %, so LM
+        // wanders into the flat region and never returns; with fixed
+        // intensities the minimum at the true width is sharp and it converges.
+        // Extract-then-refine, repeated over a few outer cycles, is the actual
+        // Le Bail method.
+        // ===================================================================
+        // Re-extract the Le Bail intensities ONCE at the top of each LM
+        // iteration. They are then constants for that whole iteration --
+        // baseline, every Jacobian column, and the trial step -- which is what
+        // makes the derivatives and the accept/reject test meaningful. This is
+        // the standard extract-then-least-squares cycle.
+        const refreshLeBailIntensities = () => {
+            if (refinementMode !== 'le-bail') return;
+            enforceSymmetryConstraintsWorker(params, system);
+            updateHklPositions(workingHklList, params, system);
+            const bkg0 = calculateTotalBackground(workerWorkingData.tth, params,
+                                                  workerBackgroundAnchors, scratch_bkg);
+            leBailIntensityExtraction(
+                { tth: workerWorkingData.tth, intensity: y_obs, background: bkg0 },
+                workingHklList, params, scratch_pattern
+            );
+        };
+
         const calculateTotalPattern = (targetArray) => {
             enforceSymmetryConstraintsWorker(params, system);
             updateHklPositions(workingHklList, params, system);
 
             const y_bkg = calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors, scratch_bkg);
-            // In Le Bail mode, extract per-peak intensities from the observed
-            // pattern (minus background) using the current profile shapes BEFORE
-            // computing the calculated pattern. This replaces the old
-            // single-global-scale-factor approximation, which was mathematically
-            // wrong: it tried to match per-peak intensities by scaling the whole
-            // pattern by one number, so the refiner had to move lattice/profile
-            // parameters to compensate for intensities it was forbidden to adjust.
-            // Per-peak extraction is the actual Le Bail method.
-            if (refinementMode === 'le-bail') {
-                leBailIntensityExtraction(
-                    { tth: workerWorkingData.tth, intensity: y_obs, background: y_bkg },
-                    workingHklList,
-                    params,
-                    scratch_pattern
-                );
-            }
-
-const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, params, scratch_pattern);
+            const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, params, scratch_pattern);
             for (let i = 0; i < n_points; i++) {
                 targetArray[i] = netCalcPattern[i] + y_bkg[i];
             }
-            return 1.0;   // no separate scale factor anymore
+            return 1.0;   // no separate scale factor
         };
 
 
@@ -1368,11 +1466,14 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, p
         //   which is the local-curvature scaling that replaces the old
         //   initial-value normalization.
         let lastAcceptedCost = Infinity;
+        const deadParamWarned = new Set();
+        let lastProgressPct = -1;
 
         for (let iter = 0; iter < maxIter; iter++) {
              let oldParams = null;
              let oldHklList = null;
             try {
+                 refreshLeBailIntensities();
                  calculateTotalPattern(y_calc_baseline);
 
                  let cost = 0;
@@ -1407,59 +1508,118 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, p
                      const mapping = paramMapping[p];
                      const originalValue = mapping.get(params, workingHklList);
 
-                     // Larger floor than before (1e-7 absolute, 1e-4 relative)
-                     // to keep the FD signal above numerical noise for small
-                     // profile params like GW, GP, SL, HL.
-                     let fd_step = Math.max(1e-7, Math.abs(originalValue) * 1e-4);
-
-                     // If we're at (or below) the lower bound, flipping sign
-                     // keeps the perturbed point inside the feasible set so
-                     // set() won't silently clamp it and zero the column.
                      const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
                      const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
-                     // Near the upper bound, step down so set() cannot
-                     // silently clamp the perturbed point and zero the
-                     // Jacobian column. (FIX: the old guard required a finite
-                     // LOWER bound, so parameters bounded only above never
-                     // flipped.) If hemmed in on both sides, fall back to +.
+
+                     // Base step: relative, with an absolute floor and a floor
+                     // tied to the parameter's declared typical magnitude (so a
+                     // parameter sitting AT zero still gets a usable probe).
+                     const baseStep = Math.max(1e-7,
+                                               Math.abs(originalValue) * 1e-4,
+                                               (mapping.defaultScale || 0) * 1e-4);
+
+                     // ADAPTIVE FD.
+                     // A width parameter can fall into a dead zone: gamma is
+                     // clamped by `Math.max(1e-4, ...)` inside
+                     // calculateProfileWidths, so once e.g. GW drops near its
+                     // lower bound the clamp swallows any small perturbation,
+                     // the column comes out identically zero, and the parameter
+                     // is frozen there for the rest of the fit -- it cannot
+                     // recover even after the cell and zero-point are corrected.
+                     // Escalate the probe until the model actually responds.
+                     let fd_step = baseStep;
                      let fd_sign = 1;
-                     if (originalValue + fd_step > maxV && originalValue - fd_step >= minV) {
-                         fd_sign = -1;
+                     let responded = false;
+
+                     for (let attempt = 0; attempt < 5; attempt++) {
+                         // Step away from whichever bound we are against, so
+                         // set() cannot silently clamp the probe and zero the
+                         // column. If hemmed in on both sides, fall back to +.
+                         fd_sign = (originalValue + fd_step > maxV && originalValue - fd_step >= minV) ? -1 : 1;
+
+                         mapping.set(params, workingHklList, originalValue + fd_sign * fd_step);
+                         const applied = mapping.get(params, workingHklList);
+                         const actual_h = applied - originalValue;   // what set() really did
+
+                         if (actual_h !== 0) {
+                             calculateTotalPattern(y_calc_total);
+                             for (let i = 0; i < n_points; i++) {
+                                 if (!isFinite(y_calc_baseline[i]) || !isFinite(y_calc_total[i])) {
+                                     jacobian_col[i] = 0;
+                                 } else {
+                                     // Divide by the step actually taken, not the
+                                     // one requested -- they differ whenever set()
+                                     // clamps at a bound.
+                                     jacobian_col[i] = (y_calc_total[i] - y_calc_baseline[i])
+                                                       / actual_h * sqrt_weights[i];
+                                 }
+                             }
+                             for (let i = 0; i < n_points; i++) {
+                                 if (jacobian_col[i] !== 0) { responded = true; break; }
+                             }
+                         }
+
+                         if (responded) break;
+                         fd_step *= 100;    // 1e2 .. 1e8 x the base step
                      }
 
-                     mapping.set(params, workingHklList, originalValue + fd_sign * fd_step);
-                     calculateTotalPattern(y_calc_total);
-
-                     for (let i = 0; i < n_points; i++) {
-                          if (!isFinite(y_calc_baseline[i]) || !isFinite(y_calc_total[i])) {
-                              jacobian_col[i] = 0;
-                          } else {
-                              // Note the fd_sign: df/dx ≈ (f(x+h) - f(x)) / h
-                              // with h = fd_sign * fd_step, i.e. signed step.
-                              jacobian_col[i] = (y_calc_total[i] - y_calc_baseline[i])
-                                                / (fd_sign * fd_step) * sqrt_weights[i];
-                          }
-                     }
+                     if (!responded) jacobian_col.fill(0);
 
                      mapping.set(params, workingHklList, originalValue);
                      workingHklList.forEach((h, idx) => { if (h) h.intensity = savedIntensities[idx]; });
-                     jacobian_T.push([...jacobian_col]);
+                     // PERF FIX: keep the column typed. `[...jacobian_col]`
+                     // unboxed a Float64Array into a plain Array of n_points
+                     // heap numbers, n_params times per iteration.
+                     jacobian_T.push(jacobian_col.slice());
                  }
 
-                 const jacobian = math.transpose(jacobian_T);
-                 const JtJ = math.multiply(jacobian_T, jacobian);
-                 const Jtr = math.multiply(jacobian_T, Array.from(residuals));
+                 // PERF FIX: form JtJ and Jtr directly instead of
+                 // math.transpose() + math.multiply(). The transpose allocated
+                 // a throwaway n_points x n_params boxed matrix purely to be
+                 // consumed once, and mathjs's generic multiply dispatch is
+                 // far slower than a typed inner loop. JtJ is symmetric, so
+                 // only the upper triangle is computed.
+                 const JtJ = new Array(n_params);
+                 for (let i = 0; i < n_params; i++) JtJ[i] = new Array(n_params).fill(0);
+                 const Jtr = new Array(n_params).fill(0);
+                 let productFailed = false;
 
-                  if (n_params === 1 && typeof JtJ === 'number' && isFinite(JtJ)) {
-                       finalJtJ = [[JtJ]];
-                  } else if (n_params > 0 && Array.isArray(JtJ) && JtJ.length === n_params && Array.isArray(JtJ[0]) && JtJ[0].length === n_params) {
-                       finalJtJ = JtJ;
-                  } else {
-                       console.warn(`LM iter ${iter}: JtJ calculation failed or format invalid.`);
-                       finalJtJ = null;
-                       lambda = Math.min(1e9, lambda * 5);
-                       continue;
-                  }
+                 for (let i = 0; i < n_params; i++) {
+                     const ci = jacobian_T[i];
+                     let s_r = 0;
+                     for (let k = 0; k < n_points; k++) s_r += ci[k] * residuals[k];
+                     if (!isFinite(s_r)) productFailed = true;
+                     Jtr[i] = s_r;
+
+                     for (let j = i; j < n_params; j++) {
+                         const cj = jacobian_T[j];
+                         let s = 0;
+                         for (let k = 0; k < n_points; k++) s += ci[k] * cj[k];
+                         if (!isFinite(s)) productFailed = true;
+                         JtJ[i][j] = s;
+                         JtJ[j][i] = s;
+                     }
+                 }
+
+                 if (productFailed) {
+                      console.warn(`LM iter ${iter}: JtJ/Jtr contained non-finite entries.`);
+                      finalJtJ = null;
+                      lambda = Math.min(1e9, lambda * 5);
+                      continue;
+                 }
+                 finalJtJ = JtJ;
+
+                 // A parameter with an identically-zero Jacobian column has no
+                 // effect on the model -- it is either symmetry-slaved or its
+                 // set() is not reaching the model. It would silently consume a
+                 // degree of freedom and produce a meaningless ESD, so say so.
+                 for (let i = 0; i < n_params; i++) {
+                     if (JtJ[i][i] === 0 && !deadParamWarned.has(paramMapping[i].name)) {
+                         deadParamWarned.add(paramMapping[i].name);
+                         console.warn(`LM: parameter "${paramMapping[i].name}" has no effect on the calculated pattern (zero Jacobian column).`);
+                         postMessage({ type: 'warning', message: `Parameter "${paramMapping[i].name}" has no effect on the fit and will not move.` });
+                     }
+                 }
 
                  // Marquardt diagonal scaling: A = JtJ + lambda * diag(JtJ).
                  // This replaces the old scheme where parameters were
@@ -1467,24 +1627,23 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, p
                  // carries the correct CURRENT local curvature for each
                  // parameter, so damping is applied consistently whether
                  // a parameter has moved a lot or a little from its start.
-                 const A_lm = math.clone(finalJtJ);
+                 // solveLinearSystem consumes its matrix, so hand it a copy and
+                 // keep finalJtJ intact for the main thread's ESD calculation.
+                 const A_lm = finalJtJ.map(row => Float64Array.from(row));
                  for (let i = 0; i < n_params; i++) {
                      const d = finalJtJ[i][i];
                      const diag = (isFinite(d) && d > 1e-30) ? d : 1e-6;
                      A_lm[i][i] += lambda * diag;
                  }
 
-                 let p_step;
-                 try {
-                    const p_step_matrix = math.lusolve(A_lm, Jtr);
-                    p_step = math.flatten(p_step_matrix);
-                 } catch (solveError) {
-                      console.warn(`LM iter ${iter}: Solve failed: ${solveError.message}. Increasing lambda.`);
+                 const p_step = solveLinearSystem(A_lm, Jtr);
+                 if (!p_step) {
+                      console.warn(`LM iter ${iter}: normal equations are singular. Increasing lambda.`);
                       lambda = Math.min(1e9, lambda * 10);
                       continue;
                  }
 
-                 if (!p_step || p_step.some(v => !isFinite(v))) {
+                 if (p_step.some(v => !isFinite(v))) {
                      console.warn(`LM iter ${iter}: Step calculation resulted in NaN/Infinity. Increasing lambda.`);
                      lambda = Math.min(1e9, lambda * 5);
                      continue;
@@ -1497,18 +1656,43 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, workingHklList, p
                  // Apply trial step in raw parameter space.
                  const p_current = paramMapping.map(m => m.get(params, workingHklList));
                  
-                 // CRITICAL IMPROVEMENT: Prevent wild steps from locking params at boundaries
-const p_step_clamped = p_step.map((step, idx) => {
-    // FIX: the clamp must be relative to the parameter's typical magnitude.
-    // The old absolute clamp (step*4) froze Pawley intensities (values of
-    // ~1e3-1e5 counts capped at +/-1.2 per iteration) and throttled large
-    // Caglioti terms. `scale` is the typical magnitude captured at mapping
-    // creation (createMapping / intensity mappings).
-    const maxAllowedStep = (paramMapping[idx].step || 0.2) * 4.0 * (paramMapping[idx].scale || 1.0);
-    return Math.max(-maxAllowedStep, Math.min(maxAllowedStep, step));
-});
-                 
-                 const p_new = math.add(p_current, p_step_clamped);
+                 // ===============================================================
+                 // Trust region on the LM step.
+                 //
+                 // CRITICAL FIX: the old code clipped each component of p_step
+                 // INDEPENDENTLY. The Gauss-Newton step is a joint solution of
+                 // coupled normal equations, so truncating one component while
+                 // leaving the others intact rotates the vector -- and a rotated
+                 // Gauss-Newton step is no longer guaranteed to point downhill.
+                 // Observed directly: refining `a` together with `zeroShift`
+                 // (strongly anti-correlated, both move peak positions), the
+                 // solve asked for da=+1.9e-3 with dz=+4.1e-2; dz was clipped to
+                 // +4.0e-3 while da passed through untouched, and the resulting
+                 // step went UPHILL. Every iteration was rejected and the fit sat
+                 // still while lambda climbed. Refining widths alone, where
+                 // nothing clipped, converged normally.
+                 //
+                 // Scaling the whole vector by one factor keeps the direction and
+                 // only shortens the step, which is what a trust region is meant
+                 // to do.
+                 // ===============================================================
+                 let stepScale = 1.0;
+                 for (let idx = 0; idx < p_step.length; idx++) {
+                     const m = paramMapping[idx];
+                     // `scale` is |initial value|, which collapses for parameters
+                     // that legitimately start near zero (zeroShift, GV, the
+                     // Stephens terms). Fall back to the declared default so such
+                     // a parameter is not frozen by an absurdly small budget.
+                     const magnitude = Math.max(Math.abs(m.scale || 0), m.defaultScale || 0, 1e-6);
+                     const maxAllowedStep = (m.step || 0.2) * 4.0 * magnitude;
+                     const want = Math.abs(p_step[idx]);
+                     if (want > maxAllowedStep && want > 0) {
+                         stepScale = Math.min(stepScale, maxAllowedStep / want);
+                     }
+                 }
+                 const p_step_clamped = p_step.map(v => v * stepScale);
+
+                 const p_new = p_current.map((v, i) => v + p_step_clamped[i]);
 
 
 
@@ -1538,9 +1722,15 @@ const p_step_clamped = p_step.map((step, idx) => {
                      lambda = Math.min(1e9, lambda * 2);
                  }
 
-                 const progressWithinCycle = (iter + 1) / maxIter;
-                 const overallProgress = baseProgress + progressWithinCycle * cycleProgressSpan;
-                 postMessage({ type: 'progress', value: Math.min(1.0, overallProgress) });
+                 // Throttle: only post when the whole-percent value changes.
+                 // Posting every iteration floods the main thread's event loop
+                 // with messages it can only render once per frame anyway.
+                 const overallProgress = Math.min(1.0, baseProgress + ((iter + 1) / maxIter) * cycleProgressSpan);
+                 const pct = Math.floor(overallProgress * 100);
+                 if (pct !== lastProgressPct) {
+                     lastProgressPct = pct;
+                     postMessage({ type: 'progress', value: overallProgress });
+                 }
 
                  // Convergence test: only compares ACCEPTED costs, so a
                  // rejected step can never look like "converged" here.
@@ -1618,25 +1808,26 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
     const scratch_bkg = new Float64Array(n_points);
     const scratch_pattern = new Float64Array(n_points);
 
+    // Le Bail intensities are extracted once, below, and held fixed for the
+    // whole run -- see the long note in refineParametersLM for why
+    // re-extracting inside the objective breaks width refinement.
+    if (refinementMode === 'le-bail') {
+        enforceSymmetryConstraintsWorker(initialParams, system);
+        updateHklPositions(hklList, initialParams, system);
+        const bkg0 = calculateTotalBackground(workerWorkingData.tth, initialParams, workerBackgroundAnchors);
+        leBailIntensityExtraction(
+            { tth: workerWorkingData.tth, intensity: workerWorkingData.intensity, background: bkg0 },
+            hklList,
+            initialParams
+        );
+    }
+
     const objective = (p_obj, hkl_list_obj) => {
          try {
             enforceSymmetryConstraintsWorker(p_obj, system); 
             updateHklPositions(hkl_list_obj, p_obj, system);
-const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors, scratch_bkg);
-             // Le Bail: extract per-peak intensities against the current shapes
-             // before building the calculated pattern (see LM fix notes above).
-             if (refinementMode === 'le-bail') {
-                  leBailIntensityExtraction(
-                      { tth: workerWorkingData.tth,
-                        intensity: workerWorkingData.intensity,
-                        background: y_bkg },
-                      hkl_list_obj,
-                      p_obj,
-                      scratch_pattern
-                  );
-             }
-
-const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj, scratch_pattern);
+            const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors, scratch_bkg);
+            const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj, scratch_pattern);
              let sum_w_res_sq = 0;
              for (let i = 0; i < workerWorkingData.tth.length; i++) {
                   const w_i = workerWorkingData.weights[i];
@@ -1660,6 +1851,18 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_o
     );
 
     const initialCost = objective(initialParams, hklList);
+
+    // FIX: one reference energy scale shared by BOTH acceptance tests.
+    // Previously the local Metropolis step divided by the replica's own
+    // CURRENT cost (relative scale) while the replica-exchange test used the
+    // raw cost difference (absolute scale). With chi-square values of 1e5-1e7
+    // counts the swap exponent saturated, so exchanges were accepted either
+    // always or never and the run degenerated into 8 independent annealers
+    // rather than parallel tempering. Using a fixed scale also keeps the
+    // local acceptance ratio well defined (a cost-dependent denominator
+    // breaks detailed balance).
+    const costScale = Math.max(1e-9, Math.abs(initialCost));
+
     let replicas = temperatures.map(temp => ({
         params: JSON.parse(JSON.stringify(initialParams)),
         hklList: JSON.parse(JSON.stringify(hklList)),
@@ -1673,34 +1876,43 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_o
 
     const baseProgress = leBailCycle / totalLeBailCycles;
     const cycleProgressSpan = 1 / totalLeBailCycles;
-
+    let lastProgressPct = -1;
+    let consecutiveErrors = 0;
 
     for (let iter = 0; iter < maxIter; iter++) {
          try {
              for (let i = 0; i < numReplicas; i++) {
                  let replica = replicas[i];
-                 const originalParams = JSON.parse(JSON.stringify(replica.params));
-                 const originalHklList = JSON.parse(JSON.stringify(replica.hklList));
 
                  const p_idx = Math.floor(Math.random() * paramMapping.length);
                  const mapping = paramMapping[p_idx];
                  const original_val = mapping.get(replica.params, replica.hklList);
+
+                 // PERF FIX: a move perturbs exactly ONE scalar, so rolling it
+                 // back only needs that scalar plus the Le Bail intensities
+                 // (everything else objective() touches -- symmetry-slaved
+                 // params, peak positions -- is recomputed from scratch on the
+                 // next call). The old code deep-cloned params AND the whole
+                 // hklList via JSON twice per replica per iteration: 16 full
+                 // JSON round-trips of every reflection, every iteration.
+                 // In Pawley mode the perturbed scalar may itself be an
+                 // intensity, but mapping.set restores it; nothing else in
+                 // objective() mutates intensities any more.
                  const step_scale = Math.max(0.01, replica.temp);
-                 const base_step_suggestion = (refinementMode === 'pawley' && mapping.isIntensity) ? 0.05 : 0.05;
-                 const step_size = (mapping.step || base_step_suggestion) * step_scale * mapping.scale;
+                 const step_size = (mapping.step || 0.05) * step_scale * mapping.scale;
                  const random_step = (Math.random() - 0.5) * 2 * step_size;
-                 const new_val = original_val + random_step;
-                 mapping.set(replica.params, replica.hklList, new_val);
+                 mapping.set(replica.params, replica.hklList, original_val + random_step);
 
                  const neighbor_cost = objective(replica.params, replica.hklList);
                  const delta_cost = neighbor_cost - replica.cost;
 
-                  const acceptance_prob = (replica.temp > 1e-9 && replica.cost > 0) ? Math.exp(-delta_cost / (replica.cost * replica.temp)) : 0;
+                 const acceptance_prob = (replica.temp > 1e-9)
+                     ? Math.exp(Math.max(-700, -delta_cost / (costScale * replica.temp)))
+                     : 0;
                  if (delta_cost < 0 || acceptance_prob > Math.random()) {
                      replica.cost = neighbor_cost;
                  } else {
-                     replica.params = originalParams;
-                     replica.hklList = originalHklList;
+                     mapping.set(replica.params, replica.hklList, original_val);
                  }
 
                  if (replica.cost < bestOverallCost) {
@@ -1718,8 +1930,8 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_o
                      if (Math.abs(rep1.temp - rep2.temp) < 1e-9) continue;
 
                      const delta_beta = (1 / rep1.temp) - (1 / rep2.temp);
-                     const delta_cost = rep1.cost - rep2.cost;
-                     const acceptance_prob_swap = Math.exp(Math.min(50, delta_beta * delta_cost));
+                     const delta_cost = (rep1.cost - rep2.cost) / costScale;   // same scale as the local step
+                     const acceptance_prob_swap = Math.exp(Math.max(-700, Math.min(50, delta_beta * delta_cost)));
 
                      if (acceptance_prob_swap > Math.random()) {
                          [rep1.params, rep2.params] = [rep2.params, rep1.params];
@@ -1729,14 +1941,25 @@ const netCalcPattern = calculatePattern(workerWorkingData.tth, hkl_list_obj, p_o
                  }
              }
 
-             const progressWithinCycle = (iter + 1) / maxIter;
-             const overallProgress = baseProgress + progressWithinCycle * cycleProgressSpan;
-             postMessage({ type: 'progress', value: Math.min(1.0, overallProgress) });
-
+             // Throttled, as in LM: only post on whole-percent changes.
+             const overallProgress = Math.min(1.0, baseProgress + ((iter + 1) / maxIter) * cycleProgressSpan);
+             const pct = Math.floor(overallProgress * 100);
+             if (pct !== lastProgressPct) {
+                 lastProgressPct = pct;
+                 postMessage({ type: 'progress', value: overallProgress });
+             }
+             consecutiveErrors = 0;
 
          } catch (error) {
+              // FIX: the old handler posted an error EVERY iteration, so a
+              // persistent fault produced maxIter error toasts and kept
+              // burning CPU. Give up after a few consecutive failures.
               console.error("Error during PT iteration:", iter, error);
-              postMessage({ type: 'error', message: `Error in PT iter ${iter}: ${error.message}` });
+              consecutiveErrors++;
+              if (consecutiveErrors >= 5) {
+                  postMessage({ type: 'error', message: `PT aborted at iteration ${iter}: ${error.message}` });
+                  break;
+              }
          }
 
     }
@@ -1789,23 +2012,38 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     //       magnitude for diagnostic display.
     const createMapping = (flag, name, defaultScale = 1.0, minVal = -Infinity, maxVal = Infinity, step = 0.2) => {
         if (!flag) return null;
+        if (!initialParams || !(name in initialParams) || !isFinite(initialParams[name])) {
+            // Refining a parameter the model never received (or received as
+            // NaN) can only produce a dead column and a bogus ESD. Drop it and
+            // tell the user rather than failing silently.
+            console.warn(`Refinement flag set for "${name}" but no finite initial value was supplied; skipping.`);
+            postMessage({ type: 'warning', message: `Parameter "${name}" has no valid value and was excluded from the refinement.` });
+            return null;
+        }
         const initialValue = initialParams[name] ?? 0;
         const scale = Math.abs(initialValue) > 1e-9 ? Math.abs(initialValue) : defaultScale;
 
         return {
             name: name,
-            scale: scale,        // typical magnitude, for PT step-sizing & display
+            scale: scale,          // typical magnitude, for PT step-sizing & display
+            defaultScale: defaultScale,  // floor for the trust-region budget when
+                                         // the parameter starts at (or near) zero
             step: step,
             isIntensity: false,
             minVal: minVal,
             maxVal: maxVal,
             get: (p_obj, hkl_list_obj) => (p_obj[name] ?? 0),
+            // FIX: the old body only assigned `if (p_obj.hasOwnProperty(name))`.
+            // When the key was absent, get() still returned 0 via `?? 0`, so the
+            // parameter got a mapping slot, an identically-zero Jacobian column
+            // and a consumed degree of freedom, while being physically unable
+            // to move. Assign unconditionally.
             set: (p_obj, hkl_list_obj, rawValue) => {
-                if (rawValue < minVal) rawValue = minVal;
-                if (rawValue > maxVal) rawValue = maxVal;
-                if (p_obj && p_obj.hasOwnProperty(name)) {
-                    p_obj[name] = rawValue;
-                }
+                if (!p_obj) return;
+                if (!(rawValue > minVal)) rawValue = Math.max(rawValue, minVal);
+                if (!(rawValue < maxVal)) rawValue = Math.min(rawValue, maxVal);
+                if (!isFinite(rawValue)) return;
+                p_obj[name] = rawValue;
             }
         };
     };
@@ -1826,6 +2064,7 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
                     mappings.push({
                         name: hkl_name,
                         scale: scale,
+                        defaultScale: 1000.0,
                         step: 0.3,
                         isIntensity: true,
                         index: index,
@@ -1848,6 +2087,33 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     //   Other Parameters  
     const profileType = String(initialParams.profileType || "simple_pvoigt");
 
+    // ---------------------------------------------------------------------
+    // Data-derived lower bounds for the width parameters.
+    //
+    // A peak narrower than a couple of data steps is not resolvable and is not
+    // physically meaningful, but nothing stopped the refiner from driving the
+    // widths there. When the starting cell is poor, shrinking the peaks to
+    // spikes genuinely lowers the weighted residual (a spike in the wrong place
+    // costs less than a broad peak in the wrong place), so the fit would
+    // collapse the profile instead of correcting the cell -- and once the
+    // widths hit the internal 1e-4 deg clamp inside calculateProfileWidths the
+    // Jacobian column went dead and they could never recover.
+    //
+    // Floor them at a FWHM of two data steps, expressed back in GSAS units.
+    let GW_MIN = 1e-6, LX_MIN = 1e-6;
+    if (workerWorkingData && workerWorkingData.tth && workerWorkingData.tth.length > 2) {
+        const t = workerWorkingData.tth;
+        const stepDeg = (t[t.length - 1] - t[0]) / (t.length - 1);
+        const minFwhmDeg = Math.max(1e-3, 2 * stepDeg);
+        // Gaussian: FWHM[deg] = sqrt(sigma_sq) * GSAS_GAUSSIAN_TO_DEG
+        GW_MIN = Math.pow(minFwhmDeg / GSAS_GAUSSIAN_TO_DEG, 2);
+        // Lorentzian: FWHM[deg] = (LX / cos(theta)) * GSAS_LORENTZIAN_TO_DEG.
+        // Evaluate at the middle of the scanned range.
+        const midTheta = ((t[0] + t[t.length - 1]) / 2) * (Math.PI / 180) / 2;
+        const cosMid = Math.max(0.1, Math.cos(midTheta));
+        LX_MIN = minFwhmDeg * cosMid / GSAS_LORENTZIAN_TO_DEG;
+    }
+
     mappings.push(createMapping(fitFlags.a, 'a', 4.0, 0.1, Infinity, 0.01));
     mappings.push(createMapping(fitFlags.b, 'b', 4.0, 0.1, Infinity, 0.01));
     mappings.push(createMapping(fitFlags.c, 'c', 6.0, 0.1, Infinity, 0.01));
@@ -1859,9 +2125,9 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     if (profileType === "simple_pvoigt") {
         mappings.push(createMapping(fitFlags.GU, 'GU', 0.01, 0, Infinity, 0.05));
         mappings.push(createMapping(fitFlags.GV, 'GV', 0.01, -Infinity, Infinity, 0.05));
-        mappings.push(createMapping(fitFlags.GW, 'GW', 0.01, 1e-6, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.GW, 'GW', 0.01, GW_MIN, Infinity, 0.05));
         mappings.push(createMapping(fitFlags.GP, 'GP', 0.01, -Infinity, Infinity, 0.1));
-        mappings.push(createMapping(fitFlags.LX, 'LX', 0.01, 1e-6, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.LX, 'LX', 0.01, LX_MIN, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.eta, 'eta', 0.5, 0, 1, 0.1));
         mappings.push(createMapping(fitFlags.shft, 'shft', 0.01, -Infinity, Infinity, 0.1));
         mappings.push(createMapping(fitFlags.trns, 'trns', 0.01, -Infinity, Infinity, 0.1));
@@ -1869,9 +2135,9 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     else if (profileType === "tch_aniso") {
         mappings.push(createMapping(fitFlags.U, 'U', 0.01, 0, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.V, 'V', 0.01, -Infinity, Infinity, 0.2));
-        mappings.push(createMapping(fitFlags.W, 'W', 0.01, 1e-6, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.W, 'W', 0.01, GW_MIN, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.X, 'X', 0.01, 1e-6, Infinity, 0.2));
-        mappings.push(createMapping(fitFlags.Y, 'Y', 0.01, 1e-6, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.Y, 'Y', 0.01, LX_MIN, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.SL, 'SL', 0.001, -Infinity, Infinity, 0.1));
         mappings.push(createMapping(fitFlags.HL, 'HL', 0.001, -Infinity, Infinity, 0.1));
         mappings.push(createMapping(fitFlags.S400, 'S400', 0.1, -Infinity, Infinity, 0.2));
@@ -1884,12 +2150,12 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode) {
     else if (profileType === "split_pvoigt") {
         mappings.push(createMapping(fitFlags.GU_L, 'GU_L', 0.01, 0, Infinity, 0.05));
         mappings.push(createMapping(fitFlags.GV_L, 'GV_L', 0.01, -Infinity, Infinity, 0.05));
-        mappings.push(createMapping(fitFlags.GW_L, 'GW_L', 0.01, 1e-6, Infinity, 0.05));
-        mappings.push(createMapping(fitFlags.LX_L, 'LX_L', 0.01, 1e-6, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.GW_L, 'GW_L', 0.01, GW_MIN, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.LX_L, 'LX_L', 0.01, LX_MIN, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.GU_R, 'GU_R', 0.01, 0, Infinity, 0.05));
         mappings.push(createMapping(fitFlags.GV_R, 'GV_R', 0.01, -Infinity, Infinity, 0.05));
-        mappings.push(createMapping(fitFlags.GW_R, 'GW_R', 0.01, 1e-6, Infinity, 0.05));
-        mappings.push(createMapping(fitFlags.LX_R, 'LX_R', 0.01, 1e-6, Infinity, 0.2));
+        mappings.push(createMapping(fitFlags.GW_R, 'GW_R', 0.01, GW_MIN, Infinity, 0.05));
+        mappings.push(createMapping(fitFlags.LX_R, 'LX_R', 0.01, LX_MIN, Infinity, 0.2));
         mappings.push(createMapping(fitFlags.eta_split, 'eta_split', 0.5, 0, 1, 0.1));
         mappings.push(createMapping(fitFlags.shft_split, 'shft_split', 0.01, -Infinity, Infinity, 0.1));
         mappings.push(createMapping(fitFlags.trns_split, 'trns_split', 0.01, -Infinity, Infinity, 0.1));
@@ -1945,12 +2211,17 @@ self.onmessage = async function(e) {
      currentParams.system = system;
     try {
         //   Le Bail Mode  
-        // With per-peak intensity extraction done inside the refiner's
-        // objective (see refineParametersLM/PT), Le Bail is just a single
-        // refinement call. The old 4-cycle outer loop was a workaround
-        // for a buggy objective that used a global scale factor instead
-        // of per-peak extraction; it is no longer needed.
+        // Extract-then-refine, repeated. Each cycle re-extracts the peak
+        // intensities from the observed profile using the parameters the
+        // previous cycle arrived at, then refines with those intensities held
+        // fixed. The outer loop is what lets the intensities catch up; holding
+        // them fixed *within* a cycle is what keeps the width parameters
+        // determinate (see the note in refineParametersLM).
         if (refinementMode === 'le-bail') {
+            // One call: refineParametersLM re-extracts the intensities at the
+            // top of every iteration (see refreshLeBailIntensities), so the
+            // extract/refine alternation happens inside the iteration loop and
+            // no outer cycle wrapper is needed.
             if (algorithm === 'lm') {
                 finalResults = await refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
             } else { // pt

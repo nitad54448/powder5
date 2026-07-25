@@ -14,7 +14,6 @@
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.3/math.min.js"></script>
     <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
@@ -1714,7 +1713,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 </div>
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 128, 18 July 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 129, 25 July 2026";
   
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
@@ -1738,7 +1737,86 @@ document.addEventListener('DOMContentLoaded', async () => {
 
        
         const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 6
-        const PEAK_HEIGHT_CUTOFF = 0.002; // 0.01 Corresponds to 1%
+
+        /**
+         * Inverts a dense square matrix by Gauss-Jordan elimination with
+         * partial pivoting. Returns null if the matrix is singular to working
+         * precision -- which, for a JtJ Hessian, genuinely means the ESDs are
+         * undefined (severely correlated or unrefinable parameters), so a
+         * pseudo-inverse would only have produced confident-looking nonsense.
+         *
+         * This replaces math.inv/math.pinv and, together with the local solver
+         * in refinement_worker.js, removes the CDN dependency on mathjs
+         * entirely: the app is now fully self-contained and works offline.
+         */
+        function invertMatrix(M) {
+            const n = M.length;
+            if (n === 0) return [];
+            const a = M.map(row => Float64Array.from(row));
+            const inv = [];
+            for (let i = 0; i < n; i++) {
+                const r = new Float64Array(n);
+                r[i] = 1;
+                inv.push(r);
+            }
+
+            // Scale tolerance to the magnitude of the matrix so it works for
+            // both count-sized (1e8) and profile-sized (1e-6) entries.
+            let norm = 0;
+            for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+                const v = Math.abs(a[i][j]);
+                if (v > norm) norm = v;
+            }
+            if (!(norm > 0) || !isFinite(norm)) return null;
+            const tol = norm * n * 2.220446049250313e-16;
+
+            for (let col = 0; col < n; col++) {
+                let piv = col, maxAbs = Math.abs(a[col][col]);
+                for (let r = col + 1; r < n; r++) {
+                    const v = Math.abs(a[r][col]);
+                    if (v > maxAbs) { maxAbs = v; piv = r; }
+                }
+                if (!(maxAbs > tol)) return null;
+
+                if (piv !== col) {
+                    let t = a[piv]; a[piv] = a[col]; a[col] = t;
+                    t = inv[piv]; inv[piv] = inv[col]; inv[col] = t;
+                }
+
+                const d = a[col][col];
+                for (let c = 0; c < n; c++) { a[col][c] /= d; inv[col][c] /= d; }
+
+                for (let r = 0; r < n; r++) {
+                    if (r === col) continue;
+                    const f = a[r][col];
+                    if (f === 0) continue;
+                    for (let c = 0; c < n; c++) {
+                        a[r][c]   -= f * a[col][c];
+                        inv[r][c] -= f * inv[col][c];
+                    }
+                }
+            }
+
+            for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+                if (!isFinite(inv[i][j])) return null;
+            }
+            return inv.map(r => Array.from(r));
+        }
+
+        /**
+         * First index i with arr[i] >= target, on an ASCENDING array. O(log n).
+         * PERF FIX: replaces `let s=0; while (s<n && arr[s]<target) s++;`, which
+         * made every pattern evaluation O(n_peaks * n_points). Mirrors the
+         * identical helper in refinement_worker.js.
+         */
+        function lowerBound(arr, target) {
+            let lo = 0, hi = arr.length;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (arr[mid] < target) lo = mid + 1; else hi = mid;
+            }
+            return lo;
+        }
  
 const tooltipContainer = document.querySelector('.help-tooltip-container');
 const tooltipContent = document.querySelector('.tooltip-content');
@@ -1859,6 +1937,36 @@ if (tooltipContainer && tooltipContent) {
 
         //   Worker Setup 
         let refinementWorker = null;
+
+        // FIX: previously there was no timeout and no way to recover. If the
+        // worker wedged (or died without firing onerror) the UI sat on
+        // "Refining..." forever, and any onerror permanently nulled the worker
+        // so every later fit was refused. The worker is now built by a factory
+        // that can be called again, and a watchdog re-armed on every progress
+        // message terminates a worker that has gone quiet.
+        const FIT_WATCHDOG_MS = 120000;   // 2 min with no progress => assume wedged
+        let fitWatchdog = null;
+
+        function disarmFitWatchdog() {
+            if (fitWatchdog !== null) { clearTimeout(fitWatchdog); fitWatchdog = null; }
+        }
+
+        function armFitWatchdog() {
+            disarmFitWatchdog();
+            fitWatchdog = setTimeout(() => {
+                fitWatchdog = null;
+                if (!isFitting) return;
+                console.error("Refinement watchdog fired: no progress from the worker.");
+                try { if (refinementWorker) refinementWorker.terminate(); } catch (err) { /* already gone */ }
+                refinementWorker = null;
+                setUIState(false);
+                controls.progressBar.style.width = '0%';
+                showToast("Refinement stopped responding and was cancelled.", "error");
+                createRefinementWorker();   // rebuild so the next fit can still run
+            }, FIT_WATCHDOG_MS);
+        }
+
+        function createRefinementWorker() {
         try {
             refinementWorker = new Worker('refinement_worker.js');
             console.log("Refinement worker created.");
@@ -1867,12 +1975,23 @@ if (tooltipContainer && tooltipContent) {
             refinementWorker.onmessage = function(e) {
                 const { type, value, message, results } = e.data;
 
+                if (type === 'warning') {
+                    // Non-fatal notices from the refiner (e.g. a flagged
+                    // parameter that cannot actually move). Surface them
+                    // instead of letting the fit look healthy.
+                    console.warn("Worker warning:", message);
+                    showToast(message, 'error');
+                    return;
+                }
+
                 if (type === 'progress') {
+                    armFitWatchdog();
                     //  progress bar 
                     controls.progressBar.style.transition = 'width 0.1s linear';
                     controls.progressBar.style.width = `${Math.min(100, value * 100)}%`;
                     // Optionally display messages:
                 } else if (type === 'result') {
+                    disarmFitWatchdog();
   //                  console.log("Worker finished, received results:", results);
                     fitResults = results; // Store the complete results object
                     lastFitResultsCache = JSON.parse(JSON.stringify(fitResults)); // Update cache
@@ -1911,6 +2030,7 @@ if (tooltipContainer && tooltipContent) {
                     controls.progressBar.style.transition = 'width 0.3s ease';
                     controls.progressBar.style.width = '100%';
                 } else if (type === 'error') {
+                    disarmFitWatchdog();
                     console.error("Worker reported error:", message);
                     showToast(`Refinement Error: ${message}`, 'error');
                     setUIState(false); // Unlock UI on error
@@ -1926,17 +2046,21 @@ if (tooltipContainer && tooltipContent) {
 
             refinementWorker.onerror = function(e) {
                 console.error("Error initializing or communicating with worker:", e.message, e);
-                showToast(`Worker Initialization Error: ${e.message}`, 'error');
-                isFitting = false; // Ensure fitting state is reset
+                showToast(`Worker Error: ${e.message}`, 'error');
+                disarmFitWatchdog();
                 setUIState(false);
-                refinementWorker = null; // Disable worker functionality
+                try { if (refinementWorker) refinementWorker.terminate(); } catch (err) { /* already gone */ }
+                refinementWorker = null;
             };
 
         } catch (e) {
             console.error("Failed to create Web Worker:", e);
-            alert("Could not create the refinement Web Worker. Heavy calculations will freeze the browser. Check browser compatibility and file paths.");
+            showToast("Could not create the refinement worker. Check that refinement_worker.js is served from the same directory.", "error");
             refinementWorker = null;
         }
+        }
+
+        createRefinementWorker();
 
 
          // updateSpaceGroupUI() is replaced by the engine-driven flow;
@@ -1999,6 +2123,11 @@ function createMonotonicCubicSplineInterpolator(points) {
 
     // Step 4: Return the interpolation function using Hermite basis functions
     return function(tthValue) {
+        // Flat extrapolation outside the defined range, checked BEFORE the
+        // cubic is evaluated (it used to run after, wasting the work).
+        if (tthValue <= points[0].tth)     return points[0].y;
+        if (tthValue >= points[n - 1].tth) return points[n - 1].y;
+
         // Find the interval [i, i+1] that contains tthValue
         let i = 0;
         if (tthValue >= points[n - 1].tth) {
@@ -2030,13 +2159,7 @@ function createMonotonicCubicSplineInterpolator(points) {
         const h11 = t * t * t - t * t;
 
         // Interpolation formula
-        const interpolatedY = h00 * y_i + h10 * h_i * m_i + h01 * y_ip1 + h11 * h_i * m_ip1;
-
-         // Extrapolation: use flat extrapolation outside the defined range
-         if (tthValue < points[0].tth) return points[0].y;
-         if (tthValue > points[n-1].tth) return points[n-1].y;
-
-        return interpolatedY;
+        return h00 * y_i + h10 * h_i * m_i + h01 * y_ip1 + h11 * h_i * m_ip1;
     };
 }
 
@@ -2186,23 +2309,19 @@ function updateSplinePointsOnChart() {
                 return null;
             }
 
-            let closestIndex = -1;
-            let minDiff = Infinity;
-
-            // This is a simple linear search. .. j'aurais pu utiliser la librairie JS.. mais bon, c'est autonome
-            for (let i = 0; i < fullExperimentalData.tth.length; i++) {
-                const diff = Math.abs(fullExperimentalData.tth[i] - targetTth);
-                if (diff < minDiff) {
-                    minDiff = diff;
-                    closestIndex = i;
-                }
+            // Binary search to the neighbourhood, then compare the two
+            // candidates -- the axis is sorted, so the old full linear scan
+            // over every data point was unnecessary.
+            const arr = fullExperimentalData.tth;
+            const hi = lowerBound(arr, targetTth);
+            let bestIdx = -1, bestDiff = Infinity;
+            for (const cand of [hi - 1, hi]) {
+                if (cand < 0 || cand >= arr.length) continue;
+                const d = Math.abs(arr[cand] - targetTth);
+                if (d < bestDiff) { bestDiff = d; bestIdx = cand; }
             }
-
-            return {
-                index: closestIndex,
-                tth: fullExperimentalData.tth[closestIndex],
-                y: fullExperimentalData.intensity[closestIndex]
-            };
+            if (bestIdx === -1) return null;
+            return { index: bestIdx, tth: arr[bestIdx], y: fullExperimentalData.intensity[bestIdx] };
         }
 
 
@@ -3345,12 +3464,11 @@ setTimeout(() => {
             const minTth = parseFloat(controls.tthMinSlider.value);
             const maxTth = parseFloat(controls.tthMaxSlider.value);
 
-            // Find the start and end indices in the master 'fullExperimentalData' array
-            let startIndex = fullExperimentalData.tth.findIndex(t => t >= minTth);
-            if (startIndex === -1) startIndex = 0;
-
-            let endIndex = fullExperimentalData.tth.findIndex(t => t > maxTth);
-            if (endIndex === -1) endIndex = fullExperimentalData.tth.length;
+            // Find the start and end indices in the master 'fullExperimentalData'
+            // array. The axis is sorted ascending, so binary-search it rather
+            // than scanning (this runs on every slider move).
+            const startIndex = lowerBound(fullExperimentalData.tth, minTth);
+            const endIndex   = lowerBound(fullExperimentalData.tth, maxTth + 1e-12);
 
             // Slice the master typed arrays; .slice() on a typed array returns a new typed array
             workingData.tth = fullExperimentalData.tth.slice(startIndex, endIndex);
@@ -4095,49 +4213,6 @@ function updateHklPositions(hklList, params, system) {
         }
 
 
-        /**
-         * Applies asymmetry correction. Runs in main thread for previews.
-         */
-        function applyAsymmetry(x, x0, tth_peak, params) {
-            if (!params) return x - x0;
-            const profileType = params.profileType;
-
-            switch (profileType) {
-                case "tch_aniso": {
-                    if (!params.SL && !params.HL) return x - x0;
-                    
-                    const delta_2theta = x - x0;
-                    if (Math.abs(delta_2theta) < 1e-9) return 0;
-                    if (tth_peak < 0.1 || tth_peak >= 180) return delta_2theta;
-
-                    const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
-                    const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
-                    const tan_theta = Math.tan(safe_theta_rad);
-                    if (Math.abs(tan_theta) < 1e-9) return delta_2theta;
-                    const cot_theta = 1.0 / tan_theta;
-
-                    const SL = params.SL || 0;
-                    const HL = params.HL || 0;
-                    const asymmetry_param = SL * cot_theta + HL;
-                    if (!isFinite(asymmetry_param)) return delta_2theta;
-
-                    const correction_term = asymmetry_param * Math.abs(delta_2theta);
-                    const MAX_CORRECTION_EFFECT = 0.95;
-                    const asymmetry_factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(correction_term), MAX_CORRECTION_EFFECT));
-                    const corrected = delta_2theta / asymmetry_factor;
-                    return isFinite(corrected) ? corrected : delta_2theta;
-                }
-                
-                case "simple_pvoigt":
-                case "split_pvoigt":
-                default:
-                    // Asymmetry for these profiles is handled by shift/transparency,
-                    // which is already applied to x0.
-                    return x - x0; 
-            }
-        }
-
-
 function prepareVoigt(tth_peak, x0, hkl, params) {
     if (!params) return null;
     const profileType = params.profileType;
@@ -4154,39 +4229,80 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
         }
     }
 
+    let prep;
+    let fwhm_total;
+
     if (profileType === "simple_pvoigt") {
         const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
         const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
         const eta = Math.max(0, Math.min(1, params.eta || 0.5));
-        return { type: 1, x0, asym_param, H_G, H_L, eta, max_d: 10 * (H_G + H_L), Cg };
+        fwhm_total = getPeakFWHM(H_G, H_L);
+        prep = { type: 1, x0, asym_param, H_G, H_L, eta, Cg };
     } else if (profileType === "split_pvoigt") {
         const wL = calculateProfileWidths(tth_peak, hkl, params, 'left');
         const wR = calculateProfileWidths(tth_peak, hkl, params, 'right');
         const H_G_L = Math.max(1e-9, wL.gamma_G), H_L_L = Math.max(1e-9, wL.gamma_L);
         const H_G_R = Math.max(1e-9, wR.gamma_G), H_L_R = Math.max(1e-9, wR.gamma_L);
         const eta = Math.max(0, Math.min(1, params.eta_split || 0.5));
-        return { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta, max_d: 10 * Math.max(H_G_L + H_L_L, H_G_R + H_L_R), Cg };
+        fwhm_total = Math.max(getPeakFWHM(H_G_L, H_L_L), getPeakFWHM(H_G_R, H_L_R));
+        prep = { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta, Cg };
     } else { // tch_aniso
         const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
         const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
-        const fwhm = getPeakFWHM(H_G, H_L);
+        const fwhm = Math.max(1e-9, getPeakFWHM(H_G, H_L));
         let eta = 0;
         if (fwhm > 1e-9) {
             const ratio = H_L / fwhm;
             eta = Math.max(0, Math.min(1, 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3)));
         }
-        return { type: 3, x0, asym_param, fwhm: Math.max(1e-9, fwhm), eta, max_d: 10 * (H_G + H_L), Cg };
+        fwhm_total = fwhm;
+        prep = { type: 3, x0, asym_param, fwhm, eta, Cg };
     }
+
+    // See refinement_worker.js for the rationale: max_d is now the single
+    // authoritative truncation radius (it used to disagree with the window
+    // calculatePattern chose), and the pedestal replaces PEAK_HEIGHT_CUTOFF so
+    // the profile reaches zero continuously instead of stepping off a cliff.
+    prep.fwhm_total = Math.max(1e-6, fwhm_total);
+    const truncationRadius = CALCULATION_WINDOW_MULTIPLIER * Math.max(0.01, prep.fwhm_total)
+                             * (asym_param !== 0 ? 2.0 : 1.0);
+
+    // Pedestal: the profile value at the truncation radius. Subtracting it
+    // (clamped at zero) is what makes the profile reach zero continuously at
+    // the window edge instead of dropping off a cliff.
+    //
+    // Measured with max_d temporarily Infinity: probing at exactly
+    // `x0 + truncationRadius` otherwise rounds a fraction of an ulp past the
+    // cutoff, evalVoigt early-returns 0, and the pedestal silently comes out
+    // as 0. An asymmetric shape has two different edge values, so take the
+    // larger -- then neither flank can go negative. Twice per peak, not per
+    // data point.
+    prep.pedestal = 0;
+    prep.max_d = Infinity;
+    prep.pedestal = Math.max(evalVoigt(x0 + truncationRadius, prep),
+                             evalVoigt(x0 - truncationRadius, prep));
+    prep.max_d = truncationRadius;
+    return prep;
 }
 
+/**
+ * Profile value at x, truncated at p.max_d and pedestal-subtracted so it
+ * reaches zero continuously at the window edge.
+ * This is the innermost hot loop of the whole program -- it runs once per data
+ * point per reflection per function evaluation -- so it is deliberately kept
+ * as one self-contained function with no helper call.
+ */
 function evalVoigt(x, p) {
     if (!p) return 0.0;
     let delta = x - p.x0;
+    if (delta > p.max_d || delta < -p.max_d) return 0.0;
     if (p.asym_param !== 0 && Math.abs(delta) >= 1e-9) {
-        const factor = Math.max(1e-6, 1.0 - Math.min(Math.abs(p.asym_param * Math.abs(delta)), 0.95));
-        delta /= factor;
+        // FIX: SIGNED delta. The old code took Math.abs(delta) inside the
+        // correction, so both flanks stretched identically and SL/HL produced
+        // symmetric broadening with no asymmetry at all.
+        const t = Math.max(-0.95, Math.min(0.95, p.asym_param * delta));
+        delta /= (1.0 - t);   // 1 - t is in [0.05, 1.95], always positive
     }
-    if (Math.abs(delta) > p.max_d) return 0.0;
 
     let hg, hl;
     if (p.type === 1) {
@@ -4202,7 +4318,8 @@ function evalVoigt(x, p) {
     const dl = (delta / hl) * (delta / hl);
     const g = Math.exp(-p.Cg * dg);
     const l = 1.0 / (1.0 + 4.0 * dl);
-    return p.eta * l + (1.0 - p.eta) * g;
+    const v = p.eta * l + (1.0 - p.eta) * g - p.pedestal;
+    return v > 0 ? v : 0.0;
 }
 
 // Keep pseudoVoigt as a backward-compatible wrapper for any legacy call sites
@@ -4225,38 +4342,30 @@ function pseudoVoigt(x, x0, tth_peak, hkl, params) {
             const lambda2 = params.lambda2 || 0;
             const ratio21 = params.ratio || 0;
             const zeroShift = params.zeroShift || 0;
-            const WINDOW_MULT = CALCULATION_WINDOW_MULTIPLIER;
-            const HEIGHT_CUTOFF = PEAK_HEIGHT_CUTOFF;
-
             //   K-alpha 1  
+            // PERF FIX: prepareVoigt is hoisted OUT of the inner loop. The old
+            // code called pseudoVoigt() per data point, and pseudoVoigt calls
+            // prepareVoigt, which recomputes calculateProfileWidths (including
+            // the whole Stephens M_HKL sum and a sqrt) plus getPeakFWHM (five
+            // Math.pow calls) -- for every single point of every peak. The
+            // worker already did it this way; the main thread never got the fix.
             hklList.forEach(peak => {
                 if (!peak || !peak.intensity || peak.intensity <= 0 || !peak.tth || peak.tth < 0 || peak.tth > 180) return;
 
                 const basePos1 = peak.tth + zeroShift;
-                const shift1 = calculatePeakShift(basePos1, params);
-                const peakPos1 = basePos1 + shift1;
-                
-                // Get widths just for the window approximation
-                const { gamma_G, gamma_L } = calculateProfileWidths(peak.tth, peak, params, 'center');
-                const fwhm_approx1 = getPeakFWHM(gamma_G, gamma_L); // This is an approximation but fine for the window
-                
-                const window1 = WINDOW_MULT * Math.max(0.01, fwhm_approx1);
-                const min_tth1 = peakPos1 - window1;
-                const max_tth1 = peakPos1 + window1;
+                const peakPos1 = basePos1 + calculatePeakShift(basePos1, params);
 
-                let startIndex = 0;
-                while (startIndex < n_points && tthAxis[startIndex] < min_tth1) startIndex++;
+                const prep1 = prepareVoigt(basePos1, peakPos1, peak, params);
+                const min_tth1 = peakPos1 - prep1.max_d;
+                const max_tth1 = peakPos1 + prep1.max_d;
+
+                const startIndex = lowerBound(tthAxis, min_tth1);
                 if (startIndex === n_points) return;
 
                 for (let i = startIndex; i < n_points; i++) {
                     const current_tth = tthAxis[i];
                     if (current_tth > max_tth1) break;
-                    
-                    const intensityAtPoint = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params); 
-                    if (intensityAtPoint > HEIGHT_CUTOFF) {
-                        // CHANGED: Use peak.intensity directly as Height, v 114
-                        pattern[i] += peak.intensity * intensityAtPoint;
-                    }
+                    pattern[i] += peak.intensity * evalVoigt(current_tth, prep1);
                 }
             });
 
@@ -4273,28 +4382,19 @@ function pseudoVoigt(x, x0, tth_peak, hkl, params) {
 
                     const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
                     const basePos2 = tth2 + zeroShift;
-                    const shift2 = calculatePeakShift(basePos2, params);
-                    const peakPos2 = basePos2 + shift2;                    
-                    const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(tth2, peak, params, 'center');
-                    const fwhm_approx2 = getPeakFWHM(gG2, gL2);
+                    const peakPos2 = basePos2 + calculatePeakShift(basePos2, params);
 
-                    const window2 = WINDOW_MULT * Math.max(0.01, fwhm_approx2);
-                    const min_tth2 = peakPos2 - window2;
-                    const max_tth2 = peakPos2 + window2;
+                    const prep2 = prepareVoigt(basePos2, peakPos2, peak, params);
+                    const min_tth2 = peakPos2 - prep2.max_d;
+                    const max_tth2 = peakPos2 + prep2.max_d;
 
-                    let startIndex2 = 0;
-                    while (startIndex2 < n_points && tthAxis[startIndex2] < min_tth2) startIndex2++;
+                    const startIndex2 = lowerBound(tthAxis, min_tth2);
                     if (startIndex2 === n_points) return;
 
                     for (let i = startIndex2; i < n_points; i++) {
                         const current_tth = tthAxis[i];
                         if (current_tth > max_tth2) break;
-                        
-                        const intensityAtPoint = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
-                        if (intensityAtPoint > HEIGHT_CUTOFF) {
-                            // CHANGED: Use peak.intensity directly as Height, problem Pawley unstable
-                            pattern[i] += peak.intensity * ratio21 * intensityAtPoint;
-                        }
+                        pattern[i] += peak.intensity * ratio21 * evalVoigt(current_tth, prep2);
                     }
                 });
             }
@@ -4563,6 +4663,15 @@ function calculateWilliamsonHall(params, hklList) {
             }
 
             const currentParams = getAllParams();
+            if (currentParams.__invalidFields && currentParams.__invalidFields.length > 0) {
+                showToast(
+                    `Cannot start: these fields are empty or not a number - ${currentParams.__invalidFields.join(', ')}.`,
+                    "error"
+                );
+                isFitting = false; setUIState(false); return;
+            }
+            delete currentParams.__invalidFields;
+
             const fitFlags = getFitFlags();
             const selectedSg = currentSG;
             const selectedSgNumber = selectedSg.number;
@@ -4642,6 +4751,17 @@ function calculateWilliamsonHall(params, hklList) {
                 }
             });
 
+            // FIX: parseFloat('') is NaN. A single blank or malformed numeric
+            // field used to propagate NaN silently through the whole model --
+            // the pattern came out empty and the fit produced nonsense with no
+            // indication why. Record the offenders so runFit can refuse and
+            // name them.
+            const markInvalid = () => {
+                params.__invalidFields = Object.keys(params).filter(
+                    k => typeof params[k] === 'number' && !isFinite(params[k])
+                );
+            };
+
             const { system } = getSystemAndCentering();
             params.system = system;
             switch(system) {
@@ -4691,7 +4811,7 @@ function calculateWilliamsonHall(params, hklList) {
                     break;
             }
 
-
+            markInvalid();
             return params;
         };
 
@@ -5509,114 +5629,110 @@ function debounce(func, wait) {
             const n_points = expData.tth.length;
             if (n_points === 0) return new Map();
 
-            // This array will hold the (Height * (Shape_Ka1 + ratio * Shape_Ka2)) value
-            const peak_profiles_scaled = new Array(hklList.length);
-            
-            // This will be the sum of all scaled profiles, i.e., the net calculated pattern
-            const total_profile_sum_scaled = new Array(n_points).fill(0);
-
-            // 1. Pre-calculate the theoretical (Height * [Shape_Ka1 + ratio*Shape_Ka2]) profile for every peak
+            // PERF/CORRECTNESS FIX. The old implementation:
+            //   * allocated a full n_points array PER PEAK (600 peaks x 8000
+            //     points = ~5M boxed slots) and looped every peak over every
+            //     data point, twice -- O(n_peaks * n_points) in both time and
+            //     memory for what is inherently O(n_peaks * points_per_peak);
+            //   * called pseudoVoigt() inside the inner loop, which rebuilds
+            //     the entire peak-shape struct (widths, Stephens M_HKL, five
+            //     Math.pow in getPeakFWHM) at every single point;
+            //   * sized its window from (gamma_G + gamma_L) rather than the
+            //     convoluted FWHM, so it disagreed with calculatePattern.
+            // Both passes now walk only each peak's own window, and the window
+            // comes from prep.max_d exactly as everywhere else.
             const deg2rad = Math.PI / 180;
             const lambda1 = params.lambda || 1.54056;
             const lambda2 = params.lambda2 || 0;
             const ratio21 = params.ratio || 0;
+            const zeroShift = params.zeroShift || 0;
             const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
 
-            hklList.forEach((peak, j) => {
-                const current_peak_profile = new Array(n_points).fill(0);
-                const refined_height = peak.intensity || 0; 
+            // Per-peak windowed shape descriptors, built once and reused by both passes.
+            const shapes = hklList.map(peak => {
+                const refined_height = (peak && peak.intensity) || 0;
+                if (!peak || !peak.tth || refined_height <= 1e-9) return null;
 
-                if (!peak.tth || refined_height <= 1e-9) { // Skip if peak has no height
-                    peak_profiles_scaled[j] = current_peak_profile;
-                    return;
-                }
-                
-                //   Get Ka1 info  
-                const basePos1 = peak.tth + params.zeroShift;
-                const shift1 = calculatePeakShift(basePos1, params);
-                const peakPos1 = basePos1 + shift1;
-                const { gamma_G: gG1, gamma_L: gL1 } = calculateProfileWidths(basePos1, peak, params);
-                const window1 = CALCULATION_WINDOW_MULTIPLIER * Math.max(0.01, gG1 + gL1);
-                const min_tth1 = peakPos1 - window1;
-                const max_tth1 = peakPos1 + window1;
+                const basePos1 = peak.tth + zeroShift;
+                const peakPos1 = basePos1 + calculatePeakShift(basePos1, params);
+                const prep1 = prepareVoigt(basePos1, peakPos1, peak, params);
+                const min_tth1 = peakPos1 - prep1.max_d;
+                const max_tth1 = peakPos1 + prep1.max_d;
 
-                //   Get Ka2 info  
-                let tth2 = null, basePos2 = null, peakPos2 = null, min_tth2 = 0, max_tth2 = 0;
+                let prep2 = null, min_tth2 = 0, max_tth2 = 0;
                 if (doubletEnabled) {
-                    const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
-                    const sinTheta2 = sinTheta1 * (lambda1 > 1e-6 ? (lambda2 / lambda1) : 1.0);
+                    const sinTheta2 = Math.sin(peak.tth * deg2rad / 2.0) * (lambda2 / lambda1);
                     if (Math.abs(sinTheta2) < 1) {
-                        tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                        basePos2 = tth2 + params.zeroShift;
-                        const shift2 = calculatePeakShift(basePos2, params);
-                        peakPos2 = basePos2 + shift2;
-                        const { gamma_G: gG2, gamma_L: gL2 } = calculateProfileWidths(basePos2, peak, params);
-                        const window2 = CALCULATION_WINDOW_MULTIPLIER * Math.max(0.01, gG2 + gL2);
-                        min_tth2 = peakPos2 - window2;
-                        max_tth2 = peakPos2 + window2;
-                    } else {
-                        tth2 = null; // Ka2 not calculable
+                        const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                        const basePos2 = tth2 + zeroShift;
+                        const peakPos2 = basePos2 + calculatePeakShift(basePos2, params);
+                        prep2 = prepareVoigt(basePos2, peakPos2, peak, params);
+                        min_tth2 = peakPos2 - prep2.max_d;
+                        max_tth2 = peakPos2 + prep2.max_d;
                     }
                 }
-                
-                //   Loop over data points to build the full (Ka1+Ka2) scaled profile  
-                for (let i = 0; i < n_points; i++) {
-                    const current_tth = expData.tth[i];
-                    let total_scaled_val = 0;
 
-                    // Ka1 contribution
-                    if (current_tth >= min_tth1 && current_tth <= max_tth1) {
-                        const shape_val1 = pseudoVoigt(current_tth, peakPos1, basePos1, peak, params);
-                        total_scaled_val += refined_height * shape_val1;
-                    }
-                    
-                    // Ka2 contribution
-                    if (tth2 && current_tth >= min_tth2 && current_tth <= max_tth2) {
-                        const shape_val2 = pseudoVoigt(current_tth, peakPos2, basePos2, peak, params);
-                        total_scaled_val += refined_height * ratio21 * shape_val2;
-                    }
-
-                    // Use a small cutoff to store the value
-                    if (total_scaled_val > 1e-5 * refined_height) {
-                         current_peak_profile[i] = total_scaled_val;
-                         total_profile_sum_scaled[i] += total_scaled_val;
-                    }
-                }
-                peak_profiles_scaled[j] = current_peak_profile;
+                const lo = prep2 ? Math.min(min_tth1, min_tth2) : min_tth1;
+                const hi = prep2 ? Math.max(max_tth1, max_tth2) : max_tth1;
+                return { height: refined_height, prep1, min_tth1, max_tth1,
+                         prep2, min_tth2, max_tth2, lo, hi,
+                         startIdx: lowerBound(expData.tth, lo) };
             });
 
-            // 2. Partition the experimental intensity and integrate
-            // *** PASS SPLINE POINTS (backgroundAnchors) TO BACKGROUND CALCULATION ***
+            const scaledAt = (s, tth) => {
+                let v = 0;
+                if (tth >= s.min_tth1 && tth <= s.max_tth1) v += evalVoigt(tth, s.prep1);
+                if (s.prep2 && tth >= s.min_tth2 && tth <= s.max_tth2) v += ratio21 * evalVoigt(tth, s.prep2);
+                return s.height * v;
+            };
+
+            // Pass 1: total calculated net pattern.
+            const total_profile_sum_scaled = new Float64Array(n_points);
+            for (const s of shapes) {
+                if (!s) continue;
+                for (let i = s.startIdx; i < n_points; i++) {
+                    const tth = expData.tth[i];
+                    if (tth > s.hi) break;
+                    total_profile_sum_scaled[i] += scaledAt(s, tth);
+                }
+            }
+
             const finalBkg = calculateTotalBackground(expData.tth, params, backgroundAnchors);
             const i_obs_map = new Map();
 
-            for (let i = 1; i < n_points; i++) {
-                const step_width = expData.tth[i] - expData.tth[i-1];
-                if (step_width <= 0) continue;
+            // Pass 2: partition the observed net intensity over each peak's window.
+            hklList.forEach((peak, j) => {
+                const hkl_string = peak.hkl_list[0];
+                if (!i_obs_map.has(hkl_string)) i_obs_map.set(hkl_string, 0);
 
-                const prev_y_obs_net = Math.max(0, expData.intensity[i-1] - finalBkg[i-1]);
-                const current_y_obs_net = Math.max(0, expData.intensity[i] - finalBkg[i]);
+                const s = shapes[j];
+                if (!s) return;
 
-                hklList.forEach((peak, j) => {
-                    const hkl_string = peak.hkl_list[0];
-                    if (!i_obs_map.has(hkl_string)) {
-                        i_obs_map.set(hkl_string, 0);
+                let area = 0;
+                let prev_partitioned_I = 0;
+                for (let i = s.startIdx; i < n_points; i++) {
+                    const tth = expData.tth[i];
+                    if (tth > s.hi) break;
+
+                    const total = total_profile_sum_scaled[i];
+                    const fraction = total > 1e-9 ? scaledAt(s, tth) / total : 0;
+                    const y_obs_net = Math.max(0, expData.intensity[i] - finalBkg[i]);
+                    const partitioned_I = y_obs_net * fraction;
+
+                    if (i > s.startIdx) {
+                        const step_width = tth - expData.tth[i - 1];
+                        if (step_width > 0) {
+                            area += ((prev_partitioned_I + partitioned_I) / 2) * step_width;
+                        }
                     }
+                    prev_partitioned_I = partitioned_I;
+                }
 
-                    // The fraction is now based on the full (Ka1+Ka2) scaled profile
-                    const prev_fraction = total_profile_sum_scaled[i-1] > 1e-9 ? peak_profiles_scaled[j][i-1] / total_profile_sum_scaled[i-1] : 0;
-                    const current_fraction = total_profile_sum_scaled[i] > 1e-9 ? peak_profiles_scaled[j][i] / total_profile_sum_scaled[i] : 0;
-                    
-                    const prev_partitioned_I = prev_y_obs_net * prev_fraction;
-                    const current_partitioned_I = current_y_obs_net * current_fraction;
-                    
-                    const trapezoid_area = (prev_partitioned_I + current_partitioned_I) / 2 * step_width;
-                    
-                    if (isFinite(trapezoid_area) && trapezoid_area > 0) {
-                        i_obs_map.set(hkl_string, i_obs_map.get(hkl_string) + trapezoid_area);
-                    }
-                });
-            }
+                if (isFinite(area) && area > 0) {
+                    i_obs_map.set(hkl_string, i_obs_map.get(hkl_string) + area);
+                }
+            });
+
             return i_obs_map;
         }
 
@@ -5731,25 +5847,11 @@ function debounce(func, wait) {
                                // Verify Matrix Dimensions
                                if (Array.isArray(JtJ) && JtJ.length === P && Array.isArray(JtJ[0]) && JtJ[0].length === P) {
                                    
-                                   let H_inv;
-                                   try {
-                                       // 1. Try standard inversion (Faster)
-                                       H_inv = math.inv(JtJ);
-                                   } catch (singularError) {
-                                       // 2. If singular (determinant is 0), use Pseudo-Inverse (Robust for Pawley)
-                                       console.warn("JtJ Matrix is singular. Using Pseudo-Inverse (pinv).");
-                                       if (math.pinv) {
-                                            H_inv = math.pinv(JtJ);
-                                       } else {
-                                            throw singularError; 
-                                       }
+                                   const H_inv = invertMatrix(JtJ);
+                                   if (!H_inv) {
+                                        throw new Error("Normal-equations matrix is singular.");
                                    }
-
-                                   if (H_inv) {
-                                        cov_matrix = math.multiply(H_inv, reduced_chi_sq);
-                                   } else {
-                                        throw new Error("Matrix inversion returned null.");
-                                   }
+                                   cov_matrix = H_inv.map(row => row.map(v => v * reduced_chi_sq));
                                } else {
                                     throw new Error("JtJ matrix has incorrect dimensions or format.");
                                }
@@ -6010,7 +6112,10 @@ function debounce(func, wait) {
                  try {
                      const finalBkg = calculateTotalBackground(workerWorkingData.tth, finalParams, backgroundAnchors); // Pass anchors
                      const finalNetPattern = calculatePattern(workerWorkingData.tth, hklList, finalParams);
-                     const finalCalcPattern = math.add(math.multiply(Array.from(finalNetPattern), mainScaleFactor), Array.from(finalBkg));
+                     const finalCalcPattern = new Float64Array(finalNetPattern.length);
+                     for (let i = 0; i < finalCalcPattern.length; i++) {
+                         finalCalcPattern[i] = finalNetPattern[i] * mainScaleFactor + finalBkg[i];
+                     }
 
                      for (let i = 0; i < workerWorkingData.tth.length; i++) {
                          const i_obs = workerWorkingData.intensity[i];
