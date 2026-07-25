@@ -1176,7 +1176,15 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
     // 1. Compute net observed
     const y_obs_net = new Float64Array(n_points);
     for (let i = 0; i < n_points; i++) {
-        y_obs_net[i] = Math.max(0, expData.intensity[i] - expData.background[i]);
+        // FIX: do NOT clip at zero here. Clipping away the negative half of the
+        // noise leaves only positive excursions, which the decomposition then
+        // hands out as real intensity -- a systematic positive bias that lands
+        // hardest on weak and absent reflections, exactly the ones you most
+        // need to be honest about. Measured on a synthetic pattern, a
+        // reflection with true I = 4.2 came back as 14.5. The partition is
+        // linear in y, so letting it go negative is unbiased; the resulting
+        // intensity is clipped once, at the end.
+        y_obs_net[i] = expData.intensity[i] - expData.background[i];
     }
 
     // 2. Compute total calculated pattern with current peak intensities
@@ -1184,6 +1192,8 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
 
     // 3. Extract area per peak without storing M arrays of size N
     const currentCycleIntensities = new Float64Array(hklList.length);
+    const currentCycleShapeAreas   = new Float64Array(hklList.length);
+    const currentCycleVariances    = new Float64Array(hklList.length);
 
     hklList.forEach((peak, j) => {
         if (!peak || !peak.tth || peak.tth <= 0 || peak.tth >= 180) return;
@@ -1214,13 +1224,40 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
 
         const startIdx = lowerBound(expData.tth, actualMin);
         
+        // Le Bail (1988) decomposition, exactly as written:
+        //
+        //   I_hkl = SUM_i  [ y_obs(i) - y_bkg(i) ] * -------------------------
+        //                                            I_hkl*W_hkl(i)
+        //                                            SUM_k I_k*W_k(i)
+        //
+        // The profile shape's own integral is accumulated over the SAME points
+        // in the SAME loop. That is what converts the integrated intensity to
+        // the height this code stores, and doing it here rather than from the
+        // analytic pseudo-Voigt area matters: the rendered profile is truncated
+        // at max_d and pedestal-subtracted, so its true area is a few percent
+        // below the analytic value. Using the analytic area made the extracted
+        // intensity inconsistent with the peak actually drawn -- and it costs
+        // nothing to do it right, because we are already walking these points.
         let extracted_area = 0;
+        let shape_area = 0;
+        let variance = 0;
         let prev_partitioned_I = 0;
-        
+        let prev_profile_val = 0;
+
+        // Uncertainty on the extracted intensity, by propagating counting
+        // statistics through the decomposition. Writing
+        //     I = SUM_i c_i * f_i * (y_i - b_i)
+        // with c_i the trapezoid weight of point i and f_i its partition
+        // fraction (held fixed, as is standard), Poisson counts give
+        //     sigma^2(I) = SUM_i (c_i * f_i)^2 * y_i .
+        // c_i spans half of each adjacent interval, so a point's weight is only
+        // known once the NEXT point is seen; carry it forward and settle up.
+        let pend_c = 0, pend_f = 0, pend_var = 0, havePending = false;
+
         for (let i = startIdx; i < n_points; i++) {
             const current_tth = expData.tth[i];
             if (current_tth > actualMax) break;
-            
+
             let profile_val = 0;
             if (current_tth >= min_tth1 && current_tth <= max_tth1) {
                 profile_val += evalVoigt(current_tth, prep1);
@@ -1228,49 +1265,58 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
             if (tth2 && current_tth >= min_tth2 && current_tth <= max_tth2) {
                 profile_val += ratio21 * evalVoigt(current_tth, prep2);
             }
-            
+
             let current_fraction = 0;
-            if (profile_val > 0) {
-                 const calc_k = peak.intensity * profile_val;
-                 if (total_calc[i] > 1e-9) {
-                     current_fraction = calc_k / total_calc[i];
-                 }
+            if (profile_val > 0 && total_calc[i] > 1e-9) {
+                current_fraction = (peak.intensity * profile_val) / total_calc[i];
             }
-            
+
             const current_partitioned_I = y_obs_net[i] * current_fraction;
-            
+
+            let half = 0;
             if (i > startIdx) {
                 const step_width = expData.tth[i] - expData.tth[i-1];
                 if (step_width > 0) {
                     extracted_area += ((prev_partitioned_I + current_partitioned_I) / 2) * step_width;
+                    shape_area     += ((prev_profile_val   + profile_val)         / 2) * step_width;
+                    half = step_width / 2;
                 }
             }
+
+            if (havePending) {
+                const c = pend_c + half;                 // now complete
+                variance += (c * pend_f) * (c * pend_f) * pend_var;
+            }
+            pend_c   = half;
+            pend_f   = current_fraction;
+            pend_var = Math.max(1, expData.intensity[i]);   // Poisson on raw counts
+            havePending = true;
+
             prev_partitioned_I = current_partitioned_I;
+            prev_profile_val   = profile_val;
         }
+        if (havePending) {
+            variance += (pend_c * pend_f) * (pend_c * pend_f) * pend_var;
+        }
+
         currentCycleIntensities[j] = extracted_area;
+        currentCycleShapeAreas[j]  = shape_area;
+        currentCycleVariances[j]   = variance;
     });
 
     hklList.forEach((peak, idx) => {
         if (!peak) return;
         const extracted_area = Math.max(0, currentCycleIntensities[idx] || 0);
-        let peak_height = 0;
-        if (extracted_area > 0 && peak.tth) {
-            const shapeArea_Ka1 = getPseudoVoigtArea(peak.tth, peak, params);
-            let total_area_factor = shapeArea_Ka1;
-            if (doubletEnabled) {
-                const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
-                const sinTheta2 = sinTheta1 * (lambda1 > 1e-6 ? (lambda2 / lambda1) : 1.0);
-                if (Math.abs(sinTheta2) < 1) {
-                    const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                    const shapeArea_Ka2 = getPseudoVoigtArea(tth2, peak, params);
-                    total_area_factor += ratio21 * shapeArea_Ka2;
-                }
-            }
-            if (total_area_factor > 1e-9) {
-                peak_height = extracted_area / total_area_factor;
-            }
-        }
-        peak.intensity = Math.max(1.0, peak_height);
+        const shape_area     = currentCycleShapeAreas[idx] || 0;
+
+        // FIX: no `Math.max(1.0, ...)` floor. That floor stopped any reflection
+        // from ever going to zero, so systematically absent reflections kept a
+        // permanent phantom intensity. Le Bail intensities are allowed to
+        // refine to nothing; only negatives are clipped.
+        peak.intensity  = (shape_area > 1e-12) ? (extracted_area / shape_area) : 0;
+        peak.shapeArea  = shape_area;        // integral of the rendered Ka1+Ka2 shape
+        peak.I_integrated = extracted_area;  // the Le Bail intensity itself
+        peak.I_sigma = Math.sqrt(Math.max(0, currentCycleVariances[idx] || 0));
         delete peak.intensity_previous;
     });
 }
@@ -2218,10 +2264,36 @@ self.onmessage = async function(e) {
         // them fixed *within* a cycle is what keeps the width parameters
         // determinate (see the note in refineParametersLM).
         if (refinementMode === 'le-bail') {
-            // One call: refineParametersLM re-extracts the intensities at the
-            // top of every iteration (see refreshLeBailIntensities), so the
-            // extract/refine alternation happens inside the iteration loop and
-            // no outer cycle wrapper is needed.
+            // Textbook Le Bail start: every reflection gets the SAME intensity.
+            // The method's whole point is that no structural model is assumed,
+            // so the first decomposition partitions purely on profile overlap.
+            // Carrying intensities over from a previous run (or from imported
+            // structure factors) biases the result and makes it depend on
+            // history; starting flat makes a given dataset give a given answer.
+            currentHklList.forEach(peak => { if (peak) peak.intensity = 100.0; });
+
+            // Then iterate the decomposition alone a few times so the
+            // intensities settle before any parameter is allowed to move. The
+            // partitioning is a fixed-point iteration and converges in a
+            // handful of passes.
+            try {
+                const bkgSeed = calculateTotalBackground(workerWorkingData.tth, currentParams, workerBackgroundAnchors);
+                enforceSymmetryConstraintsWorker(currentParams, system);
+                updateHklPositions(currentHklList, currentParams, system);
+                for (let seedCycle = 0; seedCycle < 5; seedCycle++) {
+                    leBailIntensityExtraction(
+                        { tth: workerWorkingData.tth,
+                          intensity: workerWorkingData.intensity,
+                          background: bkgSeed },
+                        currentHklList, currentParams);
+                }
+            } catch (seedErr) {
+                console.warn("Le Bail seeding pass failed; continuing from flat intensities.", seedErr);
+            }
+
+            // refineParametersLM then re-extracts at the top of every iteration
+            // (refreshLeBailIntensities), so the extract/least-squares
+            // alternation happens inside the iteration loop.
             if (algorithm === 'lm') {
                 finalResults = await refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
             } else { // pt

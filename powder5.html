@@ -1739,6 +1739,96 @@ document.addEventListener('DOMContentLoaded', async () => {
         const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 6
 
         /**
+         * Covariance matrix from a normal-equations matrix JtJ.
+         *
+         * JtJ = J^T J is symmetric positive semi-definite by construction, so
+         * every variance on the diagonal of its inverse must be >= 0. A
+         * negative one can only be numerical failure -- and that is what was
+         * reaching the report as a bare "NaN" with no explanation.
+         *
+         * Two changes make it robust:
+         *  1. Normalise by the square roots of the diagonal first. Real JtJ
+         *     diagonals here span ten orders of magnitude (measured: 2.1 to
+         *     9.9e10 on an orthorhombic cell + shift + profile refinement),
+         *     purely because the parameters have wildly different units. The
+         *     normalised matrix has unit diagonal and is far better conditioned.
+         *  2. Factor by Cholesky rather than Gauss-Jordan. For a PSD matrix it
+         *     is the right tool, and it FAILS CLEANLY on a matrix that is not
+         *     positive definite -- which is a real answer ("these parameters
+         *     are not jointly determined") instead of silent garbage.
+         *
+         * Returns { cov, undetermined } or null if the system is degenerate.
+         */
+        function covarianceFromJtJ(JtJ) {
+            const n = JtJ.length;
+            if (n === 0) return { cov: [], undetermined: [] };
+
+            const d = new Float64Array(n);
+            const undetermined = [];
+            for (let i = 0; i < n; i++) {
+                const v = JtJ[i][i];
+                if (!isFinite(v) || v <= 0) { undetermined.push(i); d[i] = 1; }
+                else d[i] = Math.sqrt(v);
+            }
+
+            // Normalised matrix B = D^-1 (JtJ) D^-1, unit diagonal.
+            const B = [];
+            for (let i = 0; i < n; i++) {
+                const row = new Float64Array(n);
+                for (let j = 0; j < n; j++) {
+                    const v = JtJ[i][j] / (d[i] * d[j]);
+                    row[j] = isFinite(v) ? v : (i === j ? 1 : 0);
+                }
+                B.push(row);
+            }
+            for (const i of undetermined) {
+                for (let j = 0; j < n; j++) { B[i][j] = 0; B[j][i] = 0; }
+                B[i][i] = 1;
+            }
+
+            // Cholesky: B = L L^T
+            const L = [];
+            for (let i = 0; i < n; i++) L.push(new Float64Array(n));
+            for (let i = 0; i < n; i++) {
+                for (let j = 0; j <= i; j++) {
+                    let s = B[i][j];
+                    for (let k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+                    if (i === j) {
+                        if (!(s > 1e-12)) return null;   // not positive definite
+                        L[i][i] = Math.sqrt(s);
+                    } else {
+                        L[i][j] = s / L[j][j];
+                    }
+                }
+            }
+
+            // Linv (lower triangular), then B^-1 = Linv^T Linv
+            const Li = [];
+            for (let i = 0; i < n; i++) Li.push(new Float64Array(n));
+            for (let i = 0; i < n; i++) {
+                Li[i][i] = 1 / L[i][i];
+                for (let j = 0; j < i; j++) {
+                    let s = 0;
+                    for (let k = j; k < i; k++) s -= L[i][k] * Li[k][j];
+                    Li[i][j] = s / L[i][i];
+                }
+            }
+
+            const cov = [];
+            for (let i = 0; i < n; i++) {
+                const row = new Array(n).fill(0);
+                for (let j = 0; j < n; j++) {
+                    let s = 0;
+                    for (let k = Math.max(i, j); k < n; k++) s += Li[k][i] * Li[k][j];
+                    row[j] = s / (d[i] * d[j]);      // undo the normalisation
+                }
+                cov.push(row);
+            }
+            for (const i of undetermined) cov[i][i] = -1;   // flagged, not NaN
+            return { cov, undetermined };
+        }
+
+        /**
          * Inverts a dense square matrix by Gauss-Jordan elimination with
          * partial pivoting. Returns null if the matrix is singular to working
          * precision -- which, for a JtJ Hessian, genuinely means the ESDs are
@@ -4491,8 +4581,12 @@ function generateMasterHklList() {
  * @returns {object|null} An object with size, strain, and R-squared, or null if calculation fails.
  */
 function calculateWilliamsonHall(params, hklList) {
-    // This analysis is only valid for the TCH profile which separates size/strain contributions.
-    if (params.profileType === "4" || params.U === undefined || params.X === undefined || params.Y === undefined) {
+    // Only meaningful for TCH, which separates the size (1/cos) and strain
+    // (tan) contributions. The old guard tested profileType === "4", a value
+    // this app never uses, so it never fired; it worked only by accident,
+    // because U/X/Y are undefined for the other profile types.
+    if (params.profileType !== "tch_aniso" ||
+        params.U === undefined || params.X === undefined || params.Y === undefined) {
         return null;
     }
 
@@ -4511,10 +4605,26 @@ function calculateWilliamsonHall(params, hklList) {
         const cosTheta = Math.cos(theta_rad);
         const tanTheta = Math.tan(theta_rad);
 
-        // Step 1: Calculate sample-only breadth components (in degrees) by ignoring instrumental V and W.
+        // Step 1: sample-only breadth components, ignoring instrumental V and W.
+        //
+        // CRITICAL FIX -- the GSAS unit conversions were missing entirely here.
+        // U, V, W, X and Y are GSAS-convention parameters: U*tan^2(th) is a
+        // Gaussian VARIANCE in centidegrees^2, and X*tan(th) + Y/cos(th) is a
+        // Lorentzian FWHM in centidegrees. Turning either into a FWHM in
+        // degrees needs the same factors the profile itself uses:
+        //
+        //   Gaussian    FWHM[deg] = sqrt(variance) * sqrt(8 ln2) / 100
+        //   Lorentzian  FWHM[deg] = (X tan + Y/cos) / 100
+        //
+        // The old code applied neither, so it fed sigma-in-centidegrees and
+        // FWHM-in-centidegrees straight into a formula expecting degrees --
+        // breadths too large by 42.5x and 100x respectively. A Lorentzian-
+        // dominated crystalline sample therefore came out ~100x too broad:
+        // a 180 nm crystallite reported as 1.8 nm, and 0.04% strain as 3.9%.
         const beta_G_sq = (params.U || 0) * tanTheta * tanTheta;
-        const beta_G = beta_G_sq > 0 ? Math.sqrt(beta_G_sq) : 0;
-        const beta_L = (params.X || 0) * tanTheta + (params.Y || 0) / cosTheta;
+        const beta_G = beta_G_sq > 0 ? Math.sqrt(beta_G_sq) * GSAS_GAUSSIAN_TO_DEG : 0;
+        const beta_L = ((params.X || 0) * tanTheta + (params.Y || 0) / cosTheta) * GSAS_LORENTZIAN_TO_DEG;
+
         
         // Step 2: Combine them using the TCH FWHM approximation to get the total sample breadth.
         const fwhm_g_5 = Math.pow(beta_G, 5);
@@ -4570,10 +4680,26 @@ function calculateWilliamsonHall(params, hklList) {
     const microstrain = m_slope / 4.0;
     const microstrain_percent = microstrain * 100;
 
+    // The refined TCH parameters already separate the two effects analytically,
+    // so the size and strain can also be read straight off them without any
+    // linear fit. These are exact for this profile model:
+    //     Y / cos(th)  -> Scherrer size    D[A] = 18000 K lambda / (pi Y)
+    //     X * tan(th)  -> Lorentzian strain  eps = pi X / 72000
+    //     U * tan^2(th)-> Gaussian strain    eps = sqrt(U) * sqrt(8 ln2) * pi / 72000
+    const Yp = params.Y || 0, Xp = params.X || 0, Up = params.U || 0;
+    const size_direct_nm = (Yp > 1e-9)
+        ? (18000 * K_scherrer * lambda / (Math.PI * Yp)) / 10.0
+        : Infinity;
+    const strain_L = Math.PI * Xp / 72000;
+    const strain_G = Math.sqrt(Math.max(0, Up)) * Math.sqrt(8 * Math.LN2) * Math.PI / 72000;
+    const strain_direct_percent = Math.sqrt(strain_L * strain_L + strain_G * strain_G) * 100;
+
     return {
         size_nm: crystallite_size_nm,
         strain_percent: microstrain_percent,
-        r_squared: r_squared
+        r_squared: r_squared,
+        size_direct_nm: size_direct_nm,
+        strain_direct_percent: strain_direct_percent
     };
 }
 
@@ -5701,6 +5827,9 @@ function debounce(func, wait) {
             const i_obs_map = new Map();
 
             // Pass 2: partition the observed net intensity over each peak's window.
+            // NOTE: in Le Bail mode this reproduces the extraction exactly (it is
+            // the same integral), so the report only shows it for Pawley, where
+            // the intensity is an independently refined parameter.
             hklList.forEach((peak, j) => {
                 const hkl_string = peak.hkl_list[0];
                 if (!i_obs_map.has(hkl_string)) i_obs_map.set(hkl_string, 0);
@@ -5716,7 +5845,10 @@ function debounce(func, wait) {
 
                     const total = total_profile_sum_scaled[i];
                     const fraction = total > 1e-9 ? scaledAt(s, tth) / total : 0;
-                    const y_obs_net = Math.max(0, expData.intensity[i] - finalBkg[i]);
+                    // Unclipped, to match the extraction -- see the note in
+                    // leBailIntensityExtraction. Clipping here would bias weak
+                    // reflections high.
+                    const y_obs_net = expData.intensity[i] - finalBkg[i];
                     const partitioned_I = y_obs_net * fraction;
 
                     if (i > s.startIdx) {
@@ -5817,6 +5949,8 @@ function debounce(func, wait) {
                             '--- Williamson-Hall Size/Strain Analysis (Approximate) ---',
                             `Apparent Crystallite Size (nm): ${whResults.size_nm !== undefined ? whResults.size_nm.toFixed(1) : 'N/A'}`,
                             `Apparent Microstrain (%):      ${whResults.strain_percent !== undefined ? whResults.strain_percent.toFixed(4) : 'N/A'}`,
+                            `  from Y directly (nm):        ${whResults.size_direct_nm !== undefined ? whResults.size_direct_nm.toFixed(1) : 'N/A'}`,
+                            `  from X,U directly (%):       ${whResults.strain_direct_percent !== undefined ? whResults.strain_direct_percent.toFixed(4) : 'N/A'}`,
                             `Linear Fit R²:                 ${whResults.r_squared !== undefined ? whResults.r_squared.toFixed(5) : 'N/A'}`,
                             '(Note: Assumes isotropic size/strain broadening via TCH U, X, Y)',
                             ''
@@ -5847,11 +5981,11 @@ function debounce(func, wait) {
                                // Verify Matrix Dimensions
                                if (Array.isArray(JtJ) && JtJ.length === P && Array.isArray(JtJ[0]) && JtJ[0].length === P) {
                                    
-                                   const H_inv = invertMatrix(JtJ);
-                                   if (!H_inv) {
-                                        throw new Error("Normal-equations matrix is singular.");
+                                   const covResult = covarianceFromJtJ(JtJ);
+                                   if (!covResult) {
+                                        throw new Error("Normal-equations matrix is not positive definite.");
                                    }
-                                   cov_matrix = H_inv.map(row => row.map(v => v * reduced_chi_sq));
+                                   cov_matrix = covResult.cov.map(row => row.map(v => v * reduced_chi_sq));
                                } else {
                                     throw new Error("JtJ matrix has incorrect dimensions or format.");
                                }
@@ -5863,6 +5997,7 @@ function debounce(func, wait) {
 
                           // If covariance matrix was successfully calculated, extract diagonal elements
                           if (cov_matrix) {
+                              const undeterminedNames = [];
                               parameterInfo.forEach((p_info, i) => {
                                    if (cov_matrix[i] && cov_matrix[i][i] !== undefined) {
                                        const variance = cov_matrix[i][i];
@@ -5871,12 +6006,22 @@ function debounce(func, wait) {
                                             const scale = p_info.scale || 1.0;
                                             esds[p_info.name] = sigma_scaled * scale;
                                         } else {
+                                             // Cannot happen for a well-conditioned
+                                             // J^T J; means this parameter is not
+                                             // determined by the data. Say so
+                                             // rather than printing "NaN".
+                                             undeterminedNames.push(p_info.name);
                                              esds[p_info.name] = NaN;
                                         }
                                    } else {
+                                        undeterminedNames.push(p_info.name);
                                         esds[p_info.name] = NaN;
                                    }
                               });
+                              if (undeterminedNames.length > 0) {
+                                  esdWarning = `Not determined by the data (no ESD): ${undeterminedNames.join(', ')}. `
+                                             + `Usually means these parameters are fully correlated with others in the fit.`;
+                              }
                           }
                      } else {
                           esdWarning = "Invalid sum of squared residuals (ss_res).";
@@ -6012,18 +6157,26 @@ function debounce(func, wait) {
 
             const reflectionsSection = [];
             if (hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
-                const i_calc_header = refinementMode === 'pawley' ? 'I_refined' : 'I_extracted';
-                // Adjusted widths slightly for better alignment
-                const reflWidths = [15, 18, 18, 18, 18];
-                const reflHeader = formatLine(['h,k,l', '2th_corr (°)', i_calc_header, 'ESD(I)', 'I_obs (Area)'], reflWidths);
+                const isPawley = (refinementMode === 'pawley');
+                // Le Bail has ONE intensity per reflection: the decomposed
+                // observed intensity. Pawley additionally has the refined
+                // parameter, which is worth comparing against the observed.
+                const reflWidths = isPawley ? [15, 18, 18, 18, 18] : [15, 18, 18, 18];
+                const reflHeader = formatLine(
+                    isPawley
+                        ? ['h,k,l', '2th_corr (°)', 'I_refined', 'sigma(I)', 'I_obs (Area)']
+                        : ['h,k,l', '2th_corr (°)', 'I_obs (Area)', 'sigma(I)'],
+                    reflWidths);
                 reflectionsSection.push('', '--- Reflections List (Integrated Intensities) ---', reflHeader, '-'.repeat(reflHeader.length));
 
                 let i_obs_map = new Map();
-                try {
-                     i_obs_map = calculateAllObservedIntensities(hklList, finalParams, workerWorkingData);
-                } catch(iobsError) {
-                     console.error("Error calculating observed intensities:", iobsError);
-                     reflectionsSection.push("(Error calculating I_obs)");
+                if (isPawley) {
+                    try {
+                         i_obs_map = calculateAllObservedIntensities(hklList, finalParams, workerWorkingData);
+                    } catch(iobsError) {
+                         console.error("Error calculating observed intensities:", iobsError);
+                         reflectionsSection.push("(Error calculating I_obs)");
+                    }
                 }
 
                 const fitted_tth_min = workerWorkingData.tth[0];
@@ -6036,37 +6189,34 @@ function debounce(func, wait) {
                          try {
                              tthCorr += calculatePeakShift(hkl.tth, finalParams);
                          } catch { /* ignore shift error */ }
-                         const i_calc_height = hkl.intensity || 0;
-                        
-                        // 1. Calculate K-Alpha 1 Area (Normalized to Height=1)
-                        const shapeArea_Ka1 = getPseudoVoigtArea(hkl.tth, hkl, finalParams);
-                        
-                        // 2. Initialize Total Integrated Area (Height * ShapeArea)
-                        let total_calc_area = i_calc_height * shapeArea_Ka1;
-                        
-                        // 3. Handle K-Alpha 2 Doublet
-                        const lambda1 = finalParams.lambda;
-                        const lambda2 = finalParams.lambda2;
-                        const ratio21 = finalParams.ratio;
-                        const doubletActive = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
+                        const i_calc_height = hkl.intensity || 0;
 
-                        if (doubletActive && i_calc_height > 0) {
-                            const deg2rad = Math.PI / 180;
-                            const sinTheta1 = Math.sin(hkl.tth * deg2rad / 2.0);
-                            // Calculate sin(theta2) based on wavelength ratio
-                            const sinTheta2 = sinTheta1 * (lambda2 / lambda1);
-
-                            // Only add Ka2 if it exists within physical space (sin < 1)
-                            if (Math.abs(sinTheta2) < 1) {
-                                const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                                const shapeArea_Ka2 = getPseudoVoigtArea(tth2, hkl, finalParams);
-                                
-                                // Add Ka2 contribution: Height * Ratio * ShapeArea2
-                                total_calc_area += i_calc_height * ratio21 * shapeArea_Ka2;
+                        // The integrated intensity is whatever the Le Bail
+                        // decomposition actually produced, using the integral of
+                        // the profile as it was really drawn (hkl.shapeArea,
+                        // accumulated on the data grid during extraction).
+                        // Reconstructing it here from the analytic pseudo-Voigt
+                        // area gave a different number, because the drawn peak
+                        // is truncated and pedestal-subtracted. Fall back to the
+                        // analytic route only for reflections the extraction
+                        // never visited (e.g. a Pawley run).
+                        let total_calc_area;
+                        if (typeof hkl.shapeArea === 'number' && hkl.shapeArea > 0) {
+                            total_calc_area = i_calc_height * hkl.shapeArea;
+                        } else {
+                            total_calc_area = i_calc_height * getPseudoVoigtArea(hkl.tth, hkl, finalParams);
+                            const lambda1 = finalParams.lambda;
+                            const lambda2 = finalParams.lambda2;
+                            const ratio21 = finalParams.ratio;
+                            if (ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6 && i_calc_height > 0) {
+                                const deg2rad = Math.PI / 180;
+                                const sinTheta2 = Math.sin(hkl.tth * deg2rad / 2.0) * (lambda2 / lambda1);
+                                if (Math.abs(sinTheta2) < 1) {
+                                    const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                                    total_calc_area += i_calc_height * ratio21 * getPseudoVoigtArea(tth2, hkl, finalParams);
+                                }
                             }
                         }
-
-                        // 4. Apply Global Scale Factor to get final I_calc
                         total_calc_area *= mainScaleFactor;
 
                         // 5. Calculate Effective Width Factor for ESD Scaling
@@ -6078,27 +6228,42 @@ function debounce(func, wait) {
                         const i_obs = i_obs_map.get(hkl.hkl_list[0]) || 0;
                         let esd_I_str = '';
 
-                        if (refinementMode === 'pawley') {
+                        if (isPawley) {
+                             // Pawley intensities are least-squares parameters,
+                             // so their ESD comes from the covariance matrix.
                              const hkl_name = `I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`;
                              const esd_I_val_height = esds[hkl_name];
 
                              if (typeof esd_I_val_height === 'number' && isFinite(esd_I_val_height)) {
                                  // Convert Height ESD to Area ESD
                                  const esd_I_val_area = esd_I_val_height * effective_width_factor;
-                                 esd_I_str = `(${esd_I_val_area.toFixed(1)})`;
-                             } else if (isNaN(esd_I_val_height)) {
-                                 esd_I_str = '(NaN)';
+                                 esd_I_str = esd_I_val_area.toFixed(1);
+                             } else {
+                                 esd_I_str = '-';
                              }
+                        } else {
+                             // FIX: this column used to be blank for every Le Bail
+                             // run. Le Bail intensities are not least-squares
+                             // parameters so they have no covariance entry, but
+                             // they DO have a well-defined uncertainty: the
+                             // counting statistics of the observed points,
+                             // propagated through the partition fractions. That
+                             // is computed during the extraction (peak.I_sigma)
+                             // and is what other Rietveld packages report here.
+                             const sig = hkl.I_sigma;
+                             const scaled = (typeof sig === 'number') ? sig * mainScaleFactor : NaN;
+                             esd_I_str = isFinite(scaled) ? scaled.toFixed(1) : '-';
                         }
 
                         if (i_obs > 0.01 || total_calc_area > 0.01) {
-                            reflectionsSection.push(formatLine([
+                            const row = [
                                 hkl.hkl_list[0],
                                 tthCorr.toFixed(4),
                                 total_calc_area.toFixed(1),
-                                esd_I_str,
-                                i_obs.toFixed(1)
-                            ], reflWidths));
+                                esd_I_str
+                            ];
+                            if (isPawley) row.push(i_obs.toFixed(1));
+                            reflectionsSection.push(formatLine(row, reflWidths));
                         }
                     });
             }
