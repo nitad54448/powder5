@@ -1,4 +1,6 @@
 // refinement_worker.js
+// version 130, 26 july 2026, fixed some format in read data, changed the zoom
+// version 129, 25 july 2026, Fixed TCH error
 // version 123 (fixes: init race, tetragonal/triclinic HKL generation, LM step clamp)
 // Spline Background in nov 2025, version 115
 // FIX: must match the file the main thread loads (was stale "_v2", -> 404).
@@ -37,12 +39,10 @@ initPromise.catch(() => {});
 
 
 
-// Engine shims so legacy call sites inside this file still work. The
-// authoritative implementations live in sg_engine.js.
-function isReflectionAllowed(h, k, l, spaceGroup) {
-    return SG_ENGINE.isReflectionAllowed(h, k, l, spaceGroup);
-}
-
+// The HKL list (indices, multiplicities, allowed reflections) is generated
+// on the main thread and shipped in with the refinement request, so the
+// worker no longer duplicates that logic. SG_ENGINE is still needed here
+// for SG_ENGINE.resolve() when the request arrives.
 function enforceSymmetryConstraintsWorker(params, system) {
     if (!params || params.profileType !== "tch_aniso") return;
     switch (system) {
@@ -121,7 +121,6 @@ function lowerBound(arr, target) {
     return lo;
 }
 let workerWorkingData = null; // To store the sliced data sent from the main thread
-let hklIndexCache = {}; 
 let workerBackgroundAnchors = []; 
 
 
@@ -416,195 +415,6 @@ function createMonotonicCubicSplineInterpolator(points) {
 }
 
 
-// Engine shim: delegate multiplicity to sg_engine.js so main thread
-// and worker share one authoritative implementation.
-function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
-    return SG_ENGINE.getMultiplicity(h, k, l, laue_class);
-}
-
-
-/**
- * Generates the list of raw HKL indices {h, k, l, multiplicity} for PREVIEW/REFINEMENT.
- * Checks cache first in the worker context.
- */
-function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
-    // FIX: cache key encodes everything the list depends on (SG, lattice,
-    // wavelength, 2-theta range), not just the SG number, so a stale list
-    // can never be reused after a parameter change.
-    let cacheKey = null;
-    if (spaceGroup && typeof spaceGroup.number === 'number' && params) {
-        cacheKey = `${spaceGroup.number}|${params.a}|${params.b}|${params.c}|${params.lambda}|${maxTth}`;
-        if (typeof self !== 'undefined' && typeof importScripts === 'function' && hklIndexCache[cacheKey]) {
-             return hklIndexCache[cacheKey];
-        }
-    }
-
-    const { a, b, c, lambda } = params;
-    const sgSystem = spaceGroup ? spaceGroup.system : null;
-    const sgLaueClass = spaceGroup ? spaceGroup.laue_class : null;
-
-    if (!lambda || typeof lambda !== 'number' || lambda <= 0 ||
-        !sgLaueClass || typeof sgLaueClass !== 'string' || sgLaueClass.length === 0 ||
-        !a || typeof a !== 'number' || a <= 0 ||
-        !sgSystem || typeof sgSystem !== 'string' || sgSystem.length === 0 ) {
-         console.error(`HKL Gen Error: Invalid parameters provided. Lambda: ${lambda}, Laue Class: ${sgLaueClass}, System: ${sgSystem}, a: ${a}`);
-         return [];
-     }
-
-    const maxDim = Math.max(a || 0, b || a || 0, c || a || 0);
-    if (maxDim <= 0) return [];
-
-    const sinThetaMax = Math.sin(maxTth * Math.PI / 360);
-    if (sinThetaMax <= 0) return [];
-    const dMin = lambda / (2 * sinThetaMax);
-    if (dMin <= 0) return [];
-    const inv_d_sq_max = 1.0 / (dMin * dMin);
-    const baseMaxIndex = Math.ceil(maxDim / dMin) + 5;
-    const maxIndex = Math.min(baseMaxIndex, 50);
-
-    const a_sq = a * a;
-    const b_sq = (sgSystem === 'orthorhombic' || sgSystem === 'monoclinic' || sgSystem === 'triclinic') ? ((b && b > 0) ? b * b : a_sq) : a_sq;
-    const c_sq = (sgSystem !== 'cubic') ? ((c && c > 0) ? c * c : a_sq) : a_sq;
-
-    let rawReflections = [];
-    const addedHKLs = new Set();
-    const getKey = (h, k, l) => `${h},${k},${l}`;
-
-    const loopAndAdd = (h, k, l) => {
-        if (h === 0 && k === 0 && l === 0) return;
-        const key = getKey(h, k, l);
-        if (addedHKLs.has(key)) return;
-
-        if (isReflectionAllowed(h, k, l, spaceGroup)) {
-            const { multiplicity } = getMultiplicityAndCanonicalHKL(h, k, l, sgLaueClass);
-             if (multiplicity > 0) {
-                 rawReflections.push({
-                    h_orig: h, k_orig: k, l_orig: l,
-                    hkl_list: [`(${h},${k},${l})`],
-                    multiplicity: multiplicity
-                });
-                addedHKLs.add(key);
-             }
-        }
-    };
-
-    const maxI = maxIndex;
-
-    if (sgSystem === 'monoclinic') {
-        // Laue 2/m (unique axis b): wedge k>=0, l>=0, h free.
-        // FIX: for l=0, (h,k,0) and (-h,k,0) are 2/m-equivalent, so require
-        // h>=0 there to avoid duplicated peaks at the same position.
-        for (let h = -maxI; h <= maxI; h++) {
-            for (let k = 0; k <= maxI; k++) {
-                for (let l = 0; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue;
-                    if (l === 0 && h < 0) continue;
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else if (sgSystem === 'triclinic') {
-        // FIX: Laue -1 only relates (h,k,l) to (-h,-k,-l). The old k>=0, l>=0
-        // wedge missed every reflection with mixed signs, e.g. (2,1,-3).
-        // Friedel-unique hemisphere:
-        //   l > 0, or (l = 0 and k > 0), or (l = 0, k = 0, h > 0).
-        for (let h = -maxI; h <= maxI; h++) {
-            for (let k = -maxI; k <= maxI; k++) {
-                for (let l = 0; l <= maxI; l++) {
-                    if (l === 0 && (k < 0 || (k === 0 && h <= 0))) continue;
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else if (sgSystem === 'orthorhombic') {
-        if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0) return [];
-        for (let h = 0; h <= maxI; h++) {
-            const h_term = (h*h) / a_sq;
-            if (h_term > inv_d_sq_max && h > 0) break;
-
-            for (let k = 0; k <= maxI; k++) {
-                const hk_term = h_term + (k*k) / b_sq;
-                if (hk_term > inv_d_sq_max && k > 0) break;
-
-                for (let l = 0; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue;
-                    const hkl_term = hk_term + (l*l) / c_sq;
-                    if (hkl_term > inv_d_sq_max) {
-                         break;
-                    }
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else if (sgSystem === 'hexagonal' || sgSystem === 'trigonal' || sgSystem === 'rhombohedral') {
-        if (a_sq <= 0 || c_sq <= 0) return [];
-        const a_term_prefactor = 4.0 / (3.0 * a_sq);
-        const l_limit = (sgLaueClass === '6/m' || sgLaueClass === '6/mmm') ? 0 : -maxI;
-
-        for (let h = 0; h <= maxI; h++) {
-            const h_term_only = a_term_prefactor * (h*h);
-             if (h_term_only > inv_d_sq_max && h > 0) break;
-
-            for (let k = 0; k <= h; k++) {
-                const hk_term = a_term_prefactor * (h*h + h*k + k*k);
-                 if (hk_term > inv_d_sq_max && k > 0) break;
-
-                for (let l = l_limit; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue;
-                    const hkl_term = hk_term + (l*l) / c_sq;
-                    if (hkl_term > inv_d_sq_max) {
-                        if (l >= 0) break;
-                    }
-                     if (h === 0 && k === 0 && l === 0) continue;
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else if (sgSystem === 'tetragonal') {
-        // FIX: tetragonal previously shared the cubic h>=k>=l wedge, which is
-        // only valid when the axes are interchangeable. In tetragonal, l is a
-        // distinct axis, so restricting l<=k dropped every reflection with
-        // l > k (e.g. 001, 101, 102, 112). Correct wedge: h>=k>=0, l>=0 free.
-        if (a_sq <= 0 || c_sq <= 0) return [];
-        for (let h = 0; h <= maxI; h++) {
-            const h_term = (h*h) / a_sq;
-            if (h_term > inv_d_sq_max && h > 0) break;
-            for (let k = 0; k <= h; k++) {
-                const hk_term = h_term + (k*k) / a_sq;
-                if (hk_term > inv_d_sq_max && k > 0) break;
-                for (let l = 0; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue;
-                    const hkl_term = hk_term + (l*l) / c_sq;
-                    if (hkl_term > inv_d_sq_max) break;
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else { // Cubic: h >= k >= l >= 0 wedge is valid (axes interchangeable)
-        if (a_sq <= 0) return [];
-        for (let h = 0; h <= maxI; h++) {
-            const h_term_factor = (h*h);
-            if (h_term_factor / a_sq > inv_d_sq_max && h > 0) break;
-            for (let k = 0; k <= h; k++) {
-                const hk_term_factor = h_term_factor + (k*k);
-                if (hk_term_factor / a_sq > inv_d_sq_max && k > 0) break;
-                for (let l = 0; l <= k; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue;
-                    if ((hk_term_factor + l*l) / a_sq > inv_d_sq_max) break;
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    }
-
-    if (cacheKey !== null && typeof self !== 'undefined' && typeof importScripts === 'function') {
-         hklIndexCache[cacheKey] = rawReflections;
-    }
-    return rawReflections;
-}
-
-
-
 /**
  * Calculates the peak position shift due to sample displacement or transparency.
  */
@@ -857,95 +667,6 @@ function getPeakFWHM(gamma_G, gamma_L) {
      return Math.max(1e-6, fwhm);
 }
 
-/**
- * Calculates area for simple_pvoigt
- */
-function _getArea_Simple(tth_peak, hkl, params) {
-    const GAUSS_AREA_CONST = 1.0644677;
-    const LORENTZ_AREA_CONST = 1.5707963;
-
-    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-    const gG = Math.max(1e-9, gamma_G);
-    const gL = Math.max(1e-9, gamma_L);
-    const area_G = gG * GAUSS_AREA_CONST;
-    const area_L = gL * LORENTZ_AREA_CONST;
-    const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-    return currentEta * area_L + (1 - currentEta) * area_G;
-}
-
-/**
- * Calculates area for split_pvoigt
- */
-function _getArea_Split(tth_peak, hkl, params) {
-    const GAUSS_AREA_CONST = 1.0644677;
-    const LORENTZ_AREA_CONST = 1.5707963;
-
-    const { gamma_G: gG_L, gamma_L: gL_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
-    const { gamma_G: gG_R, gamma_L: gL_R } = calculateProfileWidths(tth_peak, hkl, params, 'right');
-    
-    const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
-    
-    const area_G_L = Math.max(1e-9, gG_L) * GAUSS_AREA_CONST;
-    const area_L_L = Math.max(1e-9, gL_L) * LORENTZ_AREA_CONST;
-    const totalArea_L = currentEta * area_L_L + (1 - currentEta) * area_G_L;
-
-    const area_G_R = Math.max(1e-9, gG_R) * GAUSS_AREA_CONST;
-    const area_L_R = Math.max(1e-9, gL_R) * LORENTZ_AREA_CONST;
-    const totalArea_R = currentEta * area_L_R + (1 - currentEta) * area_G_R;
-    
-    // Average area of the two halves
-    return (totalArea_L + totalArea_R) / 2.0; 
-}
-
-/**
- * [NEW HELPER] Calculates area for tch_aniso
- */
-function _getArea_TCH(tth_peak, hkl, params) {
-    const GAUSS_AREA_CONST = 1.0644677;
-    const LORENTZ_AREA_CONST = 1.5707963;
-
-    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-    const gG = Math.max(1e-9, gamma_G);
-    const gL = Math.max(1e-9, gamma_L);
-    
-    const fwhm = getPeakFWHM(gG, gL);
-    const ratio = (fwhm > 1e-9) ? gL / fwhm : 0;
-    const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-    const currentEta = Math.max(0, Math.min(1, eta_calc));
-    
-    // TCH area uses the convoluted FWHM
-    const area_G_combined = fwhm * GAUSS_AREA_CONST;
-    const area_L_combined = fwhm * LORENTZ_AREA_CONST;
-    
-    return currentEta * area_L_combined + (1 - currentEta) * area_G_combined;
-}
-
-
-
-/**
- * Calculates the integrated area under a pseudo-Voigt peak shape.
- * This is now a DISPATCHER function.
- */
-function getPseudoVoigtArea(tth_peak, hkl, params) {
-    if (!params || !params.profileType) return 1.0;
-
-    let totalArea = 1.0;
-    switch (params.profileType) {
-        case "simple_pvoigt":
-            totalArea = _getArea_Simple(tth_peak, hkl, params);
-            break;
-        case "split_pvoigt":
-            totalArea = _getArea_Split(tth_peak, hkl, params);
-            break;
-        case "tch_aniso":
-            totalArea = _getArea_TCH(tth_peak, hkl, params);
-            break;
-    }
-    return (isFinite(totalArea) && totalArea > 0) ? totalArea : 1.0;
-}
-
-
-
 function prepareVoigt(tth_peak, x0, hkl, params) {
     if (!params) return null;
     const profileType = params.profileType;
@@ -1062,12 +783,6 @@ function evalVoigt(x, p) {
     const v = p.eta * l + (1.0 - p.eta) * g - p.pedestal;
     return v > 0 ? v : 0.0;
 }
-
-// Keep pseudoVoigt as a backward-compatible wrapper for any legacy call sites
-function pseudoVoigt(x, x0, tth_peak, hkl, params) {
-    return evalVoigt(x, prepareVoigt(tth_peak, x0, hkl, params));
-}
-
 
     function calculatePattern(tthAxis, hklList, params, outArr = null) {
     const n_points = tthAxis ? tthAxis.length : 0;
@@ -2384,7 +2099,6 @@ self.onmessage = async function(e) {
 
          workerWorkingData = null;
          workerBackgroundAnchors = [];
-         hklIndexCache = {};
     }
 };
 
