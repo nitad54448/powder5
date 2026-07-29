@@ -228,7 +228,14 @@
     }
 
     function parseCondition(str) {
-        const m = str.match(CONDITION_RE);
+        // The cctbx export writes some coefficients with an explicit product,
+        // e.g. the d-glide condition "2*h+l=4n" on hhl. CONDITION_RE has no
+        // room for the '*', so those rules used to fail to parse and were
+        // silently DROPPED -- letting through reflections that are in fact
+        // systematically absent in I41md, I41cd, I-42d, I41/amd, I41/acd,
+        // I-43d and Ia-3d. parseExpression already handles "2h", so the '*'
+        // just needs removing first.
+        const m = str.replace(/\*/g, '').match(CONDITION_RE);
         if (!m) {
             console.warn('SG_ENGINE: unparsable reflection condition:', str);
             return null;

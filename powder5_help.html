@@ -367,7 +367,18 @@ blockquote {
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--fg-4); }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-4); }
+/* Help footer: version / date stamp */
+#help-footer {
+    margin-top: 32px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule, #d8d5d0);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-align: right;
+    opacity: 0.65;
+}
+
     </style>
 </head>
 <body>
@@ -423,6 +434,7 @@ blockquote {
             <li><a href="#parameters-background" class="sub-link">Background (Spline)</a></li> <li><a href="#parameters-profile4" class="sub-link">Simple pVoigt</a></li>
             <li><a href="#parameters-profile3" class="sub-link">TCH (Anisotropic)</a></li>
             <li><a href="#parameters-profile-split" class="sub-link">Split pVoigt (Asymmetric)</a></li>
+            <li><a href="#space-group-test">Space-Group Determination</a></li>
             <li><a href="#strategy">Refinement Strategy</a></li>
             <li><a href="#results">Interpreting Results</a></li>
             <blockquote>
@@ -808,6 +820,145 @@ blockquote {
         </section>
         <hr>
 
+
+        <section id="space-group-test">
+            <h2>Probabilistic Space-Group Determination</h2>
+            <p>
+                Once a Pawley refinement has completed, a small <strong>?</strong> button becomes
+                active on the space-group line of the control panel. It scores every space group
+                compatible with the current Laue class against the extracted intensities and
+                returns a ranked list of posterior probabilities. The method follows
+                Markvardsen, David, Johnson &amp; Shankland (2001).
+            </p>
+
+            <h3 id="sgt-principle">The Principle</h3>
+            <p>
+                A candidate space group $S$ makes exactly one testable statement about a powder
+                pattern: a particular subset $e$ of the reflections is <em>systematically absent</em>,
+                so their true integrated intensities are identically zero. Everything else it leaves
+                free. The question is therefore not &ldquo;does this space group fit?&rdquo; but
+                &ldquo;are the reflections it forbids consistent with zero, given how well the data
+                actually determine them?&rdquo;
+            </p>
+            <p>
+                A Pawley refinement is what makes this answerable. Because every intensity is a free
+                least-squares parameter, the refinement returns not only the intensities
+                $\hat{\mathbf{I}}$ but the normal matrix behind them, and therefore their full
+                <em>covariance</em>. That matters enormously: in a powder pattern reflections overlap,
+                and overlapping intensities are strongly correlated. A reflection that should be
+                absent can carry a large apparent intensity purely by borrowing it from a neighbour
+                it cannot be resolved from. Judging each reflection on its own $I/\sigma$ ignores
+                this and can be badly misleading in either direction.
+            </p>
+            <div class="note">
+                <strong>Why Le Bail cannot be used here.</strong> Le Bail intensities are not
+                least-squares parameters &mdash; they are re-partitioned from the observed profile at
+                each cycle. They have no normal matrix and no covariance, so there is no way to ask
+                how well any of them is determined. The test therefore requires a
+                <a href="#pawley-method">Pawley</a> refinement run with the
+                <a href="#algorithms-lm">Levenberg-Marquardt</a> algorithm; the button stays disabled
+                otherwise.
+            </div>
+
+            <h3 id="sgt-model">The Statistical Model</h3>
+            <p>
+                The true intensities are given a prior that encodes what the space group claims.
+                Writing $\mathbf{P}_S$ for a diagonal matrix,
+            </p>
+            $$\mathbf{I} \sim N(\mathbf{0}, \mathbf{P}_S), \qquad
+              (\mathbf{P}_S)_{jj} = \begin{cases} 0 & j \text{ absent under } S \\
+              \tau_j^2 & \text{otherwise} \end{cases}$$
+            <p>
+                A variance of exactly zero forces that intensity to vanish; $\tau_j$ is the local
+                Wilson-like intensity scale for reflections the group allows. The refinement itself
+                contributes $\hat{\mathbf{I}} \mid \mathbf{I} \sim N(\mathbf{I}, \mathbf{Q}^{-1})$,
+                where $\mathbf{Q}$ is the intensity precision matrix. Marginalising over the unknown
+                true intensities collapses these into a single multivariate normal,
+            </p>
+            $$\hat{\mathbf{I}} \sim N\!\left(\mathbf{0},\; \mathbf{Q}^{-1} + \mathbf{P}_S\right)$$
+            <p>
+                so the evidence for $S$ is one density evaluation. Writing $f$ for the set of
+                reflections the group allows and dropping every term that does not depend on $S$:
+            </p>
+            $$-2\ln P(D \mid S) = \sum_{j \in f} \ln \tau_j^2 \;+\; \ln \det \mathbf{B}_S
+              \;-\; \mathbf{b}_S^{\mathsf{T}} \mathbf{B}_S^{-1} \mathbf{b}_S$$
+            $$\mathbf{B}_S = \mathbf{Q}_{ff} + \operatorname{diag}(1/\tau_f^2), \qquad
+              \mathbf{b}_S = (\mathbf{Q}\hat{\mathbf{I}})_f$$
+            <p>
+                The quadratic form is the evidence carried by the would-be-absent reflections,
+                evaluated with the full correlation structure rather than reflection by reflection.
+                The log-determinant is an <em>Occam factor</em>: it rewards a group for explaining
+                more absences, and without it the group with no extinction conditions at all would
+                win by construction, since it is never contradicted by anything.
+            </p>
+            <p>
+                Posterior probabilities follow by normalising over the candidate list.
+            </p>
+
+            <h3 id="sgt-reading">Reading the Result</h3>
+            <p>
+                Each row of the table is a distinct <strong>extinction symbol</strong>, not a single
+                space group. Powder diffraction cannot separate groups that predict identical
+                absences &mdash; centrosymmetric and non-centrosymmetric pairs, for instance &mdash;
+                so those share one probability and are listed together. Clicking any symbol adopts
+                that setting. Note that the setting matters: $Pnma$ and $Pbnm$ are the same group
+                but predict different absences relative to the fixed axes, so they appear separately.
+            </p>
+            <ul>
+                <li><b>P(SG | data)</b> &mdash; the posterior for that extinction symbol.</li>
+                <li><b>absent</b> &mdash; how many of the refined reflections the group forbids.
+                    A group forbidding nothing is always in the list as a baseline.</li>
+                <li><b>&lang;I/&sigma;&rang;</b> and <b>worst I/&sigma;</b> &mdash; diagnostics over
+                    the would-be-absent set, using diagonal errors only. These are the numbers a
+                    crystallographer looks at first, but they are <em>not</em> what drives the
+                    ranking; the probability uses the full correlation structure.</li>
+            </ul>
+
+            <h3 id="sgt-caveats">Requirements and Limitations</h3>
+            <div class="warning-note">
+                <strong>Run the Pawley refinement in a condition-free group.</strong>
+                A reflection can only be tested if it was actually a parameter of the fit. If the
+                refinement is run in, say, $Pnma$, every reflection $Pnma$ forbids was never refined
+                and carries no information &mdash; so the test is blind exactly where it matters.
+                Use the group of the correct Laue class that imposes no reflection conditions:
+                $P\bar{1}$, $P2/m$, $Pmmm$, $P4/m$, $P4/mmm$, $P\bar{3}$, $P\bar{3}m1$, $P6/m$,
+                $P6/mmm$, $Pm\bar{3}$ or $Pm\bar{3}m$. The test detects this situation, names the
+                group you should re-run in, and marks affected candidates as <em>partial</em>.
+            </div>
+            <p>
+                Two further points are worth keeping in mind.
+            </p>
+            <ul>
+                <li><b>The Laue class is not under test.</b> Only the absences are. The Laue class
+                    is fixed by the diffraction symmetry you have already chosen, since it determines
+                    the reflection wedge and the multiplicities. Running the test from $Pm\bar{3}m$
+                    can never return a group belonging to Laue class $m\bar{3}$, such as $Pa\bar{3}$.
+                    If the Laue class itself is in doubt, run the test from each candidate in turn.</li>
+                <li><b>Exact reflection coincidences are handled, but weaken the diagnostics.</b>
+                    In cubic and rhombohedral cells reflections such as $(333)/(511)$ or
+                    $(300)/(221)$ fall at identical $2\theta$. Their individual intensities are then
+                    not separately determined and no covariance matrix exists. The test is formulated
+                    in precision space precisely so that it does not need one &mdash; $\mathbf{Q}$
+                    may be singular while $\mathbf{B}_S$ never is &mdash; so the probabilities remain
+                    valid. The $I/\sigma$ columns fall back to conditional estimates in this case and
+                    are flagged as such.</li>
+            </ul>
+            <div class="note">
+                <strong>Implementation notes.</strong> The intensity block is marginalised over the
+                lattice, profile and background parameters via a Schur complement, so their
+                uncertainties are folded in rather than treated as exactly known. The scale $\tau$
+                is estimated separately for each candidate from the reflections that candidate says
+                are present: a single global estimate collapses in centred lattices, where most
+                reflections are genuinely absent, and would then stop rewarding the group that
+                correctly explains them. The original paper uses a Wilson (exponential) intensity
+                prior; a Gaussian of the same scale is used here because it makes the marginalisation
+                exact in closed form. Rankings are essentially unchanged, but absolute probabilities
+                should be read as approximate.
+            </div>
+        </section>
+
+        <hr>
+
         <section id="strategy">
             <h2>Recommended Refinement Strategy</h2>
             <p>
@@ -981,6 +1132,10 @@ blockquote {
                  Fritsch, F. N., & Carlson, R. E. (1980). "Monotone Piecewise Cubic Interpolation". <em>SIAM Journal on Numerical Analysis</em>, 17(2), 238–246.
             </div>
             <div class="reference-item">
+                <strong>Probabilistic Space-Group Determination:</strong><br>
+                Markvardsen, A. J., David, W. I. F., Johnson, J. C. &amp; Shankland, K. (2001). "A Probabilistic Approach to Space-Group Determination from Powder Diffraction Data". <em>Acta Crystallographica Section A</em>, 57(1), 47-54.
+            </div>
+            <div class="reference-item">
                 <strong>cctbx - Computational Crystallography Toolbox:</strong><br>
                 Grosse-Kunstleve, R. W., Sauter, N. K., Moriarty, N. W., & Adams, P. D. (2002). "The Computational Crystallography Toolbox: crystallographic algorithms in a reusable software framework". <em>Journal of Applied Crystallography</em>, 35(1), 126-136. (Used for space group systematic absence rules).
             </div>
@@ -1017,6 +1172,9 @@ blockquote {
                 <strong>Disclaimer:</strong> This application is provided for educational and research purposes. While it implements standard and robust algorithms, it is not a substitute for fully validated, peer-reviewed software packages (e.g., GSAS-II, FullProf, TOPAS) for analyses intended for publication.
             </div>
         </section>
+        <footer id="help-footer">
+            Powder 5, version 131 &mdash; 29 July 2026
+        </footer>
     </main>
 </div>
 

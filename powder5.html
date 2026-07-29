@@ -1337,6 +1337,113 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     border-color: var(--accent) !important;
     color: var(--accent) !important;
 }
+
+/* ---------- Space-group probability test (Markvardsen et al. 2001) ---------- */
+
+.sg-info-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 6px 0;
+}
+.sg-info-row > #space-group-info {
+    flex: 1 1 auto;
+    margin: 0 !important;
+}
+#sg-test-button {
+    flex: 0 0 auto;
+    margin-left: auto;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    line-height: 1;
+    border-radius: 50%;
+    border: 1px solid var(--rule);
+    background: var(--bg-inset);
+    color: var(--fg-2);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color .12s, border-color .12s, background .12s;
+}
+#sg-test-button:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--bg-stage);
+}
+#sg-test-button:disabled { opacity: .3; cursor: not-allowed; }
+
+.sgt-intro { font-size: 11.5px; line-height: 1.5; color: var(--fg-2); }
+.sgt-note  { font-size: 10.5px; line-height: 1.5; color: var(--fg-3); }
+
+.sgt-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 12px;
+    font-size: 11.5px;
+}
+.sgt-table th {
+    text-align: left;
+    padding: 4px 8px 5px 0;
+    border-bottom: 1px solid var(--rule);
+    color: var(--fg-3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    font-size: 9.5px;
+    white-space: nowrap;
+}
+.sgt-table td {
+    padding: 6px 8px 6px 0;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+    color: var(--fg);
+}
+.sgt-table tr.sgt-top td { background: var(--bg-inset); }
+.sgt-num { text-align: right; font-family: var(--font-mono); color: var(--fg-2); white-space: nowrap; }
+
+.sgt-bar {
+    height: 5px;
+    width: 100%;
+    background: var(--bg-stage);
+    border: 1px solid var(--rule-soft);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.sgt-bar > span { display: block; height: 100%; background: var(--accent); }
+.sgt-pct { font-family: var(--font-mono); font-size: 10.5px; color: var(--fg-2); margin-top: 2px; }
+
+.sgt-chip {
+    display: inline-block;
+    margin: 0 4px 3px 0;
+    padding: 2px 7px;
+    border-radius: var(--r-1);
+    border: 1px solid var(--rule);
+    background: var(--bg-inset);
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    cursor: pointer;
+}
+.sgt-chip:hover { border-color: var(--accent); color: var(--accent); background: var(--bg-stage); }
+.sgt-more { font-size: 10px; color: var(--fg-3); margin-left: 2px; }
+.sgt-flag {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 6px;
+    border-radius: var(--r-1);
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--warning);
+    border: 1px solid rgba(214,138,42,0.45);
+    background: rgba(214,138,42,0.10);
+}
 
     </style>
 </head>
@@ -1399,9 +1506,14 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
                             Select Group &raquo;
                         </button>
                     </div>
-                    <div id="space-group-info"
-                         style="font-size: 12px; color: var(--system-secondary-label); margin: 4px 0 6px 0; min-height: 16px;">
-                        Group unspecified
+                    <div class="sg-info-row">
+                        <div id="space-group-info"
+                             style="font-size: 12px; color: var(--system-secondary-label); min-height: 16px;">
+                            Group unspecified
+                        </div>
+                        <button type="button" id="sg-test-button" disabled
+                                aria-label="Test this space group against the Pawley intensities"
+                                title="Needs a completed Pawley refinement run with Levenberg-Marquardt.">?</button>
                     </div>
 
                     <div id="lattice-parameters-container">
@@ -1732,7 +1844,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 130, 26 July 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 131, 29 July 2026";
   
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
@@ -1974,6 +2086,11 @@ if (tooltipContainer && tooltipContent) {
         let calculatedBackground = new Float64Array();
 
         let fitResults = null;
+        // Space group the last refinement actually ran in. The worker
+        // resolves the SG itself and never echoes it back, and the user is
+        // free to change the selection afterwards, so the space-group test
+        // has to be told which group produced the intensities it is given.
+        let sgUsedForFit = null;
         let lastFitResultsCache = null;
         let mainChart;
 
@@ -4762,6 +4879,11 @@ function calculateWilliamsonHall(params, hklList) {
                 findDataset('Calculated').data = calculatedData;
                 findDataset('Background').data = backgroundData;
                 findDataset('Simulation (Manual)').data = [];
+
+                // The reflection ticks have to be rebuilt here too: this branch
+                // runs on every slider move once a fit exists, and it is the
+                // path that used to leave them clipped to the old range.
+                refreshHklMarkers(params);
             }
             
             rescalePlot(false);
@@ -4817,6 +4939,7 @@ function calculateWilliamsonHall(params, hklList) {
             const fitFlags = getFitFlags();
             const selectedSg = currentSG;
             const selectedSgNumber = selectedSg.number;
+            sgUsedForFit = selectedSg;
 
             const system = selectedSg.system; // Make sure this matches worker logic
             const maxIterations = parseInt(controls.iterationsSlider.value);
@@ -5069,6 +5192,94 @@ function debounce(func, wait) {
             }
         }
 
+
+        /**
+         * Rebuilds the Ka1/Ka2 reflection tick marks.
+         *
+         * FIX: this used to live inline inside updatePreviewPattern(), which is
+         * the ONLY place the marker datasets were ever written -- and which only
+         * runs while `fitResults` is null. Two consequences, both reported as
+         * "the ticks do not come back when I widen the 2-theta range":
+         *
+         *   1. redrawFitForNewRange() rebuilds the Calculated and Background
+         *      datasets on every slider move but never touched Ka1/Ka2, so after
+         *      a fit the ticks stayed frozen at whatever range they were last
+         *      built for.
+         *   2. The build clamped markers to the SLIDER range. Widening the range
+         *      (or zooming/panning the chart beyond it) could therefore never
+         *      reveal ticks that had already been filtered out.
+         *
+         * Markers are now clamped only to where experimental data actually
+         * exists -- which was the point of the original clamp, to keep ticks out
+         * of the empty region past the end of the scan -- and Chart.js clips the
+         * rest to the visible axis. They are built from masterHklList, which
+         * spans the whole pattern, rather than from fitResults.hklList, which
+         * only covers the range that was fitted.
+         *
+         * @param {object} params       Current parameters (for zeroShift / wavelengths).
+         * @param {Array}  [positioned] Optional list that already has .tth set;
+         *                              when omitted, masterHklList is repositioned
+         *                              with `params`.
+         */
+        function refreshHklMarkers(params, positioned) {
+            if (!mainChart) return;
+            const findDataset = (label) => mainChart.data.datasets.find(d => d.label === label);
+            const ka1Dataset = findDataset('Ka1');
+            const ka2Dataset = findDataset('Ka2');
+            if (!ka1Dataset) return;
+
+            const clear = () => {
+                ka1Dataset.data = [];
+                if (ka2Dataset) ka2Dataset.data = [];
+            };
+            if (!params) { clear(); return; }
+
+            let list = positioned;
+            if (!list) {
+                if (!masterHklList || masterHklList.length === 0) { clear(); return; }
+                list = masterHklList.map(h => ({
+                    h_orig: h.h_orig, k_orig: h.k_orig, l_orig: h.l_orig,
+                    hkl_list: h.hkl_list, multiplicity: h.multiplicity
+                }));
+                const system = (currentSG && currentSG.system) || params.system;
+                try { updateHklPositions(list, params, system); }
+                catch (err) { console.warn('refreshHklMarkers: could not position reflections', err); clear(); return; }
+            }
+
+            const dataLen = fullExperimentalData.tth.length;
+            const dataMin = dataLen > 0 ? fullExperimentalData.tth[0] : -Infinity;
+            const dataMax = dataLen > 0 ? fullExperimentalData.tth[dataLen - 1] : Infinity;
+
+            const ka1Markers = [];
+            const ka2Markers = [];
+            const deg2rad = Math.PI / 180;
+            const zeroShift = params.zeroShift || 0;
+            const doubletEnabled = params.ratio > 1e-6 && params.lambda2 > 1e-6
+                                   && Math.abs(params.lambda - params.lambda2) > 1e-6;
+            const lambdaRatio = doubletEnabled ? (params.lambda2 / params.lambda) : 1.0;
+
+            list.forEach(hkl => {
+                if (!hkl || typeof hkl.tth !== 'number' || !isFinite(hkl.tth)) return;
+                const label = (hkl.hkl_list && hkl.hkl_list[0]) ? hkl.hkl_list[0] : '';
+                const pos1 = hkl.tth + zeroShift;
+                if (pos1 >= dataMin && pos1 <= dataMax) {
+                    ka1Markers.push({ x: pos1, hkl: `${label} [m=${hkl.multiplicity}]` });
+                }
+                if (doubletEnabled) {
+                    const sinTheta2 = Math.sin(hkl.tth * deg2rad / 2.0) * lambdaRatio;
+                    if (Math.abs(sinTheta2) < 1) {
+                        const pos2 = (2 * Math.asin(sinTheta2) / deg2rad) + zeroShift;
+                        if (pos2 >= dataMin && pos2 <= dataMax) {
+                            ka2Markers.push({ x: pos2, hkl: `${label} Ka2` });
+                        }
+                    }
+                }
+            });
+
+            ka1Dataset.data = ka1Markers;
+            if (ka2Dataset) ka2Dataset.data = ka2Markers;
+        }
+
         function updatePreviewPattern() {
             if (!mainChart || !workingData.isValid || isFitting) return;
 
@@ -5132,47 +5343,7 @@ function debounce(func, wait) {
                 }
             }
             
-            const sliderMin = parseFloat(controls.tthMinSlider.value); 
-            const sliderMax = parseFloat(controls.tthMaxSlider.value);
-
-            // FIX: also clamp markers to where experimental data actually
-            // exists. The slider max can sit past the last data point (e.g.
-            // data ends ~81 deg but the slider is at 82), which previously
-            // drew reflection ticks in the empty region beyond the pattern.
-            const dataLen = fullExperimentalData.tth.length;
-            const dataMin = dataLen > 0 ? fullExperimentalData.tth[0] : -Infinity;
-            const dataMax = dataLen > 0 ? fullExperimentalData.tth[dataLen - 1] : Infinity;
-            const minTth = Math.max(sliderMin, dataMin);
-            const maxTth = Math.min(sliderMax, dataMax);
-            const ka1Markers = [];
-            const ka2Markers = [];
-            const deg2rad = Math.PI / 180;
-            const doubletEnabled = params.ratio > 1e-6 && params.lambda2 > 1e-6 && Math.abs(params.lambda - params.lambda2) > 1e-6;
-            const lambdaRatio = doubletEnabled ? (params.lambda2 / params.lambda) : 1.0;
-
-            hklList.forEach(hkl => {
-                if (!hkl.tth) return;
-                const pos1 = hkl.tth + params.zeroShift;
-                if (pos1 >= minTth && pos1 <= maxTth) {
-                    ka1Markers.push({ x: pos1, hkl: `${hkl.hkl_list[0]} [m=${hkl.multiplicity}]` });
-                }
-                
-                // Calculate Ka2 marker position if doublet is active
-                if (doubletEnabled) {
-                    const sinTheta1 = Math.sin(hkl.tth * deg2rad / 2.0);
-                    const sinTheta2 = sinTheta1 * lambdaRatio;
-                    if (Math.abs(sinTheta2) < 1) {
-                        const pos2 = (2 * Math.asin(sinTheta2) / deg2rad) + params.zeroShift;
-                        if (pos2 >= minTth && pos2 <= maxTth) {
-                            ka2Markers.push({ x: pos2, hkl: `${hkl.hkl_list[0]} Ka2` });
-                        }
-                    }
-                }
-            });
-
-            findDataset('Ka1').data = ka1Markers;
-            const ka2Dataset = findDataset('Ka2');
-            if (ka2Dataset) ka2Dataset.data = ka2Markers;
+            refreshHklMarkers(params, hklList);
 
             // *** PASS SPLINE POINTS (backgroundAnchors) TO BACKGROUND CALCULATION ***
             const background_sliced = calculateTotalBackground(workingData.tth, params, backgroundAnchors);
@@ -5358,6 +5529,776 @@ function debounce(func, wait) {
         }
 
 
+
+        // =====================================================================
+        //  Space-group probability test
+        //  Markvardsen, David, Johnson & Shankland (2001),
+        //  Acta Cryst. A57, 47-54:
+        //  "A Probabilistic Approach to Space-Group Determination from
+        //   Powder Diffraction Data."
+        //
+        //  WHAT IT DOES
+        //  ------------
+        //  A Pawley refinement treats every integrated intensity as a free
+        //  least-squares parameter, so it returns not only the extracted
+        //  intensities Ihat but the normal matrix behind them. A candidate
+        //  space group S makes exactly one testable statement about that
+        //  vector: a particular subset e of the reflections is systematically
+        //  absent, i.e. their TRUE intensities are identically zero.
+        //  Everything else it leaves free.
+        //
+        //  Model the true intensities as I ~ N(0, P_S), diagonal, with
+        //        P_S[j] = 0          if j is extinct under S
+        //        P_S[j] = tau_j^2    otherwise
+        //  (tau_j = local Wilson-like intensity scale, estimated from the data)
+        //  and the Pawley result as Ihat | I ~ N(I, Q^-1), Q the intensity
+        //  precision. Marginalising over the unknown true intensities:
+        //
+        //        Ihat ~ N(0, Q^-1 + P_S)
+        //
+        //  Writing f for the non-extinct set, doing the Gaussian integral in
+        //  precision space and dropping everything that does not depend on S:
+        //
+        //        -2 ln P(D|S) = SUM_f ln tau_j^2 + ln det B_S - b_S^T B_S^-1 b_S
+        //        B_S = Q_ff + diag(1/tau_f^2),   b_S = (Q Ihat)_f
+        //
+        //  The quadratic form is the evidence carried by the would-be-absent
+        //  reflections, evaluated with the FULL correlation structure. That is
+        //  the whole point of the paper: heavily overlapped reflections are
+        //  strongly correlated in a Pawley fit, and a "supposedly absent"
+        //  reflection can carry a large apparent intensity purely by borrowing
+        //  it from an overlapping neighbour. Treating them as independent (the
+        //  naive sum of (I/sigma)^2) badly misjudges the evidence. The
+        //  log-determinant is the Occam factor; without it the group with no
+        //  extinction conditions at all would always win by construction.
+        //
+        //  WHY PRECISION SPACE
+        //  -------------------
+        //  The obvious route is to invert the normal matrix and work with the
+        //  covariance. That fails outright whenever two reflections coincide
+        //  exactly in 2-theta -- (333)/(511) in a cubic cell, and most
+        //  rhombohedral and high-symmetry lattices -- because their intensities
+        //  are then individually undeterminable and the covariance does not
+        //  exist. B_S above needs no such inversion: Q may be singular, while
+        //  Q + diag(1/tau^2) is always positive definite. The test therefore
+        //  still works on exactly the high-symmetry cells where the candidate
+        //  list is longest and the answer is most worth having.
+        //
+        //  Only the intensity block is wanted, marginalised over the lattice,
+        //  profile and background parameters -- that is the Schur complement
+        //  Q_II - Q_IO Q_OO^-1 Q_OI, not the raw sub-block, which would treat
+        //  the rest of the model as exactly known and understate the errors.
+        //
+        //  tau is estimated per candidate, from the reflections that candidate
+        //  says are PRESENT -- see tauForFreeSet() for why a single global
+        //  estimate silently breaks centred lattices.
+        //
+        //  Posteriors follow by normalising over the candidate list with a
+        //  flat prior over distinct EXTINCTION SYMBOLS. Settings that predict
+        //  identical absences are indistinguishable by powder diffraction, so
+        //  they are pooled into one row and listed together.
+        //
+        //  DEVIATION FROM THE PAPER
+        //  ------------------------
+        //  The paper uses a Wilson (exponential) prior on the intensities; a
+        //  Gaussian of the same scale is used here because it makes the
+        //  marginalisation exact in closed form. Rankings are essentially
+        //  unchanged; the absolute probabilities should be read as approximate.
+        //
+        //  IMPORTANT LIMITATION
+        //  --------------------
+        //  A reflection can only be tested if it was actually a parameter of
+        //  the Pawley fit. If the Pawley refinement was run in a group that
+        //  already imposes reflection conditions, the reflections it forbids
+        //  were never refined and carry no information. For a complete test,
+        //  run the Pawley refinement in the condition-free group of the same
+        //  Laue class (P-1, P2/m, Pmmm, P4/mmm, P6/mmm, Pm-3m, ...). The test
+        //  detects this case and says so.
+        // =====================================================================
+        const SGTEST = (() => {
+
+            //   ---------- small dense linear algebra (symmetric, PD) ----------
+            function chol(A) {
+                const n = A.length;
+                const L = [];
+                for (let i = 0; i < n; i++) L.push(new Float64Array(n));
+                for (let i = 0; i < n; i++) {
+                    for (let j = 0; j <= i; j++) {
+                        let s = A[i][j];
+                        for (let k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+                        if (i === j) {
+                            if (!(s > 0) || !isFinite(s)) return null;   // not PD
+                            L[i][i] = Math.sqrt(s);
+                        } else {
+                            L[i][j] = s / L[j][j];
+                        }
+                    }
+                }
+                return L;
+            }
+            function cholLogDet(L) {
+                let s = 0;
+                for (let i = 0; i < L.length; i++) s += 2 * Math.log(L[i][i]);
+                return s;
+            }
+            function cholSolve(L, b) {
+                const n = L.length;
+                const y = new Float64Array(n), x = new Float64Array(n);
+                for (let i = 0; i < n; i++) {
+                    let s = b[i];
+                    for (let k = 0; k < i; k++) s -= L[i][k] * y[k];
+                    y[i] = s / L[i][i];
+                }
+                for (let i = n - 1; i >= 0; i--) {
+                    let s = y[i];
+                    for (let k = i + 1; k < n; k++) s -= L[k][i] * x[k];
+                    x[i] = s / L[i][i];
+                }
+                return x;
+            }
+            function cholInverse(L) {
+                const n = L.length;
+                const inv = [];
+                for (let i = 0; i < n; i++) inv.push(new Float64Array(n));
+                const e = new Float64Array(n);
+                for (let c = 0; c < n; c++) {
+                    e.fill(0); e[c] = 1;
+                    const col = cholSolve(L, e);
+                    for (let r = 0; r < n; r++) inv[r][c] = col[r];
+                }
+                for (let i = 0; i < n; i++)
+                    for (let j = i + 1; j < n; j++) {
+                        const v = 0.5 * (inv[i][j] + inv[j][i]);
+                        inv[i][j] = v; inv[j][i] = v;
+                    }
+                return inv;
+            }
+
+            //   ---------- space-group helpers ----------
+            // A group is "condition-free" if it forbids nothing: those are the
+            // groups a Pawley fit must be run in for the test to see every
+            // reflection.
+            const PROBE_HKL = (() => {
+                const out = [];
+                for (let h = -3; h <= 3; h++)
+                    for (let k = -3; k <= 3; k++)
+                        for (let l = -3; l <= 3; l++)
+                            if (h || k || l) out.push([h, k, l]);
+                return out;
+            })();
+
+            function isConditionFree(rec) {
+                if (!rec) return false;
+                try {
+                    for (const [h, k, l] of PROBE_HKL)
+                        if (!SG_ENGINE.isReflectionAllowed(h, k, l, rec)) return false;
+                } catch { return false; }
+                return true;
+            }
+
+            // Every setting sharing the Laue class of the refinement. The Laue
+            // class is fixed by the diffraction symmetry the user has already
+            // committed to (it sets the reflection wedge and the
+            // multiplicities), so it is not itself under test here -- only the
+            // absences are. SG_ENGINE.listSettings already drops the
+            // rhombohedral-axes settings the HKL generator cannot index.
+            function candidateSettings(laue, system) {
+                const out = [];
+                for (let num = 1; num <= 230; num++) {
+                    let entries;
+                    try { entries = SG_ENGINE.listSettings(num) || []; } catch { entries = []; }
+                    for (const rec of entries) {
+                        if (!rec || rec.laue_class !== laue) continue;
+                        // The HKL generator only handles monoclinic on unique
+                        // axis b, so a unique-a / unique-c setting would be
+                        // scored against the wrong reflection wedge. Leave them
+                        // out rather than report a number that cannot be trusted.
+                        if (system === 'monoclinic'
+                            && !/^b/.test(rec.setting_description || '')) continue;
+                        out.push(rec);
+                    }
+                }
+                return out;
+            }
+
+            function label(rec) {
+                // listSettings() returns the setting symbol, which is the most
+                // informative label here: Pnma and Pbnm are the same group but
+                // predict different absences.
+                return String(rec.symbol || rec.standard_symbol || `#${rec.number}`)
+                    .replace(/\s+/g, ' ').trim();
+            }
+
+            //   ---------- gather the Pawley result ----------
+            function collect() {
+                if (!fitResults)
+                    return { error: 'No refinement results are available yet. Run a Pawley refinement first.' };
+                if (fitResults.refinementMode !== 'pawley')
+                    return { error: 'The last refinement was a Le Bail fit. Le Bail intensities are not least-squares parameters and have no normal matrix, so the test cannot be applied. Run a Pawley refinement.' };
+                if (fitResults.algorithm !== 'lm' || !fitResults.JtJ || !fitResults.parameterInfo)
+                    return { error: 'The test needs the normal-equations matrix, which only the Levenberg-Marquardt refiner produces. Re-run the Pawley fit with algorithm = Levenberg-Marquardt.' };
+                if (!workerWorkingData || !workerWorkingData.intensity || !workerWorkingData.intensity.length)
+                    return { error: 'The fitted data slice is no longer in memory. Re-run the Pawley refinement.' };
+
+                const { hklList, JtJ, parameterInfo, ss_res, params } = fitResults;
+                const P = parameterInfo.length;
+                const N = workerWorkingData.intensity.length;
+                const dof = N - P;
+                if (!(dof > 0)) return { error: `Not enough data points (${N}) for the ${P} refined parameters; no error estimates exist.` };
+                if (!(ss_res >= 0) || !isFinite(ss_res)) return { error: 'The refinement returned an invalid sum of squared residuals.' };
+                if (!Array.isArray(JtJ) || JtJ.length !== P || !JtJ[0] || JtJ[0].length !== P)
+                    return { error: 'The normal-equations matrix has unexpected dimensions.' };
+                const s2 = ss_res / dof;
+
+                const nameToParam = new Map();
+                parameterInfo.forEach((p, i) => { if (p.isIntensity) nameToParam.set(p.name, i); });
+                if (nameToParam.size === 0)
+                    return { error: 'The refinement contains no refined intensity parameters.' };
+
+                const tthMin = workerWorkingData.tth[0];
+                const tthMax = workerWorkingData.tth[workerWorkingData.tth.length - 1];
+
+                // Convert each refined peak HEIGHT into an integrated intensity
+                // per symmetry-equivalent reflection. The profile area is taken
+                // analytically so that it stays valid for reflections that
+                // refined to (near) zero -- which are precisely the ones the
+                // test cares about, and for which the "area / height" route
+                // used by the report would collapse to 0.
+                const scaleOf = (hkl) => {
+                    let w = 1;
+                    try {
+                        w = getPseudoVoigtArea(hkl.tth, hkl, params);
+                        const l1 = params.lambda, l2 = params.lambda2, r21 = params.ratio;
+                        if (r21 > 1e-6 && l2 > 1e-6 && Math.abs(l1 - l2) > 1e-6) {
+                            const st2 = Math.sin(hkl.tth * Math.PI / 360) * (l2 / l1);
+                            if (Math.abs(st2) < 1) {
+                                const tth2 = 2 * Math.asin(st2) * 180 / Math.PI;
+                                w += r21 * getPseudoVoigtArea(tth2, hkl, params);
+                            }
+                        }
+                    } catch { w = 1; }
+                    if (!isFinite(w) || w <= 0) w = 1;
+                    return w / Math.max(1, hkl.multiplicity || 1);
+                };
+
+                const refl = [];
+                (hklList || []).forEach(hkl => {
+                    if (!hkl || typeof hkl.tth !== 'number') return;
+                    if (!(hkl.tth >= tthMin && hkl.tth <= tthMax)) return;
+                    const pi = nameToParam.get(`I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`);
+                    if (pi === undefined) return;
+                    const f = scaleOf(hkl);
+                    refl.push({
+                        h: hkl.h_orig, k: hkl.k_orig, l: hkl.l_orig,
+                        tth: hkl.tth, pi, f,
+                        I: Math.max(0, hkl.intensity || 0) * f
+                    });
+                });
+
+                if (refl.length < 4)
+                    return { error: `Only ${refl.length} usable refined reflections -- far too few to say anything about the space group.` };
+
+                // Low-angle reflections carry nearly all of the extinction
+                // information and are the best determined, so if the list is
+                // enormous the test keeps the low-angle end rather than
+                // choking on an n^3 that buys nothing.
+                const MAX_REFL = 220;
+                let truncatedTo = 0;
+                refl.sort((a, b) => a.tth - b.tth);
+                if (refl.length > MAX_REFL) { truncatedTo = MAX_REFL; refl.length = MAX_REFL; }
+                const n = refl.length;
+
+                //   Marginal precision of the intensities.
+                // Schur complement over every other refined parameter, so the
+                // lattice, profile and background uncertainties are folded in
+                // rather than treated as exactly known.
+                const inI = new Uint8Array(P);
+                const Iidx = refl.map(r => r.pi);
+                Iidx.forEach(i => { inI[i] = 1; });
+                const Oidx = [];
+                for (let i = 0; i < P; i++) if (!inI[i]) Oidx.push(i);
+                const no = Oidx.length;
+
+                const Q = [];
+                for (let i = 0; i < n; i++) {
+                    const row = new Float64Array(n);
+                    const src = JtJ[Iidx[i]];
+                    for (let j = 0; j < n; j++) row[j] = src[Iidx[j]];
+                    Q.push(row);
+                }
+
+                let marginalised = false;
+                if (no > 0) {
+                    const Aoo = [];
+                    for (let i = 0; i < no; i++) {
+                        const row = new Float64Array(no);
+                        const src = JtJ[Oidx[i]];
+                        for (let j = 0; j < no; j++) row[j] = src[Oidx[j]];
+                        Aoo.push(row);
+                    }
+                    const Loo = chol(Aoo);
+                    if (Loo) {
+                        // X[i] = Aoo^-1 * (column i of Q_OI)
+                        const X = [];
+                        for (let i = 0; i < n; i++) {
+                            const b = new Float64Array(no);
+                            for (let o = 0; o < no; o++) b[o] = JtJ[Oidx[o]][Iidx[i]];
+                            X.push(cholSolve(Loo, b));
+                        }
+                        for (let i = 0; i < n; i++) {
+                            const rowI = JtJ[Iidx[i]];
+                            for (let j = i; j < n; j++) {
+                                let s = 0;
+                                for (let o = 0; o < no; o++) s += rowI[Oidx[o]] * X[j][o];
+                                Q[i][j] -= s;
+                                if (j !== i) Q[j][i] = Q[i][j];
+                            }
+                        }
+                        marginalised = true;
+                    }
+                    // If Aoo is singular the raw sub-block is used instead; the
+                    // resulting errors are optimistic but the test still runs.
+                }
+
+                // Rescale from refined heights to the integrated intensities in
+                // `refl`, and divide out the variance scale: I = D h means
+                // Q_I = D^-1 Q_h D^-1, and the fit's variance estimate is s2.
+                for (let i = 0; i < n; i++)
+                    for (let j = 0; j < n; j++) {
+                        const v = Q[i][j] / (s2 * refl[i].f * refl[j].f);
+                        Q[i][j] = isFinite(v) ? v : 0;
+                    }
+                for (let i = 0; i < n; i++)
+                    for (let j = i + 1; j < n; j++) {
+                        const v = 0.5 * (Q[i][j] + Q[j][i]);
+                        Q[i][j] = v; Q[j][i] = v;
+                    }
+
+                // Diagnostic sigmas. The proper marginal variance needs Q^-1,
+                // which does not exist when two reflections coincide exactly in
+                // 2-theta. Fall back to the conditional variance 1/Q_jj in that
+                // case and say so, rather than refusing to run.
+                const sigma2 = new Float64Array(n);
+                let sigmaExact = false;
+                const LQ = chol(Q);
+                if (LQ) {
+                    const Qinv = cholInverse(LQ);
+                    let good = true;
+                    for (let i = 0; i < n; i++) {
+                        if (!(Qinv[i][i] > 0) || !isFinite(Qinv[i][i])) { good = false; break; }
+                        sigma2[i] = Qinv[i][i];
+                    }
+                    sigmaExact = good;
+                }
+                if (!sigmaExact) {
+                    for (let i = 0; i < n; i++) {
+                        const q = Q[i][i];
+                        sigma2[i] = (q > 0 && isFinite(q)) ? 1 / q : Infinity;
+                    }
+                }
+
+                return { refl, Q, sigma2, sigmaExact, marginalised, n, s2, truncatedTo };
+            }
+
+            //   ---------- the actual test ----------
+            function run() {
+                const sgFit = sgUsedForFit || currentSG;
+                if (!sgFit) return { error: 'No space group is set.' };
+
+                const data = collect();
+                if (data.error) return data;
+                const { refl, Q, sigma2, n } = data;
+
+                // c = Q * Ihat does not depend on the candidate, so it is
+                // computed once.
+                const Ivec = Float64Array.from(refl, r => r.I);
+                const cvec = new Float64Array(n);
+                for (let i = 0; i < n; i++) {
+                    let s = 0;
+                    for (let j = 0; j < n; j++) s += Q[i][j] * Ivec[j];
+                    cvec[i] = s;
+                }
+
+                const sig = new Float64Array(n);
+                for (let i = 0; i < n; i++) sig[i] = Math.sqrt(Math.max(1e-300, sigma2[i]));
+
+                // tau^2: the Wilson-like intensity scale of the reflections a
+                // candidate says are PRESENT, from a sliding window in 2-theta
+                // over that candidate's free set only (refl is sorted by
+                // 2-theta). Estimating it once over all reflections instead is
+                // a trap: in a C-centred or rhombohedral cell most reflections
+                // are genuinely absent, the window fills up with zeros, tau
+                // collapses, and the Occam term stops rewarding the candidate
+                // that correctly explains the most absences -- which is exactly
+                // the candidate one is trying to find. The window mean of
+                // Ihat^2 estimates <I^2> + <var>, so the measurement variance
+                // is subtracted back off; floored at var(I) so a region where
+                // nothing is measurable cannot masquerade as evidence.
+                function tauForFreeSet(free) {
+                    const nf = free.length;
+                    const tau2 = new Float64Array(nf);
+                    if (nf === 0) return tau2;
+                    let globalMS = 0;
+                    for (let q = 0; q < nf; q++) {
+                        const I = refl[free[q]].I;
+                        globalMS += I * I;
+                    }
+                    globalMS = Math.max(1e-12, globalMS / nf);
+                    const win = Math.max(10, Math.min(nf, Math.round(nf / 5)));
+                    for (let i = 0; i < nf; i++) {
+                        const lo = Math.max(0, Math.min(nf - win, i - (win >> 1)));
+                        const hi = Math.min(nf, lo + win);
+                        let s = 0, v = 0, c = 0;
+                        for (let q = lo; q < hi; q++) {
+                            const I = refl[free[q]].I;
+                            s += I * I;
+                            const sv = sigma2[free[q]];
+                            if (isFinite(sv)) v += sv;
+                            c++;
+                        }
+                        let t = c ? (s - v) / c : 0;
+                        const fl = isFinite(sigma2[free[i]]) ? sigma2[free[i]] : 0;
+                        if (!(t > fl)) t = fl;
+                        if (!(t > 0) || !isFinite(t)) t = globalMS;
+                        tau2[i] = t;
+                    }
+                    return tau2;
+                }
+
+                // Evidence for one candidate, given the indices it declares
+                // absent. B = Q_ff + diag(1/tau_f^2) is positive definite even
+                // when Q is singular, so exact reflection coincidences are
+                // harmless here.
+                function evidence(ext) {
+                    const isExt = new Uint8Array(n);
+                    for (const a of ext) isExt[a] = 1;
+                    const free = [];
+                    for (let i = 0; i < n; i++) if (!isExt[i]) free.push(i);
+                    const nf = free.length;
+                    if (nf === 0) return 0;          // everything absent: no free parameters
+
+                    const tau2 = tauForFreeSet(free);
+                    const B = [];
+                    for (let a = 0; a < nf; a++) {
+                        const row = new Float64Array(nf);
+                        const qa = Q[free[a]];
+                        for (let b = 0; b < nf; b++) row[b] = qa[free[b]];
+                        row[a] += 1 / tau2[a];
+                        B.push(row);
+                    }
+                    const LB = chol(B);
+                    if (!LB) return null;
+                    const bvec = Float64Array.from(free, i => cvec[i]);
+                    const y = cholSolve(LB, bvec);
+                    let quad = 0;
+                    for (let a = 0; a < nf; a++) quad += bvec[a] * y[a];
+                    let lnTau = 0;
+                    for (let a = 0; a < nf; a++) lnTau += Math.log(tau2[a]);
+                    return -0.5 * (lnTau + cholLogDet(LB) - quad);
+                }
+
+                const cands = candidateSettings(sgFit.laue_class, sgFit.system);
+                if (!cands.length) return { error: `No space-group settings found for Laue class ${sgFit.laue_class}.` };
+
+                const openRec = cands.find(isConditionFree) || null;
+                const pawleyIsOpen = isConditionFree(sgFit);
+
+                // Reflections the Pawley model never contained, so never tested.
+                let missingSet = null;
+                if (!pawleyIsOpen && openRec) {
+                    try {
+                        const have = new Set(refl.map(r => `${r.h},${r.k},${r.l}`));
+                        const loTth = refl[0].tth, hiTth = refl[n - 1].tth;
+                        const full = generateAndCacheHklIndices(
+                            openRec, hiTth, fitResults.params) || [];
+                        // Give them 2-theta values so the comparison is limited
+                        // to the range that was actually fitted.
+                        updateHklPositions(full, fitResults.params, openRec.system);
+                        missingSet = full
+                            .filter(r => typeof r.tth === 'number'
+                                      && r.tth >= loTth && r.tth <= hiTth
+                                      && !have.has(`${r.h_orig},${r.k_orig},${r.l_orig}`))
+                            .map(r => [r.h_orig, r.k_orig, r.l_orig]);
+                    } catch { missingSet = null; }
+                }
+
+                const groups = new Map();   // extinction signature -> row
+                for (const rec of cands) {
+                    let sigStr = '';
+                    const ext = [];
+                    try {
+                        for (let i = 0; i < n; i++) {
+                            if (SG_ENGINE.isReflectionAllowed(refl[i].h, refl[i].k, refl[i].l, rec)) {
+                                sigStr += '1';
+                            } else {
+                                sigStr += '0'; ext.push(i);
+                            }
+                        }
+                    } catch { continue; }
+
+                    let row = groups.get(sigStr);
+                    if (!row) {
+                        row = { ext, recs: [], untested: 0 };
+                        if (missingSet) {
+                            let u = 0;
+                            for (const [h, k, l] of missingSet)
+                                if (!SG_ENGINE.isReflectionAllowed(h, k, l, rec)) u++;
+                            row.untested = u;
+                        }
+                        groups.set(sigStr, row);
+                    }
+                    row.recs.push(rec);
+                }
+
+                const rows = [];
+                for (const row of groups.values()) {
+                    const e = row.ext, m = e.length;
+                    const lnL = evidence(e);
+                    if (lnL === null || !isFinite(lnL)) continue;
+
+                    // Plain diagnostics on the would-be-absent set, using only
+                    // the diagonal errors. Not what drives the ranking, but it
+                    // is the number a crystallographer looks at first.
+                    let meanIsig = 0, maxIsig = 0;
+                    for (const i of e) {
+                        const z = refl[i].I / sig[i];
+                        meanIsig += z;
+                        if (Math.abs(z) > Math.abs(maxIsig)) maxIsig = z;
+                    }
+                    if (m) meanIsig /= m;
+
+                    rows.push({ recs: row.recs, m, untested: row.untested, lnL, meanIsig, maxIsig });
+                }
+                if (!rows.length) return { error: 'No candidate space group could be evaluated.' };
+
+                // Flat prior over distinct extinction signatures -- powder data
+                // cannot distinguish settings that predict the same absences.
+                let maxLn = -Infinity;
+                rows.forEach(r => { if (r.lnL > maxLn) maxLn = r.lnL; });
+                let norm = 0;
+                rows.forEach(r => { r.w = Math.exp(r.lnL - maxLn); norm += r.w; });
+                rows.forEach(r => { r.p = r.w / norm; });
+                rows.sort((a, b) => b.p - a.p);
+
+                return {
+                    rows, n,
+                    laue: sgFit.laue_class,
+                    system: sgFit.system,
+                    sgFit, openRec, pawleyIsOpen,
+                    missingCount: missingSet ? missingSet.length : 0,
+                    sigmaExact: data.sigmaExact,
+                    marginalised: data.marginalised,
+                    truncatedTo: data.truncatedTo
+                };
+            }
+
+            //   ---------- presentation ----------
+            let lastResult = null;
+            let lastRecIndex = [];
+
+            function esc(s) {
+                return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            function renderError(msg) {
+                return `<div class="sg-explain-warning">${esc(msg)}</div>`;
+            }
+
+            function renderResult(res) {
+                lastRecIndex = [];
+                const parts = [];
+
+                parts.push(
+                    `<div class="sgt-intro">Probability of each distinct set of systematic absences, given the `
+                    + `${res.n} refined Pawley intensities and their full correlation structure. `
+                    + `Method: Markvardsen, David, Johnson &amp; Shankland, <i>Acta Cryst.</i> (2001) <b>A57</b>, 47&ndash;54.</div>`
+                );
+
+                if (!res.pawleyIsOpen) {
+                    parts.push(
+                        `<div class="sg-explain-warning" style="margin:10px 0;">`
+                        + `<b>Incomplete test.</b> The Pawley refinement was run in `
+                        + `<b>${esc(label(res.sgFit))}</b>, which already forbids `
+                        + `${res.missingCount ? res.missingCount + ' ' : ''}reflections in this range. `
+                        + `Those reflections were never refined, so nothing is known about them and any `
+                        + `candidate that relies on them is scored on partial evidence (marked below). `
+                        + (res.openRec
+                            ? `For a proper test, re-run the Pawley fit in <b>${esc(label(res.openRec))}</b> `
+                            + `&mdash; same Laue class, no reflection conditions &mdash; then come back here.`
+                            : ``)
+                        + `</div>`
+                    );
+                }
+
+                const notes = [];
+                if (res.truncatedTo)
+                    notes.push(`Restricted to the ${res.truncatedTo} lowest-angle reflections for tractability.`);
+                if (!res.sigmaExact)
+                    notes.push('Some reflections coincide exactly in 2\u03B8, so the I/\u03C3 columns are conditional (optimistic) estimates. The probabilities are unaffected.');
+                if (!res.marginalised)
+                    notes.push('The non-intensity parameters could not be marginalised out; errors are slightly optimistic.');
+                if (notes.length)
+                    parts.push(`<div class="sgt-note" style="margin-top:8px;">${notes.map(esc).join(' ')}</div>`);
+
+                parts.push(`<table class="sgt-table"><thead><tr>`
+                    + `<th style="width:64px;">P(SG&nbsp;|&nbsp;data)</th>`
+                    + `<th>Space group(s)</th>`
+                    + `<th style="width:52px;text-align:right;">absent</th>`
+                    + `<th style="width:66px;text-align:right;">&lang;I/&sigma;&rang;</th>`
+                    + `<th style="width:72px;text-align:right;">worst&nbsp;I/&sigma;</th>`
+                    + `</tr></thead><tbody>`);
+
+                const shown = res.rows.filter((r, i) => i < 12 || r.p > 0.001);
+                shown.forEach((r, rank) => {
+                    const pct = r.p >= 0.0005 ? (100 * r.p).toFixed(1) + '%' : '&lt;0.1%';
+                    const bar = Math.max(1, Math.round(100 * r.p));
+                    const chips = r.recs.slice(0, 14).map(rec => {
+                        lastRecIndex.push(rec);
+                        return `<button type="button" class="sgt-chip" data-rec="${lastRecIndex.length - 1}" `
+                            + `title="Select this space group">${esc(label(rec))}</button>`;
+                    }).join('');
+                    const more = r.recs.length > 14 ? `<span class="sgt-more">+${r.recs.length - 14} more</span>` : '';
+                    const flag = r.untested
+                        ? `<span class="sgt-flag" title="${r.untested} of this group's conditions involve reflections that were not in the Pawley model">partial</span>`
+                        : '';
+                    parts.push(`<tr${rank === 0 ? ' class="sgt-top"' : ''}>`
+                        + `<td><div class="sgt-bar"><span style="width:${bar}%"></span></div>`
+                        + `<div class="sgt-pct">${pct}</div></td>`
+                        + `<td>${chips}${more}${flag}</td>`
+                        + `<td class="sgt-num">${r.m}</td>`
+                        + `<td class="sgt-num">${r.m ? r.meanIsig.toFixed(2) : '&ndash;'}</td>`
+                        + `<td class="sgt-num">${r.m ? r.maxIsig.toFixed(1) : '&ndash;'}</td>`
+                        + `</tr>`);
+                });
+                parts.push(`</tbody></table>`);
+
+                parts.push(`<div class="sgt-note" style="margin-top:12px;">`
+                    + `Rows are distinct <i>extinction symbols</i>: powder data cannot separate space groups that `
+                    + `predict identical absences, so those are listed together and share one probability. `
+                    + `&lang;I/&sigma;&rang; and worst I/&sigma; use diagonal errors only and are diagnostics; the `
+                    + `probability itself uses the full correlation structure, which is what handles overlapped `
+                    + `reflections correctly. Click any symbol to adopt that setting.`
+                    + `</div>`);
+
+                return parts.join('');
+            }
+
+            function asText(res) {
+                const L = [];
+                L.push('Space-Group Probability Test');
+                L.push('Markvardsen, David, Johnson & Shankland (2001), Acta Cryst. A57, 47-54');
+                L.push('');
+                L.push(`Laue class          : ${res.laue}`);
+                L.push(`Pawley group used   : ${label(res.sgFit)}${res.pawleyIsOpen ? '' : '  (imposes conditions - test is incomplete)'}`);
+                if (!res.pawleyIsOpen && res.openRec)
+                    L.push(`Recommended re-run  : ${label(res.openRec)}  (condition-free, same Laue class)`);
+                L.push(`Reflections tested  : ${res.n}`);
+                L.push('');
+                L.push('  P(SG|data)  absent  <I/sig>  worst   space group(s)');
+                L.push('  ' + '-'.repeat(72));
+                res.rows.slice(0, 25).forEach(r => {
+                    L.push('  '
+                        + (100 * r.p).toFixed(1).padStart(8) + '%'
+                        + String(r.m).padStart(8)
+                        + (r.m ? r.meanIsig.toFixed(2) : '-').padStart(9)
+                        + (r.m ? r.maxIsig.toFixed(1) : '-').padStart(8)
+                        + '   ' + r.recs.map(label).join(', ')
+                        + (r.untested ? '   [partial]' : ''));
+                });
+                return L.join('\n');
+            }
+
+            //   ---------- modal plumbing ----------
+            function nodes() {
+                return {
+                    overlay: document.getElementById('sgt-modal-overlay'),
+                    body: document.getElementById('sgt-body'),
+                    copy: document.getElementById('sgt-btn-copy'),
+                    close: document.getElementById('sgt-btn-close')
+                };
+            }
+
+            function open() {
+                const n = nodes();
+                if (!n.overlay) return;
+                lastResult = null;
+                n.body.innerHTML = `<div class="sgt-note">Evaluating candidate space groups&hellip;</div>`;
+                n.copy.disabled = true;
+                n.overlay.classList.add('open');
+
+                // Let the modal paint before the (synchronous) linear algebra.
+                setTimeout(() => {
+                    let res;
+                    try { res = run(); }
+                    catch (err) {
+                        console.error('Space-group test failed:', err);
+                        res = { error: `The test failed: ${err && err.message ? err.message : err}` };
+                    }
+                    if (res.error) { n.body.innerHTML = renderError(res.error); return; }
+                    lastResult = res;
+                    n.body.innerHTML = renderResult(res);
+                    n.copy.disabled = false;
+                    n.body.querySelectorAll('.sgt-chip').forEach(btn => {
+                        btn.addEventListener('click', () => {
+                            const rec = lastRecIndex[parseInt(btn.dataset.rec, 10)];
+                            if (!rec) return;
+                            close();
+                            handleSpaceGroupApplied(rec);
+                            showToast(`Space group set to ${label(rec)}.`, 'success');
+                        });
+                    });
+                }, 30);
+            }
+
+            function close() {
+                const n = nodes();
+                if (n.overlay) n.overlay.classList.remove('open');
+            }
+
+            function wire() {
+                const n = nodes();
+                if (!n.overlay) return;
+                n.close.addEventListener('click', close);
+                n.copy.addEventListener('click', () => {
+                    if (!lastResult) return;
+                    const txt = asText(lastResult);
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(txt)
+                            .then(() => showToast('Result copied to the clipboard.', 'success'))
+                            .catch(() => showToast('Could not access the clipboard.', 'error'));
+                    } else {
+                        showToast('Clipboard not available in this browser.', 'error');
+                    }
+                });
+                n.overlay.addEventListener('click', (e) => { if (e.target === n.overlay) close(); });
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape' && n.overlay.classList.contains('open')) close();
+                });
+            }
+
+            return { open, close, wire };
+        })();
+
+
+        // Enable the "?" next to the space-group line only when there is a
+        // Pawley result carrying a usable normal matrix behind it.
+        function updateSgTestButtonState() {
+            const btn = document.getElementById('sg-test-button');
+            if (!btn) return;
+            const ok = !!(fitResults
+                && !isFitting
+                && fitResults.refinementMode === 'pawley'
+                && fitResults.algorithm === 'lm'
+                && fitResults.JtJ
+                && fitResults.parameterInfo);
+            btn.disabled = !ok;
+            btn.title = ok
+                ? 'Test the space group against the Pawley intensities (Markvardsen et al., 2001)'
+                : (isFitting
+                    ? 'Refinement in progress.'
+                    : 'Needs a completed Pawley refinement run with Levenberg-Marquardt.');
+        }
+
         function updatePawleyButtonState() {
     // Safety check to ensure DOM elements exist before accessing them
     if (!controls || !controls.algorithmSelect || !document.getElementById('pawley-button')) {
@@ -5435,6 +6376,7 @@ function debounce(func, wait) {
 
    
         updatePawleyButtonState();
+        updateSgTestButtonState();
     }
         
     function updateUI(params, stats, netPeakPattern_full, background_full, scaleFactor, hklList) {
@@ -5508,6 +6450,11 @@ function debounce(func, wait) {
             
             // 1. Hide the manual simulation line, as we now have a real fit
             findDataset('Simulation (Manual)').data = [];
+
+            // Refresh the reflection ticks against the REFINED parameters and
+            // over the whole pattern. Built from masterHklList rather than the
+            // list handed in here, because that one only spans the fitted range.
+            refreshHklMarkers(params);
 
 
 
@@ -6392,6 +7339,11 @@ function debounce(func, wait) {
             SGM.open(currentSG || null);
         });
         SGM.wire(handleSpaceGroupApplied);
+
+        // Space-group probability test ("?" beside the space-group line).
+        SGTEST.wire();
+        document.getElementById('sg-test-button')
+               .addEventListener('click', () => SGTEST.open());
         // Numeric-input validation. If the user types a value outside the
         // input's min/max, mark it red and DO NOT trigger a recalculation.
         // Arrow-key steps past the min/max are blocked by the HTML attribute
@@ -6493,6 +7445,7 @@ document.getElementById('profile-function-select').addEventListener('change', ha
                     // and updatePreviewPattern() seeded the new pattern with its
                     // intensities.
                     fitResults = null;
+                    sgUsedForFit = null;
                     lastFitResultsCache = null;
                     backgroundAnchors = [];
                     
@@ -6502,6 +7455,7 @@ document.getElementById('profile-function-select').addEventListener('change', ha
                     
                     document.getElementById('le-bail-button').disabled = false;
                     updatePawleyButtonState();
+                    updateSgTestButtonState();
                     // Fresh data, no fit yet: revert Save Report to its
                     // normal "refine first" state (it was active in the
                     // data-free theoretical mode).
@@ -7153,6 +8107,7 @@ controls.reportButton.addEventListener('click', async () => {
 });
         controls.algorithmSelect.addEventListener('change', updatePawleyButtonState);
         updatePawleyButtonState();
+        updateSgTestButtonState();
 
 if (!currentSG && globalThis.SG_ENGINE) {
             //   Default space group: Pnma (No. 62, standard setting).
@@ -7225,6 +8180,17 @@ if (!currentSG && globalThis.SG_ENGINE) {
       <button type="button" class="sg-btn" id="sg-btn-cancel">Cancel</button>
       <button type="button" class="sg-btn" id="sg-btn-reset">Reset</button>
       <button type="button" class="sg-btn sg-btn-primary" id="sg-btn-apply" disabled>Apply</button>
+    </div>
+  </div>
+</div>
+
+<div id="sgt-modal-overlay" class="sg-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="sgt-modal-title">
+  <div class="sg-modal" style="width: min(760px, 95vw);">
+    <div class="sg-modal-header" id="sgt-modal-title">Space-Group Probabilities &mdash; Markvardsen et al. (2001)</div>
+    <div id="sgt-body" style="padding: 16px 18px; overflow-y: auto; flex: 1; min-height: 0;"></div>
+    <div class="sg-modal-footer">
+      <button type="button" class="sg-btn" id="sgt-btn-copy" disabled>Copy</button>
+      <button type="button" class="sg-btn sg-btn-primary" id="sgt-btn-close">Close</button>
     </div>
   </div>
 </div>

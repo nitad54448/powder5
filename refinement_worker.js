@@ -1,4 +1,6 @@
 // refinement_worker.js
+// version 131, 29 july 2026, LM: Marquardt-scaled solve + lambda no longer
+//   relaxed on a trust-region-clamped step (fixes stalling / uphill drift)
 // version 130, 26 july 2026, fixed some format in read data, changed the zoom
 // version 129, 25 july 2026, Fixed TCH error
 // version 123 (fixes: init race, tetragonal/triclinic HKL generation, LM step clamp)
@@ -1390,14 +1392,48 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  // a parameter has moved a lot or a little from its start.
                  // solveLinearSystem consumes its matrix, so hand it a copy and
                  // keep finalJtJ intact for the main thread's ESD calculation.
-                 const A_lm = finalJtJ.map(row => Float64Array.from(row));
+                 // ===============================================================
+                 // Marquardt scaling. The normal equations are now solved in the
+                 // DIAGONALLY-NORMALISED space rather than in raw units.
+                 //
+                 // (JtJ + lambda*diag(JtJ)) d = Jtr   and   (At + lambda I) dt = rt
+                 // with At = D^-1 JtJ D^-1, D = sqrt(diag JtJ), are the same
+                 // equations in exact arithmetic -- but not in floating point.
+                 // Raw JtJ diagonals here span ~10 orders of magnitude (a cell
+                 // edge next to a peak intensity next to GV), which is exactly
+                 // why covarianceFromJtJ on the main thread normalises before
+                 // factorising. Gaussian elimination on the raw matrix pivots on
+                 // the largest ABSOLUTE entries, so badly-scaled parameters get
+                 // eliminated last and absorb all the rounding error.
+                 //
+                 // After scaling, At has a unit diagonal, so lambda is
+                 // dimensionless and every eigenvalue of (At + lambda I) is at
+                 // least lambda. Exactly-degenerate directions -- coincident
+                 // reflections in a cubic cell such as (333)/(511) or
+                 // (300)/(221), which produce identical Jacobian columns -- no
+                 // longer destabilise the solve; they just get a proportionally
+                 // damped step instead of an arbitrary one.
+                 // ===============================================================
+                 const Dscale = new Float64Array(n_params);
                  for (let i = 0; i < n_params; i++) {
                      const d = finalJtJ[i][i];
-                     const diag = (isFinite(d) && d > 1e-30) ? d : 1e-6;
-                     A_lm[i][i] += lambda * diag;
+                     Dscale[i] = (isFinite(d) && d > 1e-30) ? Math.sqrt(d) : 1;
                  }
+                 const A_lm = new Array(n_params);
+                 for (let i = 0; i < n_params; i++) {
+                     const row = new Float64Array(n_params);
+                     const di = Dscale[i];
+                     for (let j = 0; j < n_params; j++) row[j] = finalJtJ[i][j] / (di * Dscale[j]);
+                     row[i] += lambda;
+                     A_lm[i] = row;
+                 }
+                 const rhs_scaled = new Array(n_params);
+                 for (let i = 0; i < n_params; i++) rhs_scaled[i] = Jtr[i] / Dscale[i];
 
-                 const p_step = solveLinearSystem(A_lm, Jtr);
+                 const p_step_scaled = solveLinearSystem(A_lm, rhs_scaled);
+                 const p_step = p_step_scaled
+                     ? p_step_scaled.map((v, i) => v / Dscale[i])
+                     : null;
                  if (!p_step) {
                       console.warn(`LM iter ${iter}: normal equations are singular. Increasing lambda.`);
                       lambda = Math.min(1e9, lambda * 10);
@@ -1472,10 +1508,40 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                       }
                  }
 
+                 // ===============================================================
+                 // Lambda update.
+                 //
+                 // CRITICAL FIX: the old code did `lambda /= 3` on ANY accepted
+                 // step, including one the trust region had just shortened by a
+                 // factor of a hundred. That is a self-reinforcing loop, and it
+                 // was the main reason fitting crawled:
+                 //
+                 //   the clamp crushes the step to ~1% -> a 1% step is nearly
+                 //   always downhill, so it is accepted -> acceptance divides
+                 //   lambda by 3 -> a smaller lambda gives a LONGER raw step ->
+                 //   the clamp crushes it harder -> ...
+                 //
+                 // Traced on a synthetic cubic pattern, lambda fell 1e-3 -> 1e-9
+                 // (its floor) within 12 iterations while stepScale sat at 0.013:
+                 // the refiner had stopped being Levenberg-Marquardt at all and
+                 // was taking 1% of an UNDAMPED Gauss-Newton step each iteration.
+                 // In Le Bail mode that was worse than slow. Those tiny steps
+                 // lowered the frozen-intensity cost and were accepted, then the
+                 // next re-extraction pushed the real cost back up, so the fit
+                 // walked steadily uphill: cost 1.60e6 -> 1.73e6 over 25
+                 // iterations with the zero-point drifting AWAY from its true
+                 // value.
+                 //
+                 // A step that has to be shortened is a step that was too long,
+                 // and shortening it is lambda's job -- so tighten the damping
+                 // instead of rewarding the clamp. Only a step taken essentially
+                 // as the solve intended earns a relaxation.
+                 // ===============================================================
                  let stepAccepted = false;
                  if (new_cost < cost && isFinite(new_cost)) {
-                     lambda = Math.max(1e-9, lambda / 3);
                      stepAccepted = true;
+                     if (stepScale > 0.9) lambda = Math.max(1e-9, lambda / 3);
+                     else                 lambda = Math.min(1e9, lambda * 2);
                  } else {
                      // Reject: restore previous state. Do NOT update lastAcceptedCost.
                      params = oldParams;
