@@ -1019,11 +1019,13 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
         // eta is the AREA mixing fraction; pvMixCoeffs converts it to weights
         // for the unit-height components evalVoigt actually evaluates.
         const mix1 = pvMixCoeffs(eta, H_G, H_L);
-        prep = { type: 1, x0, asym_param, H_G, H_L, eta,
+
+prep = { type: 1, x0, asym_param, H_G, H_L, inv_H_G: 1/H_G, inv_H_L: 1/H_L, eta,
                  cL: mix1.cL, cG: mix1.cG, Cg };
         prep.analyticArea = mix1.cL * PV_LORENTZ_AREA * H_L
                           + mix1.cG * PV_GAUSS_AREA   * H_G;
     } else if (profileType === "split_pvoigt") {
+
         const wL = calculateProfileWidths(tth_peak, hkl, params, 'left');
         const wR = calculateProfileWidths(tth_peak, hkl, params, 'right');
         const H_G_L = Math.max(1e-9, wL.gamma_G), H_L_L = Math.max(1e-9, wL.gamma_L);
@@ -1035,7 +1037,11 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
         // across the centre.
         const mixL = pvMixCoeffs(eta, H_G_L, H_L_L);
         const mixR = pvMixCoeffs(eta, H_G_R, H_L_R);
-        prep = { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta,
+
+
+prep = { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, 
+                 inv_H_G_L: 1/H_G_L, inv_H_L_L: 1/H_L_L, inv_H_G_R: 1/H_G_R, inv_H_L_R: 1/H_L_R, 
+                 eta,
                  cL_L: mixL.cL, cG_L: mixL.cG, cL_R: mixR.cL, cG_R: mixR.cG, Cg };
         prep.analyticArea = 0.5 * (mixL.cL * PV_LORENTZ_AREA * H_L_L
                                  + mixL.cG * PV_GAUSS_AREA   * H_G_L)
@@ -1054,7 +1060,8 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
         // The TCH eta polynomial above is defined for AREA-normalised
         // components, so it must be converted before use -- see pvMixCoeffs.
         const mix3 = pvMixCoeffs(eta, fwhm, fwhm);
-        prep = { type: 3, x0, asym_param, fwhm, eta,
+
+        prep = { type: 3, x0, asym_param, fwhm, inv_fwhm: 1/fwhm, eta,
                  cL: mix3.cL, cG: mix3.cG, Cg };
         prep.analyticArea = (mix3.cL * PV_LORENTZ_AREA + mix3.cG * PV_GAUSS_AREA) * fwhm;
     }
@@ -1104,39 +1111,35 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
  * point per reflection per function evaluation -- so it is deliberately kept
  * as one self-contained function with no helper call.
  */
+
 function evalVoigt(x, p) {
     if (!p) return 0.0;
     let delta = x - p.x0;
     if (delta > p.max_d || delta < -p.max_d) return 0.0;
     if (p.asym_param !== 0 && Math.abs(delta) >= 1e-9) {
-        // FIX: use the SIGNED delta. The old code took Math.abs(delta) inside
-        // the correction, so BOTH flanks were stretched by the same factor and
-        // SL/HL produced pure symmetric broadening -- no asymmetry whatsoever.
-        // With the signed form one flank is broadened (factor > 1) and the
-        // other sharpened (factor < 1), which is the point of the correction.
         const t = Math.max(-0.95, Math.min(0.95, p.asym_param * delta));
-        delta /= (1.0 - t);   // 1 - t is in [0.05, 1.95], always positive
+        delta /= (1.0 - t);
     }
 
-    let hg, hl, cL, cG;
+    let inv_hg, inv_hl, cL, cG;
     if (p.type === 1) {
-        hg = p.H_G; hl = p.H_L; cL = p.cL; cG = p.cG;
+        inv_hg = p.inv_H_G; inv_hl = p.inv_H_L; cL = p.cL; cG = p.cG;
     } else if (p.type === 2) {
-        if (delta < 0) { hg = p.H_G_L; hl = p.H_L_L; cL = p.cL_L; cG = p.cG_L; }
-        else           { hg = p.H_G_R; hl = p.H_L_R; cL = p.cL_R; cG = p.cG_R; }
+        if (delta < 0) { inv_hg = p.inv_H_G_L; inv_hl = p.inv_H_L_L; cL = p.cL_L; cG = p.cG_L; }
+        else           { inv_hg = p.inv_H_G_R; inv_hl = p.inv_H_L_R; cL = p.cL_R; cG = p.cG_R; }
     } else {
-        hg = hl = p.fwhm; cL = p.cL; cG = p.cG;
+        inv_hg = inv_hl = p.inv_fwhm; cL = p.cL; cG = p.cG;
     }
 
-    const dg = (delta / hg) * (delta / hg);
-    const dl = (delta / hl) * (delta / hl);
+    const dg = (delta * inv_hg) * (delta * inv_hg);
+    const dl = (delta * inv_hl) * (delta * inv_hl);
     const g = Math.exp(-p.Cg * dg);
     const l = 1.0 / (1.0 + 4.0 * dl);
-    // cL / cG are the area-correct mixing weights (see pvMixCoeffs),
-    // renormalised so this expression is 1 at delta = 0.
+    
     const v = cL * l + cG * g - p.pedestal;
     return v > 0 ? v : 0.0;
 }
+
 
     function calculatePatternCPU(tthAxis, hklList, params, outArr = null) {
     const n_points = tthAxis ? tthAxis.length : 0;
@@ -1665,15 +1668,17 @@ const scratch_bkg = new Float64Array(n_points);
         }
     };
 
-    const calculateTotalPattern = async (targetArray) => {
+
+
+    const calculateTotalPattern = async (targetArray, requiresHklUpdate = true) => {
         enforceSymmetryConstraintsWorker(params, system);
 
-
-
-
+        if (requiresHklUpdate) {
             updateHklPositions(workingHklList, params, system);
+        }
 
         const netCalcPattern = await calculatePattern(workerWorkingData.tth, workingHklList, params, scratch_pattern);
+      
         for (let i = 0; i < n_points; i++) {
             targetArray[i] = netCalcPattern[i] + scratch_bkg[i];
         }
@@ -1699,9 +1704,15 @@ const scratch_bkg = new Float64Array(n_points);
         const jacobian_T = [];
         const savedIntensities = workingHklList.map(h => h ? h.intensity : 0);
 
+
+
+
+
+
         for (let p = 0; p < n_params; p++) {
             const mapping = paramMapping[p];
             const originalValue = mapping.get(params, workingHklList);
+            const isStructural = ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].includes(mapping.name);
 
             const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
             const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
@@ -1714,6 +1725,8 @@ const scratch_bkg = new Float64Array(n_points);
             let fd_sign = 1;
             let responded = false;
 
+
+
             for (let attempt = 0; attempt < FD_MAX_ATTEMPTS; attempt++) {
                 fd_sign = (originalValue + fd_step > maxV && originalValue - fd_step >= minV) ? -1 : 1;
 
@@ -1722,7 +1735,9 @@ const scratch_bkg = new Float64Array(n_points);
                 const actual_h = applied - originalValue;   
 
                 if (actual_h !== 0) {
-                    await calculateTotalPattern(y_calc_total);
+                    await calculateTotalPattern(y_calc_total, isStructural);
+
+
                     for (let i = 0; i < n_points; i++) {
                         if (!isFinite(y_calc_baseline[i]) || !isFinite(y_calc_total[i])) {
                             jacobian_col[i] = 0;
@@ -1744,7 +1759,15 @@ const scratch_bkg = new Float64Array(n_points);
 
             mapping.set(params, workingHklList, originalValue);
             workingHklList.forEach((h, idx) => { if (h) h.intensity = savedIntensities[idx]; });
+            
+            // FIX: Restore the peak positions if they were shifted by a structural parameter
+            if (isStructural) {
+                updateHklPositions(workingHklList, params, system);
+            }
+            
             jacobian_T.push(jacobian_col.slice());
+
+
         }
 
         const JtJ = new Array(n_params);
@@ -1839,15 +1862,16 @@ if (cost < bestTrueCost) {
              finalJtJ = normals.JtJ;
              const Jtr = normals.Jtr;
 
-             let maxDiag = 0;
-             for (let i = 0; i < n_params; i++) {
-                 const d = finalJtJ[i][i];
-                 if (isFinite(d) && d > maxDiag) maxDiag = d;
-             }
+
+
              const active = [];
              for (let i = 0; i < n_params; i++) {
-                 if (finalJtJ[i][i] > JTJ_RANK_TOL * maxDiag) active.push(i);
+                 // Only drop genuinely dead parameters. 
+                 // Marquardt diagonal scaling handles the scale differences safely.
+                 if (finalJtJ[i][i] > 0) active.push(i);
              }
+
+
              if (active.length === 0) {
                   console.warn(`LM iter ${iter}: no parameter has any effect on the pattern.`);
                   break;
@@ -2193,30 +2217,36 @@ if (refinementMode === 'le-bail') {
                  // mapping.set clamps, which makes the proposal distribution
                  // asymmetric, breaks detailed balance and piles samples up
                  // against the bound.
+            
+
                  const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
                  const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
-                 if (!(proposed >= minV && proposed <= maxV)) continue;
+                 
+                 if (proposed >= minV && proposed <= maxV) {
+                     mapping.set(replica.params, replica.hklList, proposed);
 
-                 mapping.set(replica.params, replica.hklList, proposed);
+                     const neighbor_cost = await objective(replica.params, replica.hklList);
+                     const delta_cost = neighbor_cost - replica.cost;
 
-                 const neighbor_cost = await objective(replica.params, replica.hklList);
-                 const delta_cost = neighbor_cost - replica.cost;
+                     const acceptance_prob = (replica.temp > 1e-9)
+                         ? Math.exp(Math.max(-700, -delta_cost / (costScale * replica.temp)))
+                         : 0;
+                         
+                     if (delta_cost < 0 || acceptance_prob > Math.random()) {
+                         replica.cost = neighbor_cost;
+                     } else {
+                         mapping.set(replica.params, replica.hklList, original_val);
+                     }
 
-                 const acceptance_prob = (replica.temp > 1e-9)
-                     ? Math.exp(Math.max(-700, -delta_cost / (costScale * replica.temp)))
-                     : 0;
-                 if (delta_cost < 0 || acceptance_prob > Math.random()) {
-                     replica.cost = neighbor_cost;
-                 } else {
-                     mapping.set(replica.params, replica.hklList, original_val);
-                 }
-
-                 if (replica.cost < bestOverallCost) {
-                     bestOverallCost = replica.cost;
-                     for (let k = 0; k < paramMapping.length; k++) {
-                         bestVector[k] = paramMapping[k].get(replica.params, replica.hklList);
+                     if (replica.cost < bestOverallCost) {
+                         bestOverallCost = replica.cost;
+                         for (let k = 0; k < paramMapping.length; k++) {
+                             bestVector[k] = paramMapping[k].get(replica.params, replica.hklList);
+                         }
                      }
                  }
+
+
              }
 
              if (iter > 0 && iter % swapInterval === 0) {
@@ -2518,8 +2548,8 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode, s
     mappings.push(createMapping(fitFlags.alpha, 'alpha', 90.0, 1, 179, 0.05, 2.0));
     mappings.push(createMapping(fitFlags.beta, 'beta', 90.0, 1, 179, 0.05, 2.0));
     mappings.push(createMapping(fitFlags.gamma, 'gamma', 120.0, 1, 179, 0.05, 2.0));
-    mappings.push(createMapping(fitFlags.zeroShift, 'zeroShift', 0.05, -Infinity, Infinity, 0.1, 0.2));
 
+    mappings.push(createMapping(fitFlags.zeroShift, 'zeroShift', 0.5, -Infinity, Infinity, 0.1, 1.0));
     //  Width lower bounds are now only sanity limits: the resolvable-FWHM floor
     //  is applied smoothly to the COMBINED width in applyFwhmFloor, and
     //  softPositive keeps the derivative alive even at the bound, so sitting on
