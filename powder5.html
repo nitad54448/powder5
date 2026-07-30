@@ -151,11 +151,11 @@
                          style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin: -12px 0 16px 0;">
                         <button type="button" id="profile-load-btn" class="btn btn-secondary"
                                 style="height:36px; font-size:13px; padding:6px 12px;">
-                            ↥ Load preset
+                            Load preset
                         </button>
                         <button type="button" id="profile-save-btn" class="btn btn-secondary"
                                 style="height:36px; font-size:13px; padding:6px 12px;">
-                            ↧ Save preset
+                            Save preset
                         </button>
                     </div>
                     <input type="file" id="profile-load-input" accept=".json,application/json" style="display:none;">
@@ -3440,8 +3440,12 @@ function generateMasterHklList() {
             // *** PASS SPLINE POINTS (backgroundAnchors) TO BACKGROUND CALCULATION ***
             calculatedBackground = calculateTotalBackground(fullExperimentalData.tth, params, backgroundAnchors);
 
+
+
+
             if (mainChart) {
-                //  Save the current Y-axis zoom state  
+                const currentXMin = mainChart.scales.x.min;
+                const currentXMax = mainChart.scales.x.max;
                 const currentYMin = mainChart.scales.y.min;
                 const currentYMax = mainChart.scales.y.max;
 
@@ -3452,12 +3456,17 @@ function generateMasterHklList() {
                 
                 updatePreviewPattern(); 
                 
-                // --Restore the Y-axis zoom state before updating  
+                mainChart.options.scales.x.min = currentXMin;
+                mainChart.options.scales.x.max = currentXMax;
                 mainChart.options.scales.y.min = currentYMin;
                 mainChart.options.scales.y.max = currentYMax;
                 
                 mainChart.update('none');
             }
+
+
+
+
         }
 
 
@@ -3941,9 +3950,10 @@ function debounce(func, wait) {
                 catch (err) { console.warn('refreshHklMarkers: could not position reflections', err); clear(); return; }
             }
 
+
             const dataLen = fullExperimentalData.tth.length;
-            const dataMin = dataLen > 0 ? fullExperimentalData.tth[0] : -Infinity;
-            const dataMax = dataLen > 0 ? fullExperimentalData.tth[dataLen - 1] : Infinity;
+            const dataMin = dataLen > 0 ? parseFloat(controls.tthMinSlider.value) : -Infinity;
+            const dataMax = dataLen > 0 ? parseFloat(controls.tthMaxSlider.value) : Infinity;
 
             const ka1Markers = [];
             const ka2Markers = [];
@@ -5072,7 +5082,11 @@ function debounce(func, wait) {
 function updatePreviewPattern() {
     if (!mainChart || !workingData.isValid || isFitting) return;
 
+    const currentXMin = mainChart.scales.x.min;
+    const currentXMax = mainChart.scales.x.max;
+    const currentYMin = mainChart.scales.y.min;
     const currentYMax = mainChart.scales.y.max;
+    
     const oldGlobalYMax = mainChart.options.globalYMax || 1000;
     const wasZoomedOutY = (currentYMax >= oldGlobalYMax * 0.99);
 
@@ -5156,11 +5170,19 @@ function updatePreviewPattern() {
     if (wasZoomedOutY) {
         rescalePlot(true);
     } else {
+        mainChart.options.scales.y.min = currentYMin;
+        mainChart.options.scales.y.max = currentYMax;
         rescalePlot(false);
     }
 
+    mainChart.options.scales.x.min = currentXMin;
+    mainChart.options.scales.x.max = currentXMax;
+
     mainChart.update('none');
 }
+
+
+ 
 
 function redrawFitForNewRange() {
     if (!mainChart) return; 

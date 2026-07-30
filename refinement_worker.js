@@ -37,6 +37,7 @@ initPromise.catch(() => {});
 let gpuDevice = null;
 let computePipeline = null;
 let gpuBuffers = { tth: null, hkl: null, out: null, read: null, tthSize: 0, hklSize: 0, outSize: 0 };
+let reusableHklData = new Float32Array(1024);
 
 async function initWebGPU() {
     if (!navigator.gpu) {
@@ -94,7 +95,18 @@ async function calculatePattern(tthAxis, hklList, params, outArr = null) {
         }
     });
 
-    const hklData = new Float32Array(totalPeaks * 16);
+
+    if (totalPeaks === 0) {
+        pattern.fill(0);
+        return pattern;
+    }
+
+    const requiredSize = totalPeaks * 16;
+    if (reusableHklData.length < requiredSize) {
+        reusableHklData = new Float32Array(requiredSize * 2); // Grow with headroom
+    }
+    const hklData = reusableHklData.subarray(0, requiredSize);
+
     let offset = 0;
 
     const writePrep = (intensity, prep) => {
@@ -165,7 +177,7 @@ async function calculatePattern(tthAxis, hklList, params, outArr = null) {
             layout: computePipeline.getBindGroupLayout(0),
             entries: [
                 { binding: 0, resource: { buffer: gpuBuffers.tth } },
-                { binding: 1, resource: { buffer: gpuBuffers.hkl } },
+                { binding: 1, resource: { buffer: gpuBuffers.hkl, size: hklByteLength } },
                 { binding: 2, resource: { buffer: gpuBuffers.out } },
             ],
         });
@@ -1599,6 +1611,9 @@ const LEBAIL_PASSES_PER_ITER = 6;
 const LEBAIL_RESET_EACH_ITER = true;
 
 async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
+    const cloneParams = (p) => ({ ...p });
+    const cloneHkl = (list) => list.map(h => (h ? { ...h } : null));
+    
     const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList, refinementMode, system);
     if (paramMapping.length === 0) {
          const finalProgress = (leBailCycle + 1) / totalLeBailCycles;
@@ -1622,7 +1637,8 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
     const y_calc_baseline = new Float64Array(n_points);
     const jacobian_col = new Float64Array(n_points);
 
-    const scratch_bkg = new Float64Array(n_points);
+const scratch_bkg = new Float64Array(n_points);
+    calculateTotalBackground(workerWorkingData.tth, initialParams, workerBackgroundAnchors, scratch_bkg);
     const scratch_pattern = new Float64Array(n_points);
 
     const baseProgress = leBailCycle / totalLeBailCycles;
@@ -1631,10 +1647,14 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
     const refreshLeBailIntensities = async () => {
         if (refinementMode !== 'le-bail') return;
         enforceSymmetryConstraintsWorker(params, system);
+
         updateHklPositions(workingHklList, params, system);
-        const bkg0 = calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors, scratch_bkg);
+        const bkg0 = scratch_bkg;
         
         if (LEBAIL_RESET_EACH_ITER) {
+
+
+
             for (let i = 0; i < workingHklList.length; i++) {
                 if (workingHklList[i]) workingHklList[i].intensity = 100.0;
             }
@@ -1647,13 +1667,18 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
 
     const calculateTotalPattern = async (targetArray) => {
         enforceSymmetryConstraintsWorker(params, system);
-        updateHklPositions(workingHklList, params, system);
 
-        const y_bkg = calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors, scratch_bkg);
+
+
+
+            updateHklPositions(workingHklList, params, system);
+
         const netCalcPattern = await calculatePattern(workerWorkingData.tth, workingHklList, params, scratch_pattern);
         for (let i = 0; i < n_points; i++) {
-            targetArray[i] = netCalcPattern[i] + y_bkg[i];
+            targetArray[i] = netCalcPattern[i] + scratch_bkg[i];
         }
+
+
         return 1.0; 
     };
 
@@ -1779,10 +1804,11 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  continue;
              }
 
-             if (cost < bestTrueCost) {
+
+if (cost < bestTrueCost) {
                  bestTrueCost = cost;
-                 bestParams = JSON.parse(JSON.stringify(params));
-                 bestHkl = JSON.parse(JSON.stringify(workingHklList));
+                 bestParams = cloneParams(params);
+                 bestHkl = cloneHkl(workingHklList);
                  trustFactor = Math.min(1.0, trustFactor * LM_TRUST_GROWTH);
              } else if (isFinite(bestTrueCost) && bestParams &&
                         cost > bestTrueCost * (1 + LM_OUTER_TOL)) {
@@ -1790,8 +1816,9 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                      console.warn(`LM iter ${iter}: no further progress in the re-extracted cost; stopping.`);
                      break;
                  }
-                 params = JSON.parse(JSON.stringify(bestParams));
-                 workingHklList = JSON.parse(JSON.stringify(bestHkl));
+                 params = cloneParams(bestParams);
+                 workingHklList = cloneHkl(bestHkl);
+
                  lambda = Math.min(1e9, lambda * 10);
                  trustFactor = Math.max(1e-3, trustFactor * 0.25);
                  lastAcceptedCost = bestTrueCost;
@@ -1881,8 +1908,8 @@ async function refineParametersLM(initialParams, fitFlags, maxIter, hklList, sys
                  predicted -= p_step_clamped[i] * q;
              }
 
-             oldParams = JSON.parse(JSON.stringify(params));
-             oldHklList = JSON.parse(JSON.stringify(workingHklList));
+            oldParams = cloneParams(params);
+             oldHklList = cloneHkl(workingHklList);
 
              const p_new = p_current.map((v, i) => v + p_step_clamped[i]);
              paramMapping.forEach((m, i) => m.set(params, workingHklList, p_new[i]));
@@ -2026,21 +2053,25 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
     const swapInterval = 10;
 
 
-    const n_points = workerWorkingData.tth.length;
+const n_points = workerWorkingData.tth.length;
     const scratch_bkg = new Float64Array(n_points);
+    calculateTotalBackground(workerWorkingData.tth, initialParams, workerBackgroundAnchors, scratch_bkg);
     const scratch_pattern = new Float64Array(n_points);
 
     const objective = async(p_obj, hkl_list_obj) => {
          try {
-            enforceSymmetryConstraintsWorker(p_obj, system); 
+        
+ enforceSymmetryConstraintsWorker(p_obj, system); 
             updateHklPositions(hkl_list_obj, p_obj, system);
-            const y_bkg = calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors, scratch_bkg);
             const netCalcPattern = await calculatePattern(workerWorkingData.tth, hkl_list_obj, p_obj, scratch_pattern);
              let sum_w_res_sq = 0;
              for (let i = 0; i < workerWorkingData.tth.length; i++) {
                   const w_i = workerWorkingData.weights[i];
-                  const res = workerWorkingData.intensity[i] - (netCalcPattern[i] + y_bkg[i]);
-                   if (isFinite(w_i) && isFinite(res)) {
+                  const res = workerWorkingData.intensity[i] - (netCalcPattern[i] + scratch_bkg[i]);             
+
+
+
+                  if (isFinite(w_i) && isFinite(res)) {
                         sum_w_res_sq += w_i * res * res;
                    } else {
                        return 1e12;
@@ -2058,16 +2089,19 @@ async function refineParametersPT(initialParams, fitFlags, maxIter, hklList, sys
     // intensities are refined parameters, so there is nothing to extract and
     // this just refreshes the cost.
     const refreshReplica = async(rep) => {
-        if (refinementMode === 'le-bail') {
+
+
+if (refinementMode === 'le-bail') {
             enforceSymmetryConstraintsWorker(rep.params, system);
             updateHklPositions(rep.hklList, rep.params, system);
-            const bkg = calculateTotalBackground(workerWorkingData.tth, rep.params,
-                                                workerBackgroundAnchors, scratch_bkg);
             await leBailIntensityExtraction(
                 { tth: workerWorkingData.tth, intensity: workerWorkingData.intensity,
-                  background: bkg, weights: workerWorkingData.weights },
+                  background: scratch_bkg, weights: workerWorkingData.weights },
                 rep.hklList, rep.params, scratch_pattern);
         }
+       
+       
+       
         rep.cost = await objective(rep.params, rep.hklList);
         return rep.cost;
     };
