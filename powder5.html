@@ -1337,7 +1337,8 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     border-color: var(--accent) !important;
     color: var(--accent) !important;
 }
-
+
+
 /* ---------- Space-group probability test (Markvardsen et al. 2001) ---------- */
 
 .sg-info-row {
@@ -1513,7 +1514,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
                         </div>
                         <button type="button" id="sg-test-button" disabled
                                 aria-label="Test this space group against the Pawley intensities"
-                                title="Needs a completed Pawley refinement run with Levenberg-Marquardt.">?</button>
+                                title="Needs a completed Pawley refinement with a normal-equations matrix.">?</button>
                     </div>
 
                     <div id="lattice-parameters-container">
@@ -1844,7 +1845,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 131, 29 July 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 132, 30 July 2026";
   
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
@@ -1867,7 +1868,93 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('app-version-footer').textContent = APP_VERSION_TEXT;
 
        
-        const CALCULATION_WINDOW_MULTIPLIER = 8.0; //avant 109 c'estai 6
+
+// ---------------------------------------------------------------------------
+//  Profile truncation window.
+//
+//  A Gaussian is dead by ~4 FWHM; a Lorentzian is not. At 8 FWHM a pure
+//  Lorentzian still loses ~4% of its area to truncation and another ~4% to the
+//  pedestal subtraction in prepareVoigt. That in itself is survivable, because
+//  the Le Bail extraction measures the area of the profile as actually drawn --
+//  but the loss depends on eta, and eta moves as the widths refine, so a FIXED
+//  window leaks truncation error straight into the intensity/width
+//  correlation. The window is therefore scaled with the Lorentzian content,
+//  and the exact analytic area of the UNtruncated shape is carried on the prep
+//  object (prep.analyticArea) so integrated intensities can be reported free
+//  of the truncation bias.
+// ---------------------------------------------------------------------------
+const CALCULATION_WINDOW_MULTIPLIER_G = 8.0;    // pure Gaussian
+const CALCULATION_WINDOW_MULTIPLIER_L = 25.0;   // pure Lorentzian
+const PROFILE_WINDOW_MAX_DEG = 10.0;            // hard cap, keeps cost bounded
+const CALCULATION_WINDOW_MULTIPLIER = CALCULATION_WINDOW_MULTIPLIER_G; // legacy alias
+
+// ---------------------------------------------------------------------------
+//  Minimum resolvable profile FWHM, degrees 2-theta. Set from the real data
+//  step (setMinProfileFwhmFromAxis) as soon as the pattern is known.
+//
+//  A peak narrower than a couple of data steps is not measurable, and letting
+//  the refiner go there is exactly how a fit with a bad cell "improves" Rwp:
+//  a spike in the wrong place costs less than a broad peak in the wrong place,
+//  so the profile collapses instead of the cell correcting.
+// ---------------------------------------------------------------------------
+let MIN_PROFILE_FWHM_DEG = 1e-3;
+function setMinProfileFwhmFromAxis(tthAxis) {
+    if (!tthAxis || tthAxis.length < 3) return;
+    const step = (tthAxis[tthAxis.length - 1] - tthAxis[0]) / (tthAxis.length - 1);
+    if (isFinite(step) && step > 0) MIN_PROFILE_FWHM_DEG = Math.max(1e-4, 2 * step);
+}
+
+/**
+ * Smooth positive branch: >= floor, strictly increasing, derivative never 0.
+ *     softPositive(x, f) = (x + sqrt(x^2 + 4 f^2)) / 2
+ * f at x = 0, ~x for x >> f, ~f^2/|x| for x << -f, d/dx > 0 everywhere.
+ *
+ * FIX: replaces the `if (sigma_sq_cdeg2 > 0) { ... }` guards in the width
+ * calculators. Those guards were a hard dead zone -- once a width combination
+ * went non-positive the width stuck at its default value, the one-sided
+ * finite-difference column came out identically zero, and the parameter was
+ * frozen there for the rest of the fit. It could not recover even after the
+ * cell and zero-point had been corrected.
+ */
+function softPositive(x, floor) {
+    if (!isFinite(x)) return floor;
+    return 0.5 * (x + Math.sqrt(x * x + 4 * floor * floor));
+}
+
+// Peak heights of the UNIT-AREA Gaussian and Lorentzian, in units of 1/FWHM.
+const PV_G0 = 2 * Math.sqrt(Math.LN2 / Math.PI);   // 0.9394372787
+const PV_L0 = 2 / Math.PI;                         // 0.6366197724
+// Areas of the UNIT-HEIGHT Gaussian and Lorentzian, in units of FWHM.
+const PV_GAUSS_AREA   = 1 / PV_G0;                 // 1.0644670194
+const PV_LORENTZ_AREA = 1 / PV_L0;                 // 1.5707963268
+
+/**
+ * Mixing coefficients for a pseudo-Voigt evaluated on UNIT-HEIGHT components.
+ *
+ * FIX (eta convention). The pseudo-Voigt is defined as eta*L + (1-eta)*G with
+ * L and G normalised to unit AREA -- that is what makes eta a mixing fraction,
+ * and it is the convention the Thompson-Cox-Hastings eta polynomial was fitted
+ * for. This code carries a peak HEIGHT per reflection, so the components are
+ * evaluated unit-height and the area normalisation is folded into these
+ * coefficients, which are then renormalised so the mixture is still 1 at the
+ * peak centre.
+ *
+ * Mixing unit-height components directly (the previous behaviour) is a
+ * DIFFERENT function: L(0)/G(0) = 0.637/0.939 = 0.678 at equal FWHM, so a TCH
+ * eta of 0.578 (Gamma_L/Gamma = 0.5) was rendered as a shape whose true area
+ * mixing fraction is 0.48. For simple_pvoigt, where eta is refined, that was
+ * only a mislabelling; for tch_aniso, where eta is COMPUTED from the
+ * polynomial, the modelled Lorentzian content was systematically too high and
+ * X / Y had to absorb the difference.
+ */
+function pvMixCoeffs(eta, hg, hl) {
+    const e = Math.max(0, Math.min(1, eta));
+    const wL = e * PV_L0 / Math.max(1e-12, hl);
+    const wG = (1 - e) * PV_G0 / Math.max(1e-12, hg);
+    const s = wL + wG;
+    if (!(s > 0) || !isFinite(s)) return { cL: e, cG: 1 - e };
+    return { cL: wL / s, cG: wG / s };
+}
 
         /**
          * Covariance matrix from a normal-equations matrix JtJ.
@@ -3714,6 +3801,12 @@ setTimeout(() => {
                 workingData.weights[i] = weight;
             }
 
+            // The resolvable-FWHM floor is a property of the DATA. Set it from
+            // the slice actually being fitted, so applyFwhmFloor (and the worker,
+            // which does the same on its own copy) can stop the refiner from
+            // collapsing peaks into sub-step spikes.
+            setMinProfileFwhmFromAxis(workingData.tth);
+
             workingData.isValid = true;
         }
 
@@ -4213,8 +4306,72 @@ function updateHklPositions(hklList, params, system) {
         //   uses Lorentzian-dominated anisotropic strain; we follow suit.
         const STEPHENS_DEFAULT_ETA = 1.0;
 
+/**
+ * Caglioti sigma^2 (GSAS centidegree^2 / 8ln2) -> Gaussian FWHM in degrees.
+ * Component floors are a QUARTER of the minimum resolvable FWHM, so neither
+ * component alone pins the total; the combined floor in calculateProfileWidths
+ * does that, and it preserves the Gaussian/Lorentzian ratio (hence eta).
+ */
+function gaussianFromSigmaSq(sigma_sq_cdeg2) {
+    const floorSq = Math.pow(0.25 * MIN_PROFILE_FWHM_DEG / GSAS_GAUSSIAN_TO_DEG, 2);
+    return Math.sqrt(softPositive(sigma_sq_cdeg2, floorSq)) * GSAS_GAUSSIAN_TO_DEG;
+}
+/** Lorentzian gamma (GSAS centidegrees) -> FWHM in degrees. */
+function lorentzianFromGamma(gL_cdeg) {
+    const floor = 0.25 * MIN_PROFILE_FWHM_DEG / GSAS_LORENTZIAN_TO_DEG;
+    return softPositive(gL_cdeg, floor) * GSAS_LORENTZIAN_TO_DEG;
+}
+
+/**
+ * Smooth lower bound at `f`: ~f for x <= f, within 0.6% of x by x = 2.5f, with a
+ * nonzero derivative throughout.
+ *
+ * The exponent is a deliberate compromise. sqrt(x^2 + f^2) is the smoothest
+ * choice but inflates a legitimate 2.5f width by 8%, which is not acceptable in
+ * a quantity being refined; a very sharp knee keeps widths honest but makes the
+ * derivative BELOW the floor so small that a parameter driven deep past it is
+ * effectively frozen again -- the exact failure this floor exists to avoid.
+ * Fourth order keeps the inflation under 1% at 2.5f while leaving a usable
+ * gradient pointing back out.
+ */
+function softFloor(x, f) {
+    if (!isFinite(x) || !(x > 0)) return f;
+    if (!(f > 0)) return x;
+    const r = x / f;
+    if (r > 20) return x;                       // floor irrelevant; avoid pow overflow
+    return f * Math.pow(Math.pow(r, 4) + 1, 0.25);
+}
+
+/**
+ * Floors the profile widths at the resolvable FWHM.
+ *
+ * FIX: the floor used to be applied to GW and LX individually, via hard bounds
+ * in getParameterMapping. But sigma^2 = GU tan^2(th) + GV tan(th) + GW +
+ * GP/cos^2(th), so bounding GW alone is simultaneously too weak -- GV < 0 can
+ * still collapse the peak at low angle -- and too strong, since it ignores what
+ * the other terms already contribute. And a HARD bound is what killed the
+ * Jacobian column: once a width sat on its floor the finite difference returned
+ * exactly zero and the parameter was frozen for the rest of the fit.
+ *
+ * Both COMPONENTS are floored, not just the convoluted total: simple_pvoigt and
+ * split_pvoigt give the Gaussian and the Lorentzian independent widths, so one
+ * of them alone can be an unresolvable sub-step spike while the combined FWHM
+ * still looks healthy -- and with the area-correct eta mixing that spike then
+ * carries its full share of the peak area. Flooring the components implies the
+ * floor on the total, so no second pass is needed (which also keeps the five
+ * Math.pow calls in getPeakFWHM out of this hot path).
+ */
+function applyFwhmFloor(gamma_G, gamma_L) {
+    return {
+        gamma_G: softFloor(gamma_G, MIN_PROFILE_FWHM_DEG),
+        gamma_L: softFloor(gamma_L, MIN_PROFILE_FWHM_DEG)
+    };
+}
+
         function calculateProfileWidths(tth, hkl, params, side = 'center') {
-             if (!params || !params.profileType) return { gamma_G: 1e-4, gamma_L: 1e-4 };
+             if (!params || !params.profileType) {
+                 return { gamma_G: MIN_PROFILE_FWHM_DEG, gamma_L: MIN_PROFILE_FWHM_DEG };
+             }
 
             const profileType = params.profileType;
             const thetaRad = tth * (Math.PI / 180) / 2;
@@ -4222,7 +4379,7 @@ function updateHklPositions(hklList, params, system) {
             const MAX_ANGLE_RAD = Math.PI / 2.0 - 1e-6;
             const safeThetaRad = Math.min(thetaRad, MAX_ANGLE_RAD);
              if (safeThetaRad < 1e-6) {
-                 return { gamma_G: 1e-4, gamma_L: 1e-4 };
+                 return { gamma_G: MIN_PROFILE_FWHM_DEG, gamma_L: MIN_PROFILE_FWHM_DEG };
              }
 
             const tanTheta = Math.tan(safeThetaRad);
@@ -4230,8 +4387,8 @@ function updateHklPositions(hklList, params, system) {
             const cosTheta_safe = Math.max(cosTheta, 1e-9);
             const cosThetaSq_safe = Math.max(cosTheta * cosTheta, 1e-9);
 
-            let gamma_G = 1e-4;     //  FWHM in degrees 2θ
-            let gamma_L = 1e-4;     //  FWHM in degrees 2θ
+            let gamma_G = MIN_PROFILE_FWHM_DEG;     //  FWHM in degrees 2θ
+            let gamma_L = MIN_PROFILE_FWHM_DEG;     //  FWHM in degrees 2θ
 
             switch (profileType) {
                 case "simple_pvoigt": {
@@ -4242,14 +4399,10 @@ function updateHklPositions(hklList, params, system) {
                     const GP = params.GP || 0;
                     const LX = params.LX || 0;
                     const sigma_sq_cdeg2 = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
-                    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
-                        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
-                    }
+                    gamma_G = gaussianFromSigmaSq(sigma_sq_cdeg2);
                     //   Lorentzian (size only) in centidegrees → degrees.
                     const gL_cdeg = LX / cosTheta_safe;
-                    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
-                        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
-                    }
+                    gamma_L = lorentzianFromGamma(gL_cdeg);
                     break;
                 }
 
@@ -4265,13 +4418,9 @@ function updateHklPositions(hklList, params, system) {
                         GW = params.GW_R || 0; LX = params.LX_R || 0;
                     }
                     const sigma_sq_cdeg2 = GU * tanTheta * tanTheta + GV * tanTheta + GW;
-                    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
-                        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
-                    }
+                    gamma_G = gaussianFromSigmaSq(sigma_sq_cdeg2);
                     const gL_cdeg = LX / cosTheta_safe;
-                    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
-                        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
-                    }
+                    gamma_L = lorentzianFromGamma(gL_cdeg);
                     break;
                 }
 
@@ -4285,13 +4434,9 @@ function updateHklPositions(hklList, params, system) {
                     const Y = params.Y || 0;     //  GSAS LX  (size   / cosθ)
 
                     const sigma_sq_cdeg2 = U * tanTheta * tanTheta + V * tanTheta + W;
-                    if (sigma_sq_cdeg2 > 0 && isFinite(sigma_sq_cdeg2)) {
-                        gamma_G = Math.sqrt(sigma_sq_cdeg2) * GSAS_GAUSSIAN_TO_DEG;
-                    }
+                    gamma_G = gaussianFromSigmaSq(sigma_sq_cdeg2);
                     const gL_cdeg = X * tanTheta + Y / cosTheta_safe;
-                    if (gL_cdeg > 0 && isFinite(gL_cdeg)) {
-                        gamma_L = gL_cdeg * GSAS_LORENTZIAN_TO_DEG;
-                    }
+                    gamma_L = lorentzianFromGamma(gL_cdeg);
 
                     //   Stephens anisotropic strain — orthorhombic-and-up form.
                     //   Higher-symmetry systems (cubic, tetragonal, hexagonal,
@@ -4341,10 +4486,7 @@ function updateHklPositions(hklList, params, system) {
                 }
             }
 
-            return {
-                gamma_G: Math.max(1e-4, isFinite(gamma_G) ? gamma_G : 1e-4),
-                gamma_L: Math.max(1e-4, isFinite(gamma_L) ? gamma_L : 1e-4)
-            };
+            return applyFwhmFloor(gamma_G, gamma_L);
         }
 
 
@@ -4383,10 +4525,22 @@ function updateHklPositions(hklList, params, system) {
          * Runs in main thread for previews.
          */
         function getPseudoVoigtArea(tth_peak, hkl, params) {
-            const GAUSS_AREA_CONST = 1.0644677;
-            const LORENTZ_AREA_CONST = 1.5707963;
+            const GAUSS_AREA_CONST = PV_GAUSS_AREA;
+            const LORENTZ_AREA_CONST = PV_LORENTZ_AREA;
 
             if (!params || !params.profileType) return 1.0;
+
+            // FIX: delegate to prepareVoigt so this can never drift out of the
+            // eta convention evalVoigt uses. prep.analyticArea is the exact
+            // area of the untruncated unit-height mixture; the switch below is
+            // kept only as a fallback if prepareVoigt is unavailable.
+            try {
+                const prep = prepareVoigt(tth_peak, tth_peak, hkl, params);
+                if (prep && isFinite(prep.analyticArea) && prep.analyticArea > 0) {
+                    return prep.analyticArea;
+                }
+            } catch (e) { /* fall through to the analytic switch */ }
+
             const profileType = params.profileType;
 
             switch (profileType) {
@@ -4464,7 +4618,13 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
         const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
         const eta = Math.max(0, Math.min(1, params.eta || 0.5));
         fwhm_total = getPeakFWHM(H_G, H_L);
-        prep = { type: 1, x0, asym_param, H_G, H_L, eta, Cg };
+        // eta is the AREA mixing fraction; pvMixCoeffs converts it to weights
+        // for the unit-height components evalVoigt actually evaluates.
+        const mix1 = pvMixCoeffs(eta, H_G, H_L);
+        prep = { type: 1, x0, asym_param, H_G, H_L, eta,
+                 cL: mix1.cL, cG: mix1.cG, Cg };
+        prep.analyticArea = mix1.cL * PV_LORENTZ_AREA * H_L
+                          + mix1.cG * PV_GAUSS_AREA   * H_G;
     } else if (profileType === "split_pvoigt") {
         const wL = calculateProfileWidths(tth_peak, hkl, params, 'left');
         const wR = calculateProfileWidths(tth_peak, hkl, params, 'right');
@@ -4472,7 +4632,17 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
         const H_G_R = Math.max(1e-9, wR.gamma_G), H_L_R = Math.max(1e-9, wR.gamma_L);
         const eta = Math.max(0, Math.min(1, params.eta_split || 0.5));
         fwhm_total = Math.max(getPeakFWHM(H_G_L, H_L_L), getPeakFWHM(H_G_R, H_L_R));
-        prep = { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta, Cg };
+        // Each flank gets its own mixing weights (the widths differ), and each
+        // is renormalised to 1 at delta = 0, so the profile stays continuous
+        // across the centre.
+        const mixL = pvMixCoeffs(eta, H_G_L, H_L_L);
+        const mixR = pvMixCoeffs(eta, H_G_R, H_L_R);
+        prep = { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta,
+                 cL_L: mixL.cL, cG_L: mixL.cG, cL_R: mixR.cL, cG_R: mixR.cG, Cg };
+        prep.analyticArea = 0.5 * (mixL.cL * PV_LORENTZ_AREA * H_L_L
+                                 + mixL.cG * PV_GAUSS_AREA   * H_G_L)
+                          + 0.5 * (mixR.cL * PV_LORENTZ_AREA * H_L_R
+                                 + mixR.cG * PV_GAUSS_AREA   * H_G_R);
     } else { // tch_aniso
         const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
         const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
@@ -4483,7 +4653,12 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
             eta = Math.max(0, Math.min(1, 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3)));
         }
         fwhm_total = fwhm;
-        prep = { type: 3, x0, asym_param, fwhm, eta, Cg };
+        // The TCH eta polynomial above is defined for AREA-normalised
+        // components, so it must be converted before use -- see pvMixCoeffs.
+        const mix3 = pvMixCoeffs(eta, fwhm, fwhm);
+        prep = { type: 3, x0, asym_param, fwhm, eta,
+                 cL: mix3.cL, cG: mix3.cG, Cg };
+        prep.analyticArea = (mix3.cL * PV_LORENTZ_AREA + mix3.cG * PV_GAUSS_AREA) * fwhm;
     }
 
     // See refinement_worker.js for the rationale: max_d is now the single
@@ -4491,8 +4666,14 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
     // calculatePattern chose), and the pedestal replaces PEAK_HEIGHT_CUTOFF so
     // the profile reaches zero continuously instead of stepping off a cliff.
     prep.fwhm_total = Math.max(1e-6, fwhm_total);
-    const truncationRadius = CALCULATION_WINDOW_MULTIPLIER * Math.max(0.01, prep.fwhm_total)
-                             * (asym_param !== 0 ? 2.0 : 1.0);
+    // Window scaled by Lorentzian content: 8 FWHM for a pure Gaussian up to
+    // CALCULATION_WINDOW_MULTIPLIER_L for a pure Lorentzian, capped in degrees
+    // so a pathologically broad peak cannot make the window span the pattern.
+    const etaWin = Math.max(0, Math.min(1, prep.eta || 0));
+    const windowMult = CALCULATION_WINDOW_MULTIPLIER_G
+                     + (CALCULATION_WINDOW_MULTIPLIER_L - CALCULATION_WINDOW_MULTIPLIER_G) * etaWin;
+    const truncationRadius = Math.min(PROFILE_WINDOW_MAX_DEG,
+        windowMult * Math.max(0.01, prep.fwhm_total) * (asym_param !== 0 ? 2.0 : 1.0));
 
     // Pedestal: the profile value at the truncation radius. Subtracting it
     // (clamped at zero) is what makes the profile reach zero continuously at
@@ -4531,21 +4712,23 @@ function evalVoigt(x, p) {
         delta /= (1.0 - t);   // 1 - t is in [0.05, 1.95], always positive
     }
 
-    let hg, hl;
+    let hg, hl, cL, cG;
     if (p.type === 1) {
-        hg = p.H_G; hl = p.H_L;
+        hg = p.H_G; hl = p.H_L; cL = p.cL; cG = p.cG;
     } else if (p.type === 2) {
-        hg = delta < 0 ? p.H_G_L : p.H_G_R;
-        hl = delta < 0 ? p.H_L_L : p.H_L_R;
+        if (delta < 0) { hg = p.H_G_L; hl = p.H_L_L; cL = p.cL_L; cG = p.cG_L; }
+        else           { hg = p.H_G_R; hl = p.H_L_R; cL = p.cL_R; cG = p.cG_R; }
     } else {
-        hg = hl = p.fwhm;
+        hg = hl = p.fwhm; cL = p.cL; cG = p.cG;
     }
 
     const dg = (delta / hg) * (delta / hg);
     const dl = (delta / hl) * (delta / hl);
     const g = Math.exp(-p.Cg * dg);
     const l = 1.0 / (1.0 + 4.0 * dl);
-    const v = p.eta * l + (1.0 - p.eta) * g - p.pedestal;
+    // cL / cG are the area-correct mixing weights (see pvMixCoeffs),
+    // renormalised so this expression is 1 at delta = 0.
+    const v = cL * l + cG * g - p.pedestal;
     return v > 0 ? v : 0.0;
 }
 
@@ -5735,8 +5918,8 @@ function debounce(func, wait) {
                     return { error: 'No refinement results are available yet. Run a Pawley refinement first.' };
                 if (fitResults.refinementMode !== 'pawley')
                     return { error: 'The last refinement was a Le Bail fit. Le Bail intensities are not least-squares parameters and have no normal matrix, so the test cannot be applied. Run a Pawley refinement.' };
-                if (fitResults.algorithm !== 'lm' || !fitResults.JtJ || !fitResults.parameterInfo)
-                    return { error: 'The test needs the normal-equations matrix, which only the Levenberg-Marquardt refiner produces. Re-run the Pawley fit with algorithm = Levenberg-Marquardt.' };
+                if (!fitResults.JtJ || !fitResults.parameterInfo)
+                    return { error: 'The test needs the normal-equations matrix. The Levenberg-Marquardt refiner builds one, and a Parallel Tempering run gets one from its LM polish; neither was available here. Re-run the Pawley fit.' };
                 if (!workerWorkingData || !workerWorkingData.intensity || !workerWorkingData.intensity.length)
                     return { error: 'The fitted data slice is no longer in memory. Re-run the Pawley refinement.' };
 
@@ -6288,7 +6471,6 @@ function debounce(func, wait) {
             const ok = !!(fitResults
                 && !isFitting
                 && fitResults.refinementMode === 'pawley'
-                && fitResults.algorithm === 'lm'
                 && fitResults.JtJ
                 && fitResults.parameterInfo);
             btn.disabled = !ok;
@@ -6296,7 +6478,7 @@ function debounce(func, wait) {
                 ? 'Test the space group against the Pawley intensities (Markvardsen et al., 2001)'
                 : (isFitting
                     ? 'Refinement in progress.'
-                    : 'Needs a completed Pawley refinement run with Levenberg-Marquardt.');
+                    : 'Needs a completed Pawley refinement with a normal-equations matrix.');
         }
 
         function updatePawleyButtonState() {
@@ -6324,7 +6506,7 @@ function debounce(func, wait) {
     // 3. Enable if Parallel Tempering (pt) is selected (This enables PT for Pawley)
     else if (selectedAlgorithm === 'pt') {
         pawleyButton.disabled = false;
-        pawleyButton.title = "Run Pawley refinement with Parallel Tempering.";
+        pawleyButton.title = "Run Pawley refinement with Parallel Tempering, converged with Levenberg-Marquardt.";
     } 
     // 4. Disable for any other unknown state
     else {
@@ -6857,7 +7039,7 @@ function debounce(func, wait) {
             if (!fitResults || !fitResults.params || !fitResults.stats || !fitResults.fitFlags || !fitResults.hklList) {
                 return "Error: Fit results are incomplete or not available.";
             }
-             if (fitResults.algorithm === 'lm' && (!workerWorkingData || !workerWorkingData.intensity || workerWorkingData.intensity.length === 0)) {
+             if (fitResults.JtJ && (!workerWorkingData || !workerWorkingData.intensity || workerWorkingData.intensity.length === 0)) {
                  console.warn("generateReportContent: workingData slice not available for ESD calculation.");
             }
 
@@ -6949,13 +7131,25 @@ function debounce(func, wait) {
 
             let esds = {};
             let esdWarning = null;
-            if (algorithm === 'lm' && JtJ && parameterInfo && ss_res !== undefined && workerWorkingData && workerWorkingData.intensity && workerWorkingData.intensity.length > 0) {
+            // FIX: gate on the presence of the normal-equations matrix, not on
+            // the requested algorithm. A Parallel Tempering run is now followed
+            // by a short Levenberg-Marquardt polish, so it supplies a JtJ too.
+            if (JtJ && parameterInfo && ss_res !== undefined && workerWorkingData && workerWorkingData.intensity && workerWorkingData.intensity.length > 0) {
                  const P = parameterInfo.length;
                  const N = workerWorkingData.intensity.length;
+                 // FIX: use the EFFECTIVE degrees of freedom reported by the
+                 // worker, which include the one free intensity per reflection
+                 // that a Le Bail decomposition also extracts from this data.
+                 // N - parameterInfo.length counted only the profile parameters,
+                 // so chi-square was too small and every ESD scaled from it was
+                 // optimistic -- by a large factor on a pattern with many
+                 // reflections.
+                 const reportedDof = (fitResults && typeof fitResults.dof === 'number' && fitResults.dof > 0)
+                                     ? fitResults.dof : null;
                  if (P === 0) {
                      esdWarning = "No parameters were refined.";
                  } else if (N > P) {
-                     const degreesOfFreedom = N - P;
+                     const degreesOfFreedom = reportedDof !== null ? reportedDof : (N - P);
 
                         if (ss_res >= 0 && isFinite(ss_res)) {
                           const reduced_chi_sq = (degreesOfFreedom > 0) ? (ss_res / degreesOfFreedom) : 0;
@@ -7015,10 +7209,24 @@ function debounce(func, wait) {
                  } else {
                      esdWarning = `N (${N}) <= P (${P}), cannot calculate reliable errors.`;
                  }
-            } else if (algorithm !== 'lm') {
-                esdWarning = "ESDs only available for Levenberg-Marquardt.";
             } else if (!JtJ || !parameterInfo || ss_res === undefined || !workerWorkingData || !workerWorkingData.intensity || workerWorkingData.intensity.length === 0) {
-                 esdWarning = "Required data for ESD calculation is missing (JtJ, parameterInfo, ss_res, or workingData).";
+                 esdWarning = "Required data for ESD calculation is missing (normal-equations matrix, parameterInfo, ss_res, or the fitted data slice).";
+            }
+
+            // A Le Bail ESD is a LOWER BOUND, and saying so is not optional.
+            // The extracted intensities are counted in the degrees of freedom
+            // (above), but they are not in the normal-equations matrix, so its
+            // inverse contains no profile-to-intensity correlation at all -- and
+            // the cell parameters are strongly correlated with the intensities
+            // they help partition. A Pawley fit refines the intensities as
+            // proper least-squares parameters and does not have this problem.
+            if (refinementMode === 'le-bail' && Object.keys(esds).length > 0) {
+                const nI = (fitResults && fitResults.nIntensities) || 0;
+                esdWarning = (esdWarning ? esdWarning + ' ' : '')
+                    + `Le Bail ESDs are lower bounds: the ${nI} extracted intensities are `
+                    + `counted in the degrees of freedom but are absent from the normal-equations `
+                    + `matrix, so profile-to-intensity correlation is not propagated. Use a Pawley `
+                    + `refinement for defensible uncertainties.`;
             }
 
             const paramWidths = [24, 18, 10, 18]; // Name, Value, Fitted, ESD
