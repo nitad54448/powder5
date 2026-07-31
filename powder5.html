@@ -416,11 +416,12 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 132, 30 July 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 133, 31 July 2026";
   
+    //v5 of the py script includes the Harker section, 31 juillet 2026
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
-        const resp = await fetch('cctbx_space_groups_all_settings_v4.json');
+        const resp = await fetch('cctbx_space_groups_all_settings_v5.json');
         globalThis.SG_DATABASE = await resp.json();
         
         // Load sg_engine.js AFTER database is in memory:
@@ -5913,6 +5914,30 @@ function rescalePlot(updateY = false) {
             }
             
 
+            // --- Harker Sections ---
+            const harkerList = (selectedSg && selectedSg.harker_sections) || 
+                (selectedSg && globalThis.SG_DATABASE?.space_groups?.[selectedSg.number]?.settings
+                    ?.find(s => s.symbol === selectedSg.symbol || s.hall === selectedSg.hall)?.harker_sections);
+
+            const harkerSection = [];
+            if (harkerList && harkerList.length > 0) {
+                const hWidths = [10, 8, 10, 20, 20, 20];
+                const hHeader = formatLine(['Type', 'Coord', 'Value', 'Solve_X', 'Solve_Y', 'Solve_Z'], hWidths);
+                harkerSection.push('', '--- Harker Sections ---', hHeader, '-'.repeat(hHeader.length));
+                harkerList.forEach(sec => {
+                    harkerSection.push(formatLine([
+                        sec.type,
+                        sec.coordinate,
+                        sec.value.toFixed(3),
+                        sec.solver.x,
+                        sec.solver.y,
+                        sec.solver.z
+                    ], hWidths));
+                });
+                harkerSection.push('');
+            }
+
+
 
             const reflectionsSection = [];
             if (hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
@@ -6068,6 +6093,7 @@ function rescalePlot(updateY = false) {
                 ...whAnalysisSection,
                 ...paramLines,
                 ...backgroundPointsSection, 
+                ...harkerSection,
                 ...reflectionsSection,
                 ...dataSection
             ].join('\n');
