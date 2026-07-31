@@ -1,4 +1,6 @@
 // refinement_worker.js
+//version 133, 31 july 2026, changed to cctbx v5, the json files holds the Harker data for further analysis 
+// Harker planes saved in the text report
 // version 131, 29 july 2026, LM: Marquardt-scaled solve + lambda no longer
 //   relaxed on a trust-region-clamped step (fixes stalling / uphill drift)
 // version 130, 26 july 2026, fixed some format in read data, changed the zoom
