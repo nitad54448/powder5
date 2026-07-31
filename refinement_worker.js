@@ -6,7 +6,7 @@
 // version 123 (fixes: init race, tetragonal/triclinic HKL generation, LM step clamp)
 // Spline Background in nov 2025, version 115
 // FIX: must match the file the main thread loads (was stale "_v2", -> 404).
-const initPromise = fetch('cctbx_space_groups_all_settings_v4.json')
+const initPromise = fetch('cctbx_space_groups_all_settings_v5.json')
     .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
