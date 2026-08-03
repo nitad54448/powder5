@@ -8,6 +8,10 @@
     <title>Powder 5</title>
     <!-- Local library dependencies -->
     <script src="lib/chart.umd.min.js"></script>
+    <!-- three.js r160 UMD. r161 removed build/three.min.js, so the version is
+         pinned; the isosurface viewer degrades to a message without it. -->
+    <script src="lib/three.min.js"></script>
+    <script src="density3d.js"></script>
     <script src="lib/jspdf.umd.min.js"></script>
     <script src="lib/html2canvas.min.js"></script>
     
@@ -17,6 +21,7 @@
     
     <!-- Extracted CSS -->
     <link rel="stylesheet" href="style.css">
+
 </head>
 
 
@@ -48,6 +53,13 @@
 </script>
 
 
+
+
+
+
+
+
+
 <div id="app-container">
         <div id="controls-panel">
             <div id="controls-scroll">
@@ -63,6 +75,8 @@
                 <button class="tab-btn active" data-tab="sample">Sample</button>
                 <button class="tab-btn" data-tab="background">Background</button>
                 <button class="tab-btn" data-tab="profile">Profile</button>
+                <button class="tab-btn" id="tab-btn-charge-flipping" data-tab="charge-flipping" disabled
+                        title="Needs a completed Pawley refinement (Levenberg-Marquardt, or Parallel Tempering with its LM polish).">Charge</button>
             </div>
 
             <div class="tab-content-panels">
@@ -132,8 +146,6 @@
                             </div>
                     </div>
                 </div>
-                
-                
                 
                 <div id="tab-panel-profile" class="tab-content-panel">
                  <div class="control-group">
@@ -285,7 +297,198 @@
                         <input type="checkbox" id="fit-trns_split" class="fit-checkbox">
                     </div>
 
-                 </div> </div> </div>
+                 </div> 
+            </div>
+
+            <!-- CHARGE FLIPPING TAB -->
+            <div id="tab-panel-charge-flipping" class="tab-content-panel">
+                <div class="control-group">
+                    <h2>Ab Initio Structure Solution</h2>
+                    <p style="font-size: 12px; color: var(--system-secondary-label); margin-bottom: 12px;">
+                        Solves the structure from the Pawley-extracted intensities by dual-space Charge Flipping.
+                        The selected space group is applied inside the iteration: orbits are generated from its real
+                        symmetry operators, systematic absences are held at zero, and symmetry equivalents are
+                        constrained to equal |F|. Only reflections that genuinely overlap in 2θ share their intensity.
+                    </p>
+                    
+                    <div class="parameter-grid-2col">
+                        <label class="control-label" title="The FFT is radix-2, so the grid edge must be a power of two.">Grid Size (N³)</label>
+                        <select id="cf-grid-size" class="control-select">
+                            <option value="32" selected>32 x 32 x 32</option>
+                            <option value="64">64 x 64 x 64</option>
+                            <option value="128">128 x 128 x 128 (slow)</option>
+                        </select>
+
+                        <label class="control-label" title="Flipping threshold in units of the map's own RMS density. 0 flips every negative voxel and rarely converges; 0.8-1.2 is the usual working range.">Threshold (δ / σ)</label>
+                        <input type="number" id="cf-threshold" value="1.10" step="0.05" min="0" max="5" class="control-input">
+
+                        <label class="control-label">Max Iterations</label>
+                        <input type="number" id="cf-iterations" value="1000" step="100" min="10" class="control-input">
+
+                        <label class="control-label" title="Charge flipping starts from random phases, so it does not converge every time. Each trial is a fresh random start; the best map is kept.">Random Starts</label>
+                        <input type="number" id="cf-trials" value="3" step="1" min="1" max="20" class="control-input">
+
+                        <label class="control-label" title="Two maxima closer than this are treated as one peak.">Peak Merge (Å)</label>
+                        <input type="number" id="cf-min-sep" value="0.9" step="0.1" min="0.1" class="control-input">
+
+                        <label class="control-label" title="How strongly the space group is imposed on the structure factors each cycle, via F(hR) = F(h)·exp(-2πi h·t). 'None' is classical P1 charge flipping and leaves the origin arbitrary. 'Strict' fixes the origin and converges faster, but will not recover if the space group is wrong.">Symmetry in loop</label>
+                        <select id="cf-sym-lambda" class="control-select">
+                            <option value="0">None — solve in P1</option>
+                            <option value="0.5" selected>Damped (λ = 0.5)</option>
+                            <option value="1">Strict (λ = 1)</option>
+                        </select>
+
+                        <label class="control-label" title="Reflections closer together than this in 2θ are treated as one measured peak, and their intensities are re-partitioned each cycle in proportion to the calculated values. Symmetry equivalents are NOT affected — they are constrained to equal |F|.">Overlap (°2θ)</label>
+                        <input type="number" id="cf-overlap-tol" value="0.05" step="0.01" min="0" class="control-input">
+                    </div>
+
+                    <div id="cf-sym-status" class="cf-hint" style="margin-top: 8px;"></div>
+
+                    <div id="cf-estimate" class="cf-hint" style="margin-top: 8px;"></div>
+
+                    <button id="run-charge-flip-btn" class="btn btn-primary" style="margin-top: 12px; width: 100%;">
+                        Run Charge Flipping
+                    </button>
+                    <button id="cf-cancel-btn" class="btn" style="margin-top: 6px; width: 100%; display: none;">
+                        Cancel
+                    </button>
+
+                    <div id="cf-progress-container" class="hidden" style="margin-top: 12px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+                            <span>R-factor: <span id="cf-r-factor">--</span></span>
+                            <span id="cf-iter-count">0 / 0</span>
+                        </div>
+                        <div style="width: 100%; border-radius: 3px; height: 5px; background: var(--system-gray-5);">
+                            <div id="cf-progress-bar" style="height: 100%; width: 0%; border-radius: 3px; background: var(--system-blue);"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ============ RESULTS ============ -->
+                <div class="control-group hidden" id="cf-results-group">
+                    <h2>Solution</h2>
+
+                    <dl class="cf-summary-grid" id="cf-summary"></dl>
+
+                    <h2 style="margin-top: 4px;">Electron-density peaks</h2>
+                    <p class="cf-hint" style="margin-bottom: 6px;">
+                        Fractional coordinates in P1. The origin and the hand of the solution are
+                        arbitrary — compare interatomic distances, not absolute positions.
+                    </p>
+                    <div class="cf-table-scroll">
+                        <table class="cf-peak-table" id="cf-peak-table">
+                            <thead>
+                                <tr><th>#</th><th>x</th><th>y</th><th>z</th><th>Height</th><th>d<sub>min</sub> (Å)</th></tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+
+                    <h2 style="margin-top: 14px;">Density section</h2>
+                    <div class="cf-section-grid">
+
+                        <!-- 1. the map, its colour bar and the scale caption -->
+                        <div class="cf-section-figure">
+                            <canvas id="cf-section-canvas" width="64" height="64"></canvas>
+                            <canvas id="cf-section-scalebar" width="512" height="10"></canvas>
+                            <div class="cf-hint cf-scale-ticks">
+                                <span id="cf-scale-min">–</span>
+                                <span id="cf-scale-mid">0</span>
+                                <span id="cf-scale-max">–</span>
+                            </div>
+                            <div class="cf-hint" id="cf-section-scale-note">–</div>
+                        </div>
+
+                        <!-- 2. what to look at -->
+                        <div class="cf-section-controls">
+                            <label class="control-label" for="cf-section-axis">Axis</label>
+                            <select id="cf-section-axis" class="control-select">
+                                <option value="2" selected>⊥ c (a–b plane)</option>
+                                <option value="1">⊥ b (a–c plane)</option>
+                                <option value="0">⊥ a (b–c plane)</option>
+                            </select>
+                            <label class="control-label" for="cf-section-slider" style="margin-top: 10px;">Section</label>
+                            <input type="range" id="cf-section-slider" min="0" max="31" value="0">
+                            <div class="cf-hint" id="cf-section-label">–</div>
+                            <label class="cf-checkbox-label"
+                                   title="Off (default): every slice is drawn on the same absolute scale, taken from the whole map, so slices are directly comparable and an empty slice looks empty. On: each slice is stretched to its own range, which maximises contrast but makes noise look like structure.">
+                                <input type="checkbox" id="cf-section-autoscale">
+                                <span>Stretch each slice to its own range</span>
+                            </label>
+                        </div>
+
+                        <!-- 3. exports for the map itself -->
+                        <div class="cf-export-column">
+                            <button id="cf-export-peaks-btn" class="btn btn-primary rp-action-btn">Peaks (.csv)</button>
+                            <button id="cf-export-map-btn" class="btn btn-primary rp-action-btn">Density (.grd)</button>
+                        </div>
+                    </div>
+
+                    <h2 style="margin-top: 16px;">3D isosurface</h2>
+                    <div class="cf-section-grid">
+
+                        <div class="cf-section-figure">
+                            <canvas id="cf-iso-canvas"></canvas>
+                            <div class="cf-hint" id="cf-iso-note">–</div>
+                        </div>
+
+                        <div class="cf-section-controls">
+                            <label class="control-label" for="cf-iso-map"
+                                   title="Which density to draw. 'As solved' is the raw charge-flipping map. 'Symmetry-averaged' is the same map after the structure step has placed it on the space-group origin and averaged it over the symmetry operators — cleaner, but it assumes the space group is right.">Map</label>
+                            <select id="cf-iso-map" class="control-select">
+                                <option value="solution" selected>As solved</option>
+                                <option value="symmetrised" disabled>Symmetry-averaged</option>
+                            </select>
+
+                            <label class="control-label" for="cf-iso-level" style="margin-top: 10px;">Level (σ)</label>
+                            <input type="range" id="cf-iso-level" min="0.5" max="8" step="0.1" value="3">
+                            <div class="cf-hint" id="cf-iso-level-label">–</div>
+
+                            <label class="cf-checkbox-label">
+                                <input type="checkbox" id="cf-iso-cell" checked>
+                                <span>Unit cell edges</span>
+                            </label>
+                            <div class="cf-site-legend" id="cf-iso-site-legend"
+                                 title="The atom positions from the Structure block below: the density maxima reduced to one per symmetry orbit. Drawn as spheres, so you can see whether they sit inside the density lobes. Click a row to hide that site and all its symmetry images.">
+                                <div class="cf-site-legend-head">
+                                    <span id="cf-site-legend-title">Atom positions</span>
+                                    <button type="button" id="cf-site-legend-all" class="cf-site-legend-all"
+                                            title="Show or hide every site at once">hide all</button>
+                                </div>
+                                <div class="cf-site-legend-list" id="cf-iso-site-list"></div>
+                            </div>
+                        </div>
+
+                        <div class="cf-export-column">
+                            <button id="cf-iso-reset" class="btn btn-primary rp-action-btn">Reset view</button>
+                        </div>
+                    </div>
+
+                    <h2 style="margin-top: 16px;">Structure</h2>
+                    <p class="cf-hint" style="margin-bottom: 6px;">
+                        Built automatically at the end of every run: finds the origin shift that
+                        makes the map obey the space-group operators, averages over them, and
+                        reduces the peaks to one site per orbit with its multiplicity.
+                    </p>
+                    <div class="cf-hint" id="cf-structure-status">–</div>
+                    <div id="cf-structure-output" class="hidden" style="margin-top: 10px;">
+                        <dl class="cf-summary-grid" id="cf-structure-summary"></dl>
+                        <div class="cf-table-scroll">
+                            <table class="cf-peak-table" id="cf-site-table">
+                                <thead>
+                                    <tr><th>#</th><th>x</th><th>y</th><th>z</th><th>Mult</th><th>Height</th></tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="cf-export-column cf-export-row">
+                        <button id="cf-export-cif-btn" class="btn btn-primary rp-action-btn" disabled>Sites (.cif)</button>
+                    </div>
+                </div>
+            </div>
+
+            </div> <!-- Closes tab-content-panels -->
 
 
             <div class="bottom-actions"> 
@@ -340,16 +543,20 @@
                      </div>
                 </div>
             </div>
-            </div>
+            </div> <!-- Closes controls-scroll -->
+            
             <div id="action-button-bar">
     <div style="display: flex; gap: 10px;">
         <button id="le-bail-button" class="btn btn-primary" style="flex: 1;" disabled>Run Le Bail</button>
         <button id="pawley-button" class="btn btn-primary" style="flex: 1;" disabled>Run Pawley</button>
     </div>
 
-    <div style="display: flex; gap: 10px;">
-        <button id="save-data-button" class="btn btn-secondary" style="flex: 1;" disabled>Save Report</button>
-        <button id="report-button" class="btn btn-secondary" style="flex: 1;" disabled>Generate PDF</button>
+    <!-- Save Report / Generate PDF moved to the Le Bail and Pawley results
+         tabs (right panel). Hidden stubs remain so legacy references to
+         controls.saveDataButton / controls.reportButton stay valid. -->
+    <div style="display:none;">
+        <button id="save-data-button" class="btn btn-secondary" disabled>Save Report</button>
+        <button id="report-button" class="btn btn-secondary" disabled>Generate PDF</button>
     </div>
             </div>
         </div>
@@ -358,10 +565,11 @@
         <div id="drag-handle"></div>
 
 <div id="results-area" style="position: relative; flex-grow: 1; min-height: 0;">
-
-
-    <!-- Light / dark mode toggle -->
-    <div id="mode-toggle" role="group" aria-label="Theme">
+    <!-- Light / dark mode toggle. Moved out of the Plot panel to the
+         top-right of the whole right panel (next to the help icon) so it is
+         visible on every tab. -->
+    <div id="mode-toggle" role="group" aria-label="Theme"
+         style="position: absolute; top: 8px; right: 48px; z-index: 60;">
         <button type="button" data-mode="light" aria-label="Light mode" title="Light mode">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
                 <circle cx="8" cy="8" r="3"/>
@@ -374,13 +582,11 @@
             </svg>
         </button>
     </div>
-
-
-    <!--   Help / chart-interaction tooltip, anchored to the top-right
-          of the chart area. z-index keeps it above the canvas; the
-          tooltip popup itself flies out to the left via its own CSS. -->
+    <!--   Help tooltip. Anchored to the top-right of the WHOLE right
+          panel (results-area), above the tab bar, so it shows on every
+          tab. z-index sits above rp-tabbar (40) and the canvas. -->
     <div class="help-tooltip-container"
-         style="position: absolute; top: 12px; right: 16px; z-index: 50;">
+         style="position: absolute; top: 8px; right: 14px; z-index: 60;">
         <span class="help-icon">?</span>
 
         <div class="tooltip-content">
@@ -400,6 +606,23 @@
         </div>
     </div>
 
+
+    <!-- ============================================================
+         RIGHT-PANEL TABS.  Plot behaves as before; the three results
+         tabs each hold a timestamped history of every run of that kind.
+         ============================================================ -->
+    <div id="rp-tabbar" class="rp-tabbar">
+        <button class="rp-tab active" data-rptab="plot">Plot</button>
+        <button class="rp-tab" data-rptab="lebail">Le Bail results</button>
+        <button class="rp-tab" data-rptab="pawley">Pawley results</button>
+        <button class="rp-tab" data-rptab="cf">Charge Flipping</button>
+    </div>
+
+    <div id="rp-panels">
+    <div id="rp-panel-plot" class="rp-panel active">
+
+
+
     <div id="placeholder" style="width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--system-secondary-label);">
         <svg xmlns="http://www.w3.org/2000/svg" style="width: 64px; height: 64px; margin-bottom: 16px;" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
         <h2 style="font-size: 22px; font-weight: 600; margin-bottom: 8px;">Awaiting Data</h2>
@@ -410,18 +633,76 @@
         <canvas id="main-chart"></canvas>
     </div>
 
+    </div><!-- /#rp-panel-plot -->
+
+    <div id="rp-panel-lebail" class="rp-panel">
+        <div class="rp-results-head">
+            <h2>Le Bail run history</h2>
+            <div class="rp-results-actions">
+                <div class="rp-run-picker">
+                    <span class="rp-run-label">Run:</span>
+                    <select id="lebail-run-select" class="control-select rp-run-select"></select>
+                </div>
+                <div class="rp-action-row">
+                    <button id="lebail-save-report" class="btn btn-primary rp-action-btn" disabled>Save Report</button>
+                    <button id="lebail-generate-pdf" class="btn btn-primary rp-action-btn" disabled>Generate PDF</button>
+                </div>
+            </div>
+        </div>
+        <div id="lebail-run-body" class="rp-run-body">
+            <p class="rp-empty">No Le Bail run yet. Results appear here after each fit.</p>
+        </div>
+    </div>
+
+    <div id="rp-panel-pawley" class="rp-panel">
+        <div class="rp-results-head">
+            <h2>Pawley run history</h2>
+            <div class="rp-results-actions">
+                <div class="rp-run-picker">
+                    <span class="rp-run-label">Run:</span>
+                    <select id="pawley-run-select" class="control-select rp-run-select"></select>
+                </div>
+                <div class="rp-action-row">
+                    <button id="pawley-save-report" class="btn btn-primary rp-action-btn" disabled>Save Report</button>
+                    <button id="pawley-generate-pdf" class="btn btn-primary rp-action-btn" disabled>Generate PDF</button>
+                </div>
+            </div>
+        </div>
+        <div id="pawley-run-body" class="rp-run-body">
+            <p class="rp-empty">No Pawley run yet. Results appear here after each fit.</p>
+        </div>
+    </div>
+
+    <div id="rp-panel-cf" class="rp-panel">
+        <div class="rp-results-head">
+            <h2>Charge Flipping run history</h2>
+            <div class="rp-results-actions">
+                <div class="rp-run-picker">
+                    <span class="rp-run-label">Run:</span>
+                    <select id="cf-run-select" class="control-select rp-run-select"></select>
+                </div>
+            </div>
+        </div>
+        <div id="cf-run-body" class="rp-run-body">
+            <p class="rp-empty">No Charge Flipping run yet. Results appear here after each run.</p>
+        </div>
+    </div>
+    </div><!-- /#rp-panels -->
+
 <div id="app-version-footer" style="position: absolute; bottom: 6px; right: 12px; font-size: 10px; color: var(--system-secondary-label);">
     </div>
 </div>
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 133, 31 July 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 143, 3 August 2026";
   
+
     //v5 of the py script includes the Harker section, 31 juillet 2026
+    //v7 includes roations and translations
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
-        const resp = await fetch('cctbx_space_groups_all_settings_v5.json');
+        const resp = await fetch('cctbx_space_groups_all_settings_v7.json');
         globalThis.SG_DATABASE = await resp.json();
         
         // Load sg_engine.js AFTER database is in memory:
@@ -438,6 +719,1488 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
     document.getElementById('app-version-footer').textContent = APP_VERSION_TEXT;
+
+    document.getElementById('run-charge-flip-btn').addEventListener('click', runChargeFlipping);
+    document.getElementById('cf-cancel-btn').addEventListener('click', () => {
+        cfCancelled = true;
+        terminateChargeFlipWorker();
+        cfSetRunning(false);
+        showToast('Charge flipping cancelled.', 'info');
+    });
+    document.getElementById('cf-export-peaks-btn').addEventListener('click', exportChargeFlipPeaks);
+    document.getElementById('cf-export-map-btn').addEventListener('click', exportChargeFlipMap);
+    document.getElementById('cf-export-cif-btn').addEventListener('click', exportStructureCIF);
+    document.getElementById('cf-section-axis').addEventListener('change', drawChargeFlipSection);
+    document.getElementById('cf-section-slider').addEventListener('input', drawChargeFlipSection);
+    document.getElementById('cf-section-autoscale').addEventListener('change', drawChargeFlipSection);
+
+    document.getElementById('cf-iso-map').addEventListener('change', () => cfScheduleIsosurface(0));
+    document.getElementById('cf-iso-level').addEventListener('input', () => cfScheduleIsosurface(180));
+    // Toggling geometry does not need the surface rebuilt, only redrawn.
+    document.getElementById('cf-iso-cell').addEventListener('change', (e) => {
+        if (typeof Density3D !== 'undefined') Density3D.setVisibility('cell', e.target.checked);
+    });
+    //   Site legend: click or keyboard on a row toggles that orbit.  
+    (function wireSiteLegend() {
+        const list = document.getElementById('cf-iso-site-list');
+        const allBtn = document.getElementById('cf-site-legend-all');
+        if (!list) return;
+        const flip = (row) => {
+            const rank = Number(row.dataset.rank);
+            if (!Number.isFinite(rank)) return;
+            if (cfHiddenSiteRanks.has(rank)) cfHiddenSiteRanks.delete(rank);
+            else cfHiddenSiteRanks.add(rank);
+            cfApplySiteVisibility();
+        };
+        list.addEventListener('click', (e) => {
+            const row = e.target.closest('.cf-site-row');
+            if (row) flip(row);
+        });
+        list.addEventListener('keydown', (e) => {
+            if (e.key !== ' ' && e.key !== 'Enter') return;
+            const row = e.target.closest('.cf-site-row');
+            if (!row) return;
+            e.preventDefault();
+            flip(row);
+        });
+        if (allBtn) allBtn.addEventListener('click', () => {
+            const sites = (cfStructure && cfStructure.sites) ? cfStructure.sites : [];
+            const anyShown = sites.some(st => !cfHiddenSiteRanks.has(st.rank));
+            cfHiddenSiteRanks.clear();
+            if (anyShown) sites.forEach(st => cfHiddenSiteRanks.add(st.rank));
+            cfApplySiteVisibility();
+            cfRenderSiteLegend();
+        });
+    })();
+    document.getElementById('cf-iso-reset').addEventListener('click', () => {
+        if (typeof Density3D !== 'undefined') Density3D.resetView();
+    });
+
+
+    (function relocateCFResults() {
+        const group = document.getElementById('cf-results-group');
+        const dest = document.getElementById('cf-run-body');
+        if (group && dest && group.parentElement !== dest) {
+            group.classList.remove('hidden');       // visibility now governed by the tab
+            group.classList.add('cf-in-right-panel');
+            dest.appendChild(group);
+        }
+    })();
+    ['cf-grid-size', 'cf-iterations', 'cf-trials', 'cf-sym-lambda', 'cf-overlap-tol'].forEach(id =>
+        document.getElementById(id).addEventListener('input', updateChargeFlipEstimate));
+   
+let chargeFlipWorker = null;
+let cfRunning = false;
+let cfCancelled = false;
+let cfLastResult = null;      // { map, gridSize, peaks, cell, ... }
+
+// Completes a refined parameter set into a full six-parameter cell.
+//
+// getAllParams already fixes the angles per system, but the lengths come
+// straight from the lattice inputs, and those only exist for the system's free
+// parameters: a cubic fit has `a` and nothing else. Anything downstream that
+// needs a real-space metric -- the density grid, the peak-separation metric
+// tensor, the CIF -- needs b and c filled in from the symmetry.
+//
+// Trigonal and rhombohedral are treated on hexagonal axes, which is what the
+// d-spacing routine does (1/d^2 = 4(h^2+hk+k^2)/3a^2 + l^2/c^2), so the R
+// setting is never used here.
+//
+// Returns null if `a` (or a genuinely free b/c) is missing or non-positive.
+// The refined Pawley/Le Bail parameter is a peak HEIGHT: the profile functions
+// are unit-height, not unit-area (see getPseudoVoigtArea, which returns the
+// area of the untruncated unit-height mixture). The integrated intensity --
+// the quantity proportional to m*LP*|F|^2, and therefore the only thing a
+// structure-solution method may be fed -- is height x profile area, summed
+// over the Ka1/Ka2 doublet.
+//
+// This used to live inline in the report. Charge flipping was reading
+// hkl.intensity directly, i.e. heights, which underweights high-angle
+// reflections by the full Caglioti broadening (the FWHM roughly doubles across
+// a typical scan, so the error is a factor of two across the pattern).
+function integratedPeakArea(hkl, params, scaleFactor) {
+    if (!hkl || !params) return 0;
+    const height = hkl.intensity || 0;
+    if (!(height > 0) || !hkl.tth) return 0;
+
+    let area;
+    // Le Bail extraction accumulates the integral of the profile as it was
+    // actually drawn (truncated and pedestal-subtracted), which is the honest
+    // number when it exists. Pawley runs never visit that path, so they take
+    // the analytic route.
+    if (typeof hkl.shapeArea === 'number' && hkl.shapeArea > 0) {
+        area = height * hkl.shapeArea;
+    } else {
+        area = height * getPseudoVoigtArea(hkl.tth, hkl, params);
+        const lambda1 = params.lambda, lambda2 = params.lambda2, ratio21 = params.ratio;
+        if (ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6) {
+            const deg2rad = Math.PI / 180;
+            const sinTheta2 = Math.sin(hkl.tth * deg2rad / 2.0) * (lambda2 / lambda1);
+            if (Math.abs(sinTheta2) < 1) {
+                const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
+                area += height * ratio21 * getPseudoVoigtArea(tth2, hkl, params);
+            }
+        }
+    }
+    const s = (typeof scaleFactor === 'number' && isFinite(scaleFactor)) ? scaleFactor : 1;
+    return isFinite(area) ? area * s : 0;
+}
+
+// ---------------------------------------------------------------------------
+//  French & Wilson (1978) posterior intensities.
+//
+//  A least-squares intensity can come out negative: the estimator is unbiased,
+//  and for a reflection whose true intensity sits near the noise floor the
+//  estimate scatters either side of it. Truncating at zero is the obvious fix
+//  and the wrong one -- it biases every weak reflection upward by roughly one
+//  sigma, which in a charge-flipping map shows up as a uniform positive haze
+//  in the density, exactly the thing the algorithm is trying to distinguish
+//  structure from.
+//
+//  The principled correction combines the measurement with the Wilson prior
+//  for the intensity distribution and reports the posterior MEAN, which is
+//  positive by construction and (unlike truncation) still tends to zero as the
+//  measurement does. For an acentric reflection the prior is exponential,
+//  P(J) ∝ exp(-J/Σ), and the posterior is a Gaussian of mean E - σ²/Σ and
+//  width σ truncated to J ≥ 0 -- so the answer is closed form. For a centric
+//  reflection the prior is P(J) ∝ J^(-1/2) exp(-J/2Σ) and there is no closed
+//  form, so that branch integrates numerically.
+// ---------------------------------------------------------------------------
+
+// Numerical Recipes erfcc; fractional error below 1.2e-7 everywhere.
+function cfErfc(x) {
+    const z = Math.abs(x), t = 1 / (1 + 0.5 * z);
+    const ans = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 +
+        t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 +
+        t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+    return x >= 0 ? ans : 2 - ans;
+}
+function cfNormPdf(t) { return Math.exp(-0.5 * t * t) / Math.sqrt(2 * Math.PI); }
+function cfNormCdf(t) { return 0.5 * cfErfc(-t / Math.SQRT2); }
+
+// Inverse Mills ratio φ(t)/Φ(t). Below t ≈ -6 the CDF underflows towards zero
+// and the direct quotient becomes 0/0, so switch to the asymptotic expansion
+// Φ(t) ≈ φ(t)/(-t) · (1 - 1/t² + 3/t⁴).
+function cfMillsRatio(t) {
+    if (t > -6) {
+        const c = cfNormCdf(t);
+        return c > 1e-300 ? cfNormPdf(t) / c : -t;
+    }
+    const t2 = t * t;
+    return -t * (1 + 1 / t2 - 2 / (t2 * t2));
+}
+
+function cfPosteriorAcentric(E, sigma, Sigma) {
+    const mu = E - sigma * sigma / Sigma;
+    const t = mu / sigma;
+    return sigma * (t + cfMillsRatio(t));
+}
+
+function cfPosteriorCentric(E, sigma, Sigma) {
+    // Midpoint rule, which also keeps the J^(-1/2) singularity at the origin
+    // off the abscissa. The Gaussian factor confines the mass to within a few
+    // sigma of max(0, E), so integrating to E + 8σ captures it; the step has
+    // to resolve the narrower of the two scales or the quadrature quietly
+    // undersamples the peak and reports a low mean. The log-weights are
+    // shifted by their maximum before exponentiating, or a strongly negative
+    // E underflows every term to zero.
+    const hi = Math.max(E + 8 * sigma, 8 * sigma);
+    if (!(hi > 0)) return 0;
+    const scale = Math.max(1e-12, Math.min(sigma, Sigma));
+    const n = Math.min(20000, Math.max(400, Math.ceil(hi / (scale / 8))));
+    const h = hi / n;
+    let maxLog = -Infinity;
+    const logw = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+        const J = (i + 0.5) * h;
+        const lw = -0.5 * Math.log(J) - J / (2 * Sigma)
+                 - (E - J) * (E - J) / (2 * sigma * sigma);
+        logw[i] = lw;
+        if (lw > maxLog) maxLog = lw;
+    }
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) {
+        const w = Math.exp(logw[i] - maxLog);
+        num += w * (i + 0.5) * h;
+        den += w;
+    }
+    return den > 0 ? num / den : Math.max(0, E);
+}
+
+// A reflection is centric when some symmetry operation maps h onto -h. With no
+// operators available every reflection is treated as acentric, which is the
+// conservative choice: the acentric prior is the narrower of the two, so it
+// moves weak intensities less.
+function cfIsCentric(h, k, l, symops) {
+    if (!Array.isArray(symops) || symops.length === 0) return false;
+    for (const op of symops) {
+        const r = op.r;
+        if (!r) continue;
+        if (h * r[0] + k * r[3] + l * r[6] === -h &&
+            h * r[1] + k * r[4] + l * r[7] === -k &&
+            h * r[2] + k * r[5] + l * r[8] === -l) return true;
+    }
+    return false;
+}
+
+function cfLorentzPolarization(tthDeg) {
+    if (!Number.isFinite(tthDeg) || tthDeg <= 0 || tthDeg >= 180) return 1;
+    const d2r = Math.PI / 180;
+    const th = 0.5 * tthDeg * d2r;
+    const s = Math.sin(th), c = Math.cos(th);
+    if (s < 1e-6 || c < 1e-6) return 1;
+    return 0.5 * (1 + Math.cos(tthDeg * d2r) ** 2) / (s * s * c);
+}
+
+// Applies the correction in place to a list of
+//   { h, k, l, area, sigma, tth, d, multiplicity }
+// and returns a short report. Σ is estimated per resolution shell, from the
+// normalised quantity E = I/(m·LP) which is what is actually proportional to
+// |F|² -- estimating it from raw areas would fold the multiplicity spread
+// (6 to 48 in a cubic cell) into the prior.
+function frenchWilsonCorrect(list, symops) {
+    const usable = list.filter(r => Number.isFinite(r.sigma) && r.sigma > 0);
+    if (usable.length < 8) {
+        return { applied: false, reason: 'no usable standard uncertainties', corrected: 0 };
+    }
+
+    for (const r of list) {
+        const lp = cfLorentzPolarization(r.tth);
+        const m = (Number.isFinite(r.multiplicity) && r.multiplicity > 0) ? r.multiplicity : 1;
+        r._w = m * lp;
+        r._E = r.area / r._w;
+        r._sE = Number.isFinite(r.sigma) ? r.sigma / r._w : NaN;
+        r._q = Number.isFinite(r.d) && r.d > 0 ? 1 / (r.d * r.d) : 0;
+    }
+
+    // Resolution shells of at least 20 reflections, so Σ tracks the Wilson
+    // fall-off instead of being a single global average.
+    const order = list.slice().sort((a, b) => a._q - b._q);
+    const perShell = Math.max(20, Math.ceil(order.length / 12));
+    let corrected = 0, negatives = 0;
+
+    for (let start = 0; start < order.length; start += perShell) {
+        const shell = order.slice(start, Math.min(start + perShell, order.length));
+        if (shell.length === 0) continue;
+        // The unbiased shell mean, negatives included -- clipping here would
+        // reintroduce the very bias the correction exists to avoid.
+        let sum = 0;
+        for (const r of shell) sum += r._E;
+        const Sigma = sum / shell.length;
+        if (!(Sigma > 0)) continue;
+
+        for (const r of shell) {
+            if (!(r._sE > 0)) continue;
+            if (r._E < 0) negatives++;
+            // Above about 3σ the posterior mean and the measurement agree to
+            // better than a percent, so leave strong reflections untouched.
+            if (r._E > 3 * r._sE) continue;
+            const post = cfIsCentric(r.h, r.k, r.l, symops)
+                ? cfPosteriorCentric(r._E, r._sE, Sigma)
+                : cfPosteriorAcentric(r._E, r._sE, Sigma);
+            if (Number.isFinite(post) && post >= 0) {
+                r.area = post * r._w;
+                corrected++;
+            }
+        }
+    }
+
+    for (const r of list) { delete r._w; delete r._E; delete r._sE; delete r._q; }
+    return { applied: true, corrected, negatives, weak: corrected };
+}
+
+// The intensity ESDs, taken from the same normal-equations matrix the report
+// uses. Returns a plain object keyed by the parameter name, or null when the
+// matrix is unavailable or singular -- which is common, because exactly
+// overlapping reflections (330/411 in a cubic cell, say) make the Pawley
+// normal matrix genuinely rank-deficient.
+function intensityEsdsFromCovariance(fr) {
+    try {
+        const { JtJ, parameterInfo, ss_res } = fr;
+        if (!JtJ || !parameterInfo || ss_res === undefined) return null;
+        if (!workerWorkingData || !workerWorkingData.intensity) return null;
+        const P = parameterInfo.length;
+        const N = workerWorkingData.intensity.length;
+        if (P === 0 || N <= P) return null;
+        if (!(Array.isArray(JtJ) && JtJ.length === P && Array.isArray(JtJ[0]) && JtJ[0].length === P)) return null;
+        const dof = (typeof fr.dof === 'number' && fr.dof > 0) ? fr.dof : (N - P);
+        if (!(ss_res >= 0 && isFinite(ss_res)) || !(dof > 0)) return null;
+        const covResult = covarianceFromJtJ(JtJ);
+        if (!covResult) return null;
+        const chi2 = ss_res / dof;
+        const out = {};
+        parameterInfo.forEach((info, i) => {
+            const v = covResult.cov[i] && covResult.cov[i][i];
+            if (typeof v === 'number' && v >= 0 && isFinite(v)) {
+                out[info.name] = Math.sqrt(v * chi2) * (info.scale || 1.0);
+            }
+        });
+        return Object.keys(out).length ? out : null;
+    } catch (e) {
+        console.warn('Could not derive intensity ESDs from the covariance matrix:', e);
+        return null;
+    }
+}
+
+const _monoAxisCache = new Map();
+
+/**
+ * Unique axis of a monoclinic setting: 'a', 'b' or 'c'.
+ *
+ * Two sources, and they must agree. The setting qualifier ("b1", "-b2",
+ * "c3") carries the letter, but it is only a label; what actually decides
+ * which reflections are equivalent is the operator set. If the metric were to
+ * put its oblique angle on one axis while the operators put the 2-fold on
+ * another, the orbits would contain reflections at different d-spacings and
+ * the pattern would be silently wrong -- so the operators win, and a
+ * disagreement is reported rather than absorbed.
+ *
+ * This is the single place the convention is decoded: the lattice UI, the
+ * parameter reader, the Laue-table fallback and sg_engine's multiplicities
+ * all key off it.
+ */
+function monoclinicUniqueAxis(sg) {
+    if (!sg) return 'b';
+    const key = `${sg.number}|${sg.hall || sg.symbol || ''}|${sg.setting_description || ''}`;
+    if (_monoAxisCache.has(key)) return _monoAxisCache.get(key);
+
+    const desc = sg.setting_description;
+    const m = (typeof desc === 'string') ? desc.match(/^-?([abc])/i) : null;
+    const fromName = m ? m[1].toLowerCase() : null;
+
+    let fromOps = null;
+    try {
+        const rec = _findSettingRecord(sg);
+        const raw = rec && _settingRotations(rec.setting);
+        if (raw) fromOps = _monoclinicAxisFromRotations(raw);
+    } catch (e) { fromOps = null; }
+
+    if (fromOps && fromName && fromOps !== fromName) {
+        console.warn(`Monoclinic SG ${sg.number} setting "${sg.symbol}": the qualifier `
+            + `"${desc}" says unique axis ${fromName}, the symmetry operators say ${fromOps}. `
+            + `Using ${fromOps}, because the operators are what fix the reflection orbits.`);
+    }
+
+    const axis = fromOps || fromName || 'b';
+    _monoAxisCache.set(key, axis);
+    return axis;
+}
+
+const MONOCLINIC_ANGLE_FOR_AXIS = { a: 'alpha', b: 'beta', c: 'gamma' };
+
+function fullCellFromParams(p, system) {
+    if (!p) return null;
+    const s = String(system || '').toLowerCase();
+    const num = v => (typeof v === 'number' && isFinite(v)) ? v : NaN;
+
+    let a = num(p.a), b = num(p.b), c = num(p.c);
+    let alpha = num(p.alpha), beta = num(p.beta), gamma = num(p.gamma);
+
+    switch (s) {
+        case 'cubic':
+            b = a; c = a; alpha = beta = gamma = 90; break;
+        case 'tetragonal':
+            b = a; alpha = beta = gamma = 90; break;
+        case 'hexagonal':
+        case 'trigonal':
+        case 'rhombohedral':
+            b = a; alpha = beta = 90; gamma = 120; break;
+        case 'orthorhombic':
+            alpha = beta = gamma = 90; break;
+        case 'monoclinic':
+            // The unique axis may be a, b or c, so no particular pair can be
+            // forced to 90 here. getAllParams() has already pinned the two
+            // fixed angles for the current setting; only fill genuine gaps.
+            if (!isFinite(alpha)) alpha = 90;
+            if (!isFinite(beta)) beta = 90;
+            if (!isFinite(gamma)) gamma = 90;
+            break;
+        default:
+            // Triclinic, or an unrecognised system: every value is free, so
+            // fall back to right angles only where one is genuinely absent.
+            if (!isFinite(alpha)) alpha = 90;
+            if (!isFinite(beta)) beta = 90;
+            if (!isFinite(gamma)) gamma = 90;
+            break;
+    }
+
+    if (![a, b, c].every(v => isFinite(v) && v > 0)) return null;
+    if (![alpha, beta, gamma].every(v => isFinite(v) && v > 0 && v < 180)) return null;
+    return { a, b, c, alpha, beta, gamma };
+}
+
+function cfReadinessProblem() {
+    if (isFitting) return 'A refinement is running.';
+    if (!fitResults) return 'Run a Pawley refinement first.';
+    if (fitResults.refinementMode !== 'pawley')
+        return 'Charge flipping needs individual reflection intensities, which only a Pawley refinement produces. Le Bail extraction does not give them.';
+    if (!fitResults.JtJ)
+        return 'The Pawley fit did not converge through Levenberg-Marquardt. Re-run with LM, or with Parallel Tempering (its LM polish provides the normal matrix).';
+    if (!Array.isArray(fitResults.hklList) || fitResults.hklList.length === 0)
+        return 'The Pawley fit produced no reflections.';
+    return null;
+}
+
+function updateChargeFlippingTabState() {
+    const btn = document.getElementById('tab-btn-charge-flipping');
+    if (!btn) return;
+    const problem = cfReadinessProblem();
+    btn.disabled = !!problem;
+    btn.title = problem || 'Solve the structure ab initio from the Pawley intensities.';
+
+    // If the tab is open and the result it was based on has gone away, fall
+    // back to the Sample tab rather than leaving a stale panel visible.
+    if (problem && btn.classList.contains('active')) {
+        const fallback = document.querySelector('.tab-btn[data-tab="sample"]');
+        if (fallback) fallback.click();
+    }
+    updateChargeFlipEstimate();
+}
+
+// Rough cost note. The FFT is O(N^3 log N) per half-cycle and two run per
+// iteration, so 128^3 is eight times the price of 64^3 -- worth saying out
+// loud before someone starts a seven-minute run by accident.
+function updateChargeFlipEstimate() {
+    const box = document.getElementById('cf-estimate');
+    if (!box) return;
+    const N = parseInt((document.getElementById('cf-grid-size') || {}).value, 10);
+    const iters = parseInt((document.getElementById('cf-iterations') || {}).value, 10);
+    const trials = parseInt((document.getElementById('cf-trials') || {}).value, 10);
+    if (!Number.isFinite(N) || !Number.isFinite(iters) || !Number.isFinite(trials)) { box.textContent = ''; return; }
+
+    // CPU baseline: ~5.3 ms per iteration at 32^3, scaling as N^3 log2 N.
+    const ref = 32, refMs = 5.3;
+    const scale = (Math.pow(N / ref, 3) * (Math.log2(N) / Math.log2(ref)));
+    const cpuSeconds = (refMs * scale * iters * trials) / 1000;
+
+    // The worker uses WebGPU when available, which is far faster for the
+    // transform-dominated inner loop. We can detect availability but not the
+    // actual device speed, so give a conservative range rather than a false
+    // precise number.
+    const hasGPU = (typeof navigator !== 'undefined' && !!navigator.gpu);
+    const fmt = s => s < 90 ? `${Math.max(1, Math.round(s))} s` : `${(s / 60).toFixed(1)} min`;
+
+    let resNote = '';
+    if (fitResults && fitResults.params) {
+        const p = fitResults.params;
+        const dmin = Math.min(p.a || Infinity, p.b || Infinity, p.c || Infinity) / N;
+        if (Number.isFinite(dmin)) resNote = ` · grid spacing ≈ ${dmin.toFixed(2)} Å`;
+    }
+
+    if (hasGPU) {
+        box.textContent = `WebGPU available — about ${fmt(cpuSeconds / 6)} ` +
+                          `(CPU fallback ≈ ${fmt(cpuSeconds)})${resNote}.`;
+    } else {
+        box.textContent = `Estimated run time ≈ ${fmt(cpuSeconds)} (CPU; WebGPU not available)${resNote}.`;
+    }
+}
+
+function cfSetRunning(running) {
+    cfRunning = running;
+    const run = document.getElementById('run-charge-flip-btn');
+    const cancel = document.getElementById('cf-cancel-btn');
+    if (run) { run.disabled = running; run.textContent = running ? 'Running…' : 'Run Charge Flipping'; }
+    if (cancel) cancel.style.display = running ? '' : 'none';
+}
+
+function terminateChargeFlipWorker() {
+    if (chargeFlipWorker) { chargeFlipWorker.terminate(); chargeFlipWorker = null; }
+}
+
+async function runChargeFlipping() {
+    if (cfRunning) return;
+
+    const problem = cfReadinessProblem();
+    if (problem) { showToast(problem, 'error'); updateChargeFlippingTabState(); return; }
+
+    const gridSize   = parseInt(document.getElementById('cf-grid-size').value, 10);
+    const thresholdS = parseFloat(document.getElementById('cf-threshold').value);
+    const maxIter    = parseInt(document.getElementById('cf-iterations').value, 10);
+    const trials     = parseInt(document.getElementById('cf-trials').value, 10);
+    const minSep     = parseFloat(document.getElementById('cf-min-sep').value);
+    const symLambda  = parseFloat(document.getElementById('cf-sym-lambda').value);
+    const overlapTol = parseFloat(document.getElementById('cf-overlap-tol').value);
+
+    // Every one of these came from a text field, so every one of them can be
+    // NaN. NaN used to travel all the way to createBuffer({ size: 0 }).
+    if (!Number.isFinite(gridSize) || (gridSize & (gridSize - 1)) !== 0)
+        { showToast('Grid size must be a power of two.', 'error'); return; }
+    if (!Number.isFinite(thresholdS) || thresholdS < 0)
+        { showToast('Threshold must be a number ≥ 0 (in units of σ).', 'error'); return; }
+    if (!Number.isFinite(maxIter) || maxIter < 10)
+        { showToast('Use at least 10 iterations.', 'error'); return; }
+    if (!Number.isFinite(trials) || trials < 1)
+        { showToast('Random starts must be at least 1.', 'error'); return; }
+    if (!Number.isFinite(minSep) || minSep <= 0)
+        { showToast('Peak merge distance must be a positive number of ångström.', 'error'); return; }
+    if (!Number.isFinite(symLambda) || symLambda < 0 || symLambda > 1)
+        { showToast('Symmetry strength must be between 0 and 1.', 'error'); return; }
+    if (!Number.isFinite(overlapTol) || overlapTol < 0)
+        { showToast('Overlap tolerance must be a non-negative number of degrees 2θ.', 'error'); return; }
+
+    const p = fitResults.params;
+    const sgForCF = sgUsedForFit || currentSG || null;
+    const system = (sgForCF && sgForCF.system) || p.system || 'triclinic';
+
+    // The lattice-parameter UI only creates inputs for the FREE parameters of
+    // the crystal system, so params.b and params.c simply do not exist after a
+    // cubic refinement, and params.b does not exist after a tetragonal,
+    // hexagonal, trigonal or rhombohedral one. The guard below used to test
+    // Number.isFinite on all three, so every high-symmetry Pawley fit was
+    // rejected with "the refined cell is not usable" even though the fit was
+    // perfectly good -- the dependent parameters were never missing from the
+    // refinement, only from the parameter object. Rebuild them here, using the
+    // same conventions as the d-spacing routine (hexagonal axes for trigonal
+    // and rhombohedral).
+    const cell = fullCellFromParams(p, system);
+    if (!cell)
+        { showToast(`The refined cell is not usable for a density map: a = ${p.a}, b = ${p.b}, c = ${p.c} (${system}).`, 'error', 9000); return; }
+
+    // The worker needs the ACTUAL symmetry, not the crystal system. Two
+    // things come out of the space group and neither is optional:
+    //
+    //   * the symmetry operators, which give the correct orbit of each
+    //     reflection (the Laue class, not the holohedry -- P4 is 4/m, not
+    //     4/mmm) and the translations that make F(hR) = F(h)exp(-2πi h.t)
+    //     usable inside the iteration;
+    //   * the systematic absences, which the worker derives from those same
+    //     operators and forces to zero every cycle.
+    //
+    // If the space-group JSON predates the "symops" field the worker falls
+    // back to a Laue-class table with zero translations, which still fixes
+    // the orbit sizes but cannot see glide or screw absences. Say so rather
+    // than pretending the run is fully constrained.
+    let cfSymops = null, cfSymNote = '';
+    if (sgForCF) {
+        const got = getSymopsForSetting(sgForCF);
+        if (got.error) {
+            cfSymNote = got.error + ' Falling back to the Laue class ' +
+                        (sgForCF.laue_class || '?') + '; screw and glide absences will not be applied.';
+        } else {
+            cfSymops = got.symops;
+        }
+    } else {
+        cfSymNote = 'No space group is selected — charge flipping will run in P-1.';
+    }
+    if (cfSymNote) showToast(cfSymNote, 'info', 9000);
+    const symStatus = document.getElementById('cf-sym-status');
+    if (symStatus) {
+        symStatus.textContent = cfSymops
+            ? `Using ${cfSymops.length} symmetry operator(s) of ${sgForCF.symbol || sgForCF.number} (Laue ${sgForCF.laue_class || '?'}).`
+            : cfSymNote;
+    }
+
+    // Strip the reflections down to what the worker needs -- the full objects
+    // carry profile state that would only bloat the structured clone. `tth`
+    // and `d` are new: the first is required for the Lorentz-polarisation
+    // correction (a Pawley intensity is a peak AREA, i.e. m·LP·|F|², so
+    // without dividing by LP the low-angle reflections dominate the map), the
+    // second is the fallback key for detecting 2θ overlaps.
+    // Standard uncertainties, needed for the French-Wilson correction below.
+    // First choice is the covariance matrix, which is what the report uses.
+    // It is often unavailable here -- exactly overlapping reflections make the
+    // Pawley normal matrix rank-deficient, and then the inversion fails
+    // outright -- so fall back to propagating counting statistics through the
+    // profile partition, which is well conditioned whatever the overlaps do.
+    const cfEsds = intensityEsdsFromCovariance(fitResults);
+    let cfSigmaMap = null;
+    try {
+        cfSigmaMap = calculateAllObservedIntensities(fitResults.hklList, p, workerWorkingData).sigma;
+    } catch (e) {
+        console.warn('Could not propagate counting statistics for the CF intensities:', e);
+    }
+
+    const rawRefl = fitResults.hklList
+        .filter(r => r && Number.isFinite(r.intensity))
+        .map(r => {
+            const area = integratedPeakArea(r, p, 1);
+            const height = r.intensity || 0;
+            const widthFactor = Math.abs(height) > 1e-9 ? area / height : 0;
+            let sigma = NaN;
+            const covSigma = cfEsds ? cfEsds[`I_(${r.h_orig},${r.k_orig},${r.l_orig})`] : undefined;
+            if (typeof covSigma === 'number' && isFinite(covSigma) && widthFactor > 0) {
+                sigma = covSigma * widthFactor;          // height ESD -> area ESD
+            } else if (cfSigmaMap && r.hkl_list) {
+                const s = cfSigmaMap.get(r.hkl_list[0]);
+                if (typeof s === 'number' && isFinite(s) && s > 0) sigma = s;
+            }
+            return {
+                h: r.h_orig, k: r.k_orig, l: r.l_orig,
+                area, sigma,
+                multiplicity: r.multiplicity,
+                tth: Number.isFinite(r.tth) ? r.tth : null,
+                d: Number.isFinite(r.d) ? r.d : null
+            };
+        });
+
+    const fw = frenchWilsonCorrect(rawRefl, cfSymops);
+
+    // Anything still non-positive after the correction is passed through as a
+    // measured ZERO rather than dropped. Dropping it would tell charge
+    // flipping the reflection was never measured, leaving it free to take any
+    // value it liked; a zero says what the data actually say.
+    let clampedToZero = 0;
+    const hklList = rawRefl.map(r => {
+        let I = r.area;
+        if (!(I > 0)) { I = 0; clampedToZero++; }
+        return { h_orig: r.h, k_orig: r.k, l_orig: r.l,
+                 intensity: I, multiplicity: r.multiplicity,
+                 tth: r.tth, d: r.d };
+    }).filter(r => Number.isFinite(r.intensity));
+
+    if (hklList.length === 0) { showToast('The Pawley fit produced no usable intensities.', 'error'); return; }
+
+    const fwNote = fw.applied
+        ? `French-Wilson correction applied to ${fw.corrected} weak reflection(s)` +
+          (fw.negatives ? `, ${fw.negatives} of which were negative` : '') + '.'
+        : `No French-Wilson correction (${fw.reason}); ${clampedToZero} non-positive intensity/intensities set to zero.`;
+    console.info('[charge flipping] ' + fwNote);
+
+
+    terminateChargeFlipWorker();
+    try {
+        chargeFlipWorker = new Worker('charge_flipping_worker.js');
+    } catch (err) {
+        showToast('Could not start charge_flipping_worker.js: ' + err.message, 'error');
+        return;
+    }
+
+    document.getElementById('cf-progress-container').classList.remove('hidden');
+    document.getElementById('cf-results-group').classList.add('hidden');
+    cfCancelled = false;
+    cfSetRunning(true);
+
+    let best = null;
+    let trialIndex = 0;
+
+    const startTrial = () => {
+        trialIndex++;
+        chargeFlipWorker.postMessage({
+            type: 'run-charge-flipping',
+            gridSize, maxIterations: maxIter,
+            thresholdSigma: thresholdS,
+            cell, system, hklList,
+            symops: cfSymops,
+            laueClass: (sgForCF && sgForCF.laue_class) || null,
+            centering: (sgForCF && sgForCF.centering) || 'P',
+            symLambda,
+            overlapTolTth: overlapTol,
+            applyLP: true,
+            seed: (Date.now() + trialIndex * 7919) >>> 0,
+            minPeakSeparation: minSep,
+            maxPeaks: 40,
+            peakHeightCutoff: 0.04
+        });
+    };
+
+    const finish = () => {
+        cfSetRunning(false);
+        terminateChargeFlipWorker();
+        if (cfCancelled) { showToast('Charge flipping cancelled.', 'info'); return; }
+        if (!best) { showToast('Charge flipping produced no usable map.', 'error'); return; }
+        cfStructure = null;
+        document.getElementById('cf-structure-output').classList.add('hidden');
+        // Append to the right-panel Charge Flipping history and show it there.
+        rpSnapshotCF(best, { trials, thresholdS, maxIter, system, symLambda, overlapTol,
+                             intensityNote: fwNote,
+                             spaceGroup: sgForCF ? (sgForCF.symbol || String(sgForCF.number)) : null });
+        rpSwitchTab('cf');
+        showToast(`Charge flipping finished — best R = ${best.bestR.toFixed(3)}`, 'success');
+        // The structure build is fired by rpRenderCFRun, which rpSnapshotCF
+        // has just called. Doing it here as well would start two workers on
+        // the same map.
+    };
+
+    chargeFlipWorker.onerror = (ev) => {
+        console.error('Charge flipping worker error:', ev);
+        cfSetRunning(false);
+        terminateChargeFlipWorker();
+        showToast('Charge flipping worker crashed: ' + (ev.message || 'unknown error'), 'error');
+    };
+
+    chargeFlipWorker.onmessage = (e) => {
+        const msg = e.data || {};
+        if (msg.type === 'cf-progress') {
+            const doneFraction = ((trialIndex - 1) + msg.iter / msg.total) / trials;
+            document.getElementById('cf-progress-bar').style.width = `${Math.min(100, doneFraction * 100)}%`;
+            document.getElementById('cf-iter-count').innerText =
+                trials > 1 ? `start ${trialIndex}/${trials} · ${msg.iter} / ${msg.total}`
+                           : `${msg.iter} / ${msg.total}`;
+            const shown = Number.isFinite(msg.bestR) ? msg.bestR : msg.R;
+            document.getElementById('cf-r-factor').innerText =
+                Number.isFinite(shown) ? shown.toFixed(4) : '--';
+            return;
+        }
+        if (msg.type === 'cf-info') {
+            // Non-fatal notice, e.g. the GPU path fell back to CPU. Shown once.
+            showToast(msg.message, 'info');
+            return;
+        }
+        if (msg.type === 'cf-error') {
+            cfSetRunning(false);
+            terminateChargeFlipWorker();
+            showToast(msg.message, 'error');
+            return;
+        }
+        if (msg.type === 'cf-result') {
+            if (!best || msg.results.bestR < best.bestR) best = msg.results;
+            if (cfCancelled || trialIndex >= trials) { finish(); return; }
+            startTrial();
+        }
+    };
+
+    startTrial();
+}
+
+// ---------------------------------------------------------------------------
+//  Results rendering
+// ---------------------------------------------------------------------------
+function renderChargeFlipResults(res, opts) {
+    const group = document.getElementById('cf-results-group');
+    group.classList.remove('hidden');
+
+    const cell = res.cell;
+    const spacing = Math.min(cell.a, cell.b, cell.c) / res.gridSize;
+    const ref = res.reflections;
+
+    const rows = [
+        ['Best R (|F| agreement)', res.bestR.toFixed(4)],
+        ['Reached at iteration', `${res.bestIter} of ${opts.maxIter}`],
+        ['Random starts', String(opts.trials)],
+        ['Threshold δ', `${opts.thresholdS.toFixed(2)} σ`],
+        ['Grid', `${res.gridSize}³ · ${spacing.toFixed(2)} Å spacing`],
+        ['Cell volume', `${res.volume.toFixed(1)} Å³`],
+        ['Unique reflections used', String(ref.unique)],
+        ['Grid points filled', String(ref.gridPoints)],
+        ['Space group', opts.spaceGroup || '—'],
+        ['Expansion symmetry',
+            ref.symmetrySource === 'symops'
+                ? `${ref.nSymops} operator(s), Laue ${ref.laueClass || '?'}`
+                : `Laue ${ref.laueClass || opts.system} (no operators in the JSON)`],
+        ['Symmetry in loop',
+            !res.symLambda ? 'none (solved in P1)'
+                           : `λ = ${res.symLambda.toFixed(2)}`],
+        ['Absences forced to zero', String(ref.absencesZeroed)],
+        ['Overlapping reflections', `${ref.overlapped} of ${ref.orbits} in ${ref.clusters} peak(s)`],
+        ['Weak intensities', opts.intensityNote || '—'],
+        ['Compute', res.backend === 'gpu' ? 'WebGPU' : 'CPU']
+    ];
+    document.getElementById('cf-summary').innerHTML =
+        rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+
+    // Warnings that matter more than the numbers above.
+    let warn = '';
+    if (ref.droppedOutOfRange > 0) {
+        warn += `${ref.droppedOutOfRange} reflection(s) did not fit the grid. The largest index in the fit is ${ref.maxIndex}, which needs at least a ${ref.minGridForAll}³ grid. `;
+    }
+    if (ref.symmetrySource !== 'symops') {
+        warn += 'The space-group JSON has no "symops" field, so the orbits came from a Laue-class table with no translations: screw-axis and glide-plane absences were not applied and the in-loop symmetrisation reduces to a plain orbit average. Regenerate the JSON with cctbx_generate_sg_harker_v7.py for the full constraint. ';
+    }
+    if (ref.absentButObserved > 0) {
+        warn += `${ref.absentButObserved} refined intensity sits on a systematically absent reflection. That normally means the space group is wrong, or the fit has leaked intensity into a forbidden peak. `;
+    }
+    if (ref.droppedDuplicate > 0) {
+        warn += `${ref.droppedDuplicate} grid point was claimed by more than one reflection, so the input list is redundant for this symmetry. `;
+    }
+    if (res.bestR > 0.30) {
+        warn += 'An R above about 0.30 usually means the run has not converged — try more random starts, more iterations, or a threshold nearer 1.0 σ. ';
+        if (res.symLambda >= 1) {
+            warn += 'With strict symmetry a wrong space group cannot be recovered from; try λ = 0 to check whether the density is really consistent with the group. ';
+        }
+    }
+    const old = group.querySelector('.cf-warn');
+    if (old) old.remove();
+    if (warn) {
+        const div = document.createElement('div');
+        div.className = 'cf-warn';
+        div.textContent = warn.trim();
+        group.querySelector('#cf-summary').after(div);
+    }
+
+    // Peak table, with the nearest-neighbour distance for each peak: that is
+    // the number worth reading, because the origin is arbitrary.
+    const G = cfMetricTensor(cell);
+    const tbody = document.querySelector('#cf-peak-table tbody');
+    tbody.innerHTML = res.peaks.map(pk => {
+        let dmin = Infinity;
+        for (const q of res.peaks) {
+            if (q === pk) continue;
+            const d = cfFracDistance(G, pk.x - q.x, pk.y - q.y, pk.z - q.z);
+            if (d < dmin) dmin = d;
+        }
+        return `<tr><td>${pk.rank}</td><td>${pk.x.toFixed(4)}</td><td>${pk.y.toFixed(4)}</td>` +
+               `<td>${pk.z.toFixed(4)}</td><td>${pk.relative.toFixed(3)}</td>` +
+               `<td>${Number.isFinite(dmin) ? dmin.toFixed(2) : '–'}</td></tr>`;
+    }).join('') || '<tr><td colspan="6">No peak above the cutoff.</td></tr>';
+
+    // Section viewer
+    const slider = document.getElementById('cf-section-slider');
+    slider.max = String(res.gridSize - 1);
+    slider.value = String(Math.floor(res.gridSize / 2));
+    drawChargeFlipSection();
+
+    // 3D viewer, always at the full grid.
+    cfRefreshIsoSourceOptions();
+    cfScheduleIsosurface(0);
+}
+
+function cfMetricTensor(cell) {
+    const d2r = Math.PI / 180;
+    const ca = Math.cos((cell.alpha ?? 90) * d2r);
+    const cb = Math.cos((cell.beta ?? 90) * d2r);
+    const cg = Math.cos((cell.gamma ?? 90) * d2r);
+    const { a, b, c } = cell;
+    return [[a * a, a * b * cg, a * c * cb],
+            [a * b * cg, b * b, b * c * ca],
+            [a * c * cb, b * c * ca, c * c]];
+}
+function cfFracDistance(G, dx, dy, dz) {
+    dx -= Math.round(dx); dy -= Math.round(dy); dz -= Math.round(dz);
+    const s = dx * (G[0][0] * dx + G[0][1] * dy + G[0][2] * dz)
+            + dy * (G[1][0] * dx + G[1][1] * dy + G[1][2] * dz)
+            + dz * (G[2][0] * dx + G[2][1] * dy + G[2][2] * dz);
+    return Math.sqrt(Math.max(0, s));
+}
+
+// Colour ramp for the density sections. Shared by the map itself and by the
+// scale bar underneath it, so the bar cannot drift out of step with the image.
+// t runs -1 .. +1 and is symmetric about zero: warm for positive density,
+// blue for negative, near-black at zero.
+function cfDensityColor(t) {
+    if (t >= 0) {
+        return [Math.round(40 + 215 * t),
+                Math.round(40 + 190 * t * t),
+                Math.round(45 + 40 * t * t)];
+    }
+    return [30,
+            Math.round(35 + 40 * -t),
+            Math.round(45 + 150 * -t)];
+}
+
+// Whole-map statistics, computed once per result and cached on it. These are
+// what the ABSOLUTE colour scale is built from: without them each slice was
+// stretched to its own range, so a slice containing nothing but ripple came
+// out as saturated as a slice containing every atom in the cell. That is
+// visually striking and completely misleading.
+function cfMapStats(res) {
+    if (res.__stats) return res.__stats;
+    const map = res.map;
+    let lo = Infinity, hi = -Infinity, sum = 0, sum2 = 0;
+    for (let i = 0; i < map.length; i++) {
+        const v = map[i];
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+        sum += v; sum2 += v * v;
+    }
+    const n = map.length;
+    const mean = sum / n;
+    const sigma = Math.sqrt(Math.max(0, sum2 / n - mean * mean));
+    res.__stats = { lo, hi, mean, sigma, span: Math.max(1e-9, Math.max(hi, -lo)) };
+    return res.__stats;
+}
+
+function cfDrawScaleBar(span) {
+    const bar = document.getElementById('cf-section-scalebar');
+    if (!bar) return;
+    const w = bar.width, h = bar.height;
+    const ctx = bar.getContext('2d');
+    const img = ctx.createImageData(w, h);
+    for (let x = 0; x < w; x++) {
+        const t = (2 * x / (w - 1)) - 1;          // -1 .. +1
+        const [r, g, b] = cfDensityColor(t);
+        for (let y = 0; y < h; y++) {
+            const o = (y * w + x) * 4;
+            img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255;
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+    document.getElementById('cf-scale-min').textContent = (-span).toFixed(2);
+    document.getElementById('cf-scale-mid').textContent = '0';
+    document.getElementById('cf-scale-max').textContent = '+' + span.toFixed(2);
+}
+
+// ---------------------------------------------------------------------------
+//  3D isosurface. Companion to the section viewer above: same map, same
+//  absolute scale, and the level is quoted in the same sigma units so the two
+//  views can be read against each other.
+//
+//  Everything geometric lives in density3d.js; this is only the wiring.
+// ---------------------------------------------------------------------------
+let cfIsoInited = false;
+let cfIsoTimer = null;
+
+function cfIsoUnavailableMessage() {
+    if (typeof Density3D === 'undefined') {
+        return 'density3d.js did not load.';
+    }
+    if (!Density3D.isAvailable()) {
+        return 'three.js is not loaded. Put the r160 UMD build at lib/three.min.js ' +
+               '(cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js) — later releases ' +
+               'dropped the UMD build and will not work from a plain script tag.';
+    }
+    return null;
+}
+
+// Which map the viewer is showing. The symmetrised map only exists once the
+// structure has been built, so the option is enabled from renderStructure.
+function cfIsoSourceMap() {
+    const wantSym = document.getElementById('cf-iso-map').value === 'symmetrised';
+    if (wantSym && cfStructure && cfStructure.map) {
+        return { map: cfStructure.map, gridSize: cfStructure.gridSize, label: 'symmetry-averaged map' };
+    }
+    if (!cfLastResult) return null;
+    return { map: cfLastResult.map, gridSize: cfLastResult.gridSize, label: 'map as solved' };
+}
+
+function cfRefreshIsoSourceOptions() {
+    const sel = document.getElementById('cf-iso-map');
+    if (!sel) return;
+    const symOpt = sel.querySelector('option[value="symmetrised"]');
+    const have = !!(cfStructure && cfStructure.map);
+    if (symOpt) symOpt.disabled = !have;
+    if (!have && sel.value === 'symmetrised') sel.value = 'solution';
+}
+
+function cfScheduleIsosurface(delay) {
+    if (cfIsoTimer) clearTimeout(cfIsoTimer);
+    // The level slider fires continuously; rebuilding a 64³ surface on every
+    // pixel of travel would lock the main thread solid.
+    cfIsoTimer = setTimeout(() => { cfIsoTimer = null; cfDrawIsosurface(); },
+                            Number.isFinite(delay) ? delay : 160);
+}
+
+// The site list from the structure build is the ASYMMETRIC UNIT -- one
+// representative per symmetry orbit. Drawing it as-is put a single sphere
+// beside one of the four lobes of a multiplicity-4 site (Pb in PbSO4, say)
+// and left the other three bare, which reads as a broken map when it is
+// nothing of the kind. Expand each site over the operators before drawing.
+//
+// Two further wrinkles:
+//
+//   * Coordinates belong to the SYMMETRY-AVERAGED map. That map is the raw
+//     one shifted onto the space-group origin, and possibly inverted, so
+//     sym x corresponds to raw hand·(x + shift). Overlaying the unshifted
+//     coordinates on the "as solved" map would put every sphere in the wrong
+//     place by a whole origin shift.
+//
+//   * An atom sitting on a cell face appears on both sides of the cell in the
+//     isosurface, because the surface is cut by the box. Adding the periodic
+//     images near the boundary makes the spheres match.
+//  Sites the user has switched off in the legend, by rank. Held here rather
+//  than in the DOM so the filter below is the single gate: nothing hidden can
+//  reach the viewer, and the caption count stays honest.
+const cfHiddenSiteRanks = new Set();
+
+function cfExpandedSitePositions(mapKind) {
+    if (!cfStructure || !Array.isArray(cfStructure.sites)) return [];
+    const ops = cfStructure.opMatrices;
+    const out = [];
+    const wrap = v => { const f = v - Math.floor(v); return (f >= 1 - 1e-9) ? 0 : f; };
+
+    const toRaw = (mapKind === 'solution');
+    const shift = cfStructure.originShift || [0, 0, 0];
+    const hand = cfStructure.hand === -1 ? -1 : 1;
+
+    for (const site of cfStructure.sites) {
+        if (cfHiddenSiteRanks.has(site.rank)) continue;
+        const seen = new Set();
+        const images = [];
+        const push = (x, y, z) => {
+            const key = [x, y, z].map(v => Math.round(v * 1000)).join(',');
+            if (seen.has(key)) return;
+            seen.add(key);
+            images.push([x, y, z]);
+        };
+
+        if (Array.isArray(ops) && ops.length) {
+            for (const op of ops) {
+                const r = op.r, t = op.t || [0, 0, 0];
+                push(wrap(r[0] * site.x + r[1] * site.y + r[2] * site.z + t[0]),
+                     wrap(r[3] * site.x + r[4] * site.y + r[5] * site.z + t[1]),
+                     wrap(r[6] * site.x + r[7] * site.y + r[8] * site.z + t[2]));
+            }
+        } else {
+            push(wrap(site.x), wrap(site.y), wrap(site.z));
+        }
+
+        for (let [x, y, z] of images) {
+            if (toRaw) {
+                x = wrap(hand * (x + shift[0]));
+                y = wrap(hand * (y + shift[1]));
+                z = wrap(hand * (z + shift[2]));
+            }
+            // Periodic images for anything within a whisker of a cell face.
+            const tol = 0.03;
+            const xs = [x], ys = [y], zs = [z];
+            if (x < tol) xs.push(x + 1); else if (x > 1 - tol) xs.push(x - 1);
+            if (y < tol) ys.push(y + 1); else if (y > 1 - tol) ys.push(y - 1);
+            if (z < tol) zs.push(z + 1); else if (z > 1 - tol) zs.push(z - 1);
+            for (const px of xs) for (const py of ys) for (const pz of zs) {
+                out.push({ x: px, y: py, z: pz, rank: site.rank, relative: site.relative });
+            }
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+//  Site legend.
+//
+//  With ten sites sharing eight palette entries and fifty spheres on screen,
+//  a colour on its own said nothing about which atom it belonged to. One row
+//  per UNIQUE site -- toggling a row hides that whole symmetry orbit, which is
+//  the only grouping that means anything physically. Colours come from
+//  Density3D.siteColor(), never from a copy kept here, so the swatch and the
+//  sphere cannot drift apart.
+// ---------------------------------------------------------------------------
+function cfSiteSwatchColor(rank) {
+    if (typeof Density3D !== 'undefined' && typeof Density3D.siteColor === 'function') {
+        return Density3D.siteColor(rank);
+    }
+    return 'transparent';
+}
+
+function cfRenderSiteLegend() {
+    const list = document.getElementById('cf-iso-site-list');
+    const title = document.getElementById('cf-site-legend-title');
+    const allBtn = document.getElementById('cf-site-legend-all');
+    if (!list) return;
+
+    const sites = (cfStructure && Array.isArray(cfStructure.sites)) ? cfStructure.sites : [];
+
+    // A rank that no longer exists (new structure, fewer sites) must not keep
+    // suppressing anything.
+    const live = new Set(sites.map(s => s.rank));
+    for (const r of [...cfHiddenSiteRanks]) if (!live.has(r)) cfHiddenSiteRanks.delete(r);
+
+    const shown = sites.filter(s => !cfHiddenSiteRanks.has(s.rank)).length;
+    if (title) {
+        title.textContent = sites.length
+            ? `Atom positions ${shown}/${sites.length}` : 'Atom positions';
+    }
+    if (allBtn) {
+        allBtn.textContent = (shown === 0) ? 'show all' : 'hide all';
+        allBtn.disabled = !sites.length;
+    }
+
+    if (!sites.length) {
+        list.innerHTML = '<div class="cf-site-legend-empty">Build the structure to list the sites.</div>';
+        return;
+    }
+
+    list.innerHTML = sites.map(st => {
+        const off = cfHiddenSiteRanks.has(st.rank);
+        const mult = `${st.multiplicity}${st.special ? '*' : ''}`;
+        return `<div class="cf-site-row${off ? ' is-hidden' : ''}" data-rank="${st.rank}" role="checkbox"`
+             + ` tabindex="0" aria-checked="${off ? 'false' : 'true'}"`
+             + ` title="Site ${st.rank}: height ${st.relative.toFixed(3)}, multiplicity ${mult}`
+             + ` at (${st.x.toFixed(3)}, ${st.y.toFixed(3)}, ${st.z.toFixed(3)}). Click to `
+             + `${off ? 'show' : 'hide'} it.">`
+             + `<span class="cf-site-rank">${st.rank}</span>`
+             + `<span class="cf-site-swatch" style="background:${cfSiteSwatchColor(st.rank)}"></span>`
+             + `<span class="cf-site-height">${st.relative.toFixed(3)}</span>`
+             + `<span class="cf-site-mult">&times;${mult}</span>`
+             + `<span class="cf-site-eye">${off ? '&#9679;' : '&#9673;'}</span>`
+             + `</div>`;
+    }).join('');
+}
+
+// Toggling a site touches nothing but the spheres, so rebuild those alone.
+// Going through cfDrawIsosurface() would re-run marching cubes over the whole
+// grid, which at a low sigma level is a visible stall for a click.
+function cfApplySiteVisibility() {
+    const positions = cfExpandedSitePositions(document.getElementById('cf-iso-map').value);
+    let done = false;
+    if (typeof Density3D !== 'undefined' && typeof Density3D.updateSites === 'function') {
+        done = Density3D.updateSites(positions);
+    }
+    if (!done) { cfScheduleIsosurface(0); return; }
+    cfRenderSiteLegend();
+    cfUpdateIsoSiteNote(positions.length);
+}
+
+// The caption's site sentence, kept in one place so the full redraw and the
+// cheap sphere-only update cannot describe the view differently.
+function cfUpdateIsoSiteNote(count) {
+    const note = document.getElementById('cf-iso-note');
+    if (!note) return;
+    const base = note.dataset.baseText || note.textContent || '';
+    const total = (cfStructure && cfStructure.sites) ? cfStructure.sites.length : 0;
+    const hidden = cfHiddenSiteRanks.size;
+    note.textContent = base + ` ${count} atom position(s) from ${total - hidden}`
+        + (hidden ? ` of ${total}` : '') + ` unique site(s)`
+        + (hidden ? `, ${hidden} hidden.` : '.');
+}
+
+function cfDrawIsosurface() {
+    const note = document.getElementById('cf-iso-note');
+    const canvas = document.getElementById('cf-iso-canvas');
+    if (!note || !canvas) return;
+
+    const problem = cfIsoUnavailableMessage();
+    if (problem) { note.textContent = problem; return; }
+    if (!cfLastResult) { note.textContent = 'Run charge flipping to see a density surface.'; return; }
+
+    if (!cfIsoInited) {
+        cfIsoInited = Density3D.init(canvas);
+        if (!cfIsoInited) { note.textContent = 'WebGL could not start in this browser.'; return; }
+    }
+
+    const src = cfIsoSourceMap();
+    if (!src) { note.textContent = 'No map to draw.'; return; }
+
+    const sigmaLevel = parseFloat(document.getElementById('cf-iso-level').value) || 3;
+    const showCell = document.getElementById('cf-iso-cell').checked;
+    const mapKind = document.getElementById('cf-iso-map').value;
+    // Every site is drawn unless the legend has switched it off; the old
+    // all-or-nothing "Atom positions" checkbox is now just "hide all".
+    const sitePositions = cfExpandedSitePositions(mapKind);
+
+    note.textContent = 'Extracting the surface…';
+    let rep = null;
+    try {
+        rep = Density3D.show({
+            map: src.map,
+            gridSize: src.gridSize,
+            cell: cfLastResult.cell,
+            sigmaLevel, showCell, showSites: true,
+            sites: sitePositions
+        });
+    } catch (e) {
+        console.error('Isosurface extraction failed:', e);
+        note.textContent = 'Could not build the surface: ' + (e.message || e);
+        return;
+    }
+    if (!rep) { note.textContent = 'Could not build the surface.'; return; }
+
+    document.getElementById('cf-iso-level-label').textContent =
+        `${sigmaLevel.toFixed(1)} σ = ${rep.level.toFixed(3)} (map max 1.000)`;
+
+    const baseText = (rep.triangles === 0
+        ? `Nothing reaches ${sigmaLevel.toFixed(1)} σ — lower the level.`
+        : `${src.label}, ${rep.triangles.toLocaleString()} triangles in ${rep.ms} ms. ` +
+          `Axes a/b/c are red/green/blue. Drag to rotate, scroll to zoom.`);
+    note.dataset.baseText = baseText;
+
+    cfRenderSiteLegend();
+    if (cfStructure) {
+        cfUpdateIsoSiteNote(sitePositions.length);
+    } else {
+        note.textContent = baseText + ' Atom positions need the structure to be built first.';
+    }
+}
+
+function drawChargeFlipSection() {
+    if (!cfLastResult) return;
+    const N = cfLastResult.gridSize, N2 = N * N;
+    const map = cfLastResult.map;
+    const axis = parseInt(document.getElementById('cf-section-axis').value, 10);
+    const slice = parseInt(document.getElementById('cf-section-slider').value, 10);
+    const perSlice = !!document.getElementById('cf-section-autoscale').checked;
+
+    const canvas = document.getElementById('cf-section-canvas');
+    canvas.width = N; canvas.height = N;
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(N, N);
+
+    const stats = cfMapStats(cfLastResult);
+
+    const at = (u, v) => axis === 2 ? map[u + v * N + slice * N2]
+             : axis === 1 ? map[u + slice * N + v * N2]
+                          : map[slice + u * N + v * N2];
+
+    // Range of THIS slice, reported either way so the reader can see how much
+    // of the map's dynamic range the slice actually occupies.
+    let lo = Infinity, hi = -Infinity;
+    for (let v = 0; v < N; v++) for (let u = 0; u < N; u++) {
+        const x = at(u, v); if (x < lo) lo = x; if (x > hi) hi = x;
+    }
+
+    // Absolute by default: the scale comes from the whole map, so an empty
+    // slice looks empty and two slices can be compared by eye.
+    const span = perSlice ? Math.max(1e-9, Math.max(hi, -lo)) : stats.span;
+
+    for (let v = 0; v < N; v++) {
+        for (let u = 0; u < N; u++) {
+            const t = Math.max(-1, Math.min(1, at(u, v) / span));
+            const o = ((N - 1 - v) * N + u) * 4;       // flip so +axis points up
+            const [r, g, b] = cfDensityColor(t);
+            img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b;
+            img.data[o + 3] = 255;
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+    cfDrawScaleBar(span);
+
+    const names = ['a', 'b', 'c'];
+    const inSigma = stats.sigma > 0 ? hi / stats.sigma : 0;
+    document.getElementById('cf-section-label').textContent =
+        `${names[axis]} = ${(slice / N).toFixed(3)} (plane ${slice + 1} of ${N})`;
+
+    document.getElementById('cf-section-scale-note').innerHTML = perSlice
+        ? `<strong>Per-slice scale</strong> — this slice only, ${lo.toFixed(3)} … ${hi.toFixed(3)}. ` +
+          `Contrast is stretched, so an empty slice still looks full. Whole map: ` +
+          `${stats.lo.toFixed(3)} … ${stats.hi.toFixed(3)}.`
+        : `Absolute scale, ±${stats.span.toFixed(3)} over the whole map ` +
+          `(ρ normalised to a maximum of 1, σ = ${stats.sigma.toFixed(3)}). ` +
+          `This slice reaches ${hi.toFixed(3)} = ${inSigma.toFixed(1)} σ` +
+          (inSigma < 3 ? ' — below the ~3σ level of a real atomic peak.' : '.');
+}
+
+function exportChargeFlipPeaks() {
+    if (!cfLastResult) { showToast('Nothing to export yet.', 'error'); return; }
+    const c = cfLastResult.cell;
+    const lines = [
+        `# Charge-flipping peak list`,
+        `# cell a=${c.a} b=${c.b} c=${c.c} alpha=${c.alpha} beta=${c.beta} gamma=${c.gamma}`,
+        `# best R = ${cfLastResult.bestR.toFixed(4)} at iteration ${cfLastResult.bestIter}`,
+        `# fractional coordinates, P1, arbitrary origin and hand`,
+        `rank,x,y,z,relative_height`
+    ];
+    for (const p of cfLastResult.peaks) {
+        lines.push(`${p.rank},${p.x.toFixed(5)},${p.y.toFixed(5)},${p.z.toFixed(5)},${p.relative.toFixed(4)}`);
+    }
+    downloadTextFile(lines.join('\n'), 'charge_flipping_peaks.csv');
+}
+
+// ---------------------------------------------------------------------------
+//  Structure building from the P1 map.
+//
+//  The symmetry operators are NOT available through SG_ENGINE (which exposes
+//  only resolve / listSettings / isReflectionAllowed / getMultiplicity), so
+//  they are read straight out of SG_DATABASE. The v5 JSON carries a
+//  "rotations" array per setting, but that is rotations ONLY, deduplicated --
+//  translations are absent and the centring operators are collapsed, so it
+//  cannot be used here. The v7 generator script adds a "symops" array with
+//  the full operator list; without it this feature reports what is missing
+//  rather than guessing.
+// ---------------------------------------------------------------------------
+let cfStructure = null;
+
+function getSymopsForSetting(sg) {
+    if (!sg || !globalThis.SG_DATABASE) return { error: 'The space-group database is not loaded.' };
+    const entry = SG_DATABASE.space_groups?.[String(sg.number)];
+    if (!entry) return { error: `Space group ${sg.number} is not in the database.` };
+
+    // Exact setting match only, and never a ":R" one. The JSON keeps the
+    // rhombohedral-axes settings, but SG_ENGINE never hands them out and the
+    // lattice parameters on screen are hexagonal, so falling back to
+    // settings[0] could build the cell on the wrong axes without saying so.
+    const usable = (entry.settings || []).filter(st => {
+        const sym = String((st && st.symbol) || '').replace(/\s+/g, '');
+        return !/:R$/i.test(sym) && String((st && st.hall) || '').indexOf('*') === -1;
+    });
+    const setting = usable.find(st => sg.hall && st.hall === sg.hall)
+                 || usable.find(st => sg.symbol && st.symbol === sg.symbol)
+                 || null;
+    if (!setting) return { error: `No matching setting for space group ${sg.number} (${sg.symbol || sg.hall || '?'}) in the database.` };
+
+    const raw = setting.symops;
+    if (!Array.isArray(raw) || raw.length === 0) {
+        return { error: 'This JSON has no "symops" field. Regenerate it with cctbx_generate_sg_harker_v7.py — the v5 "rotations" array holds rotations only (no translations, centring collapsed) and cannot build a structure.' };
+    }
+
+    const symops = raw.map(op => ({
+        r: op.r.map(Number),
+        // Exact rationals where the generator supplied them; 1/3 must not
+        // arrive here as 0.333333 or a rhombohedral cell will not close.
+        t: (op.t_num && op.t_den)
+            ? op.t_num.map(n => Number(n) / Number(op.t_den))
+            : op.t.map(Number),
+        xyz: op.xyz || ''
+    }));
+    return { symops, setting, entry };
+}
+
+// Status line and CIF-button state for the Structure block. With the build
+// button gone this is the only thing that tells the user what is happening,
+// so every exit path has to set it -- including the ones that used to be a
+// toast and nothing else.
+function cfSetStructureStatus(text, kind) {
+    const el = document.getElementById('cf-structure-status');
+    if (!el) return;
+    el.textContent = text;
+    el.className = kind === 'warn' ? 'cf-warn' : 'cf-hint';
+    const btn = document.getElementById('cf-export-cif-btn');
+    if (btn) btn.disabled = !cfStructure;
+}
+
+// Runs automatically at the end of a charge-flipping run. `quiet` suppresses
+// the success toast, which would otherwise land on top of the one reporting
+// the R factor.
+function runBuildStructure(quiet) {
+    if (!cfLastResult) { cfSetStructureStatus('Run charge flipping first.', 'warn'); return; }
+    const sg = sgUsedForFit || currentSG;
+    if (!sg) {
+        cfSetStructureStatus('No space group is selected, so the P1 map cannot be placed on a crystallographic origin.', 'warn');
+        return;
+    }
+
+    const got = getSymopsForSetting(sg);
+    if (got.error) { cfSetStructureStatus(got.error, 'warn'); return; }
+
+    cfSetStructureStatus('Building the structure…');
+    document.body.style.cursor = 'wait';
+
+    let worker;
+    try {
+        worker = new Worker('charge_flipping_worker.js');
+    } catch (err) {
+        document.body.style.cursor = 'default';
+        cfSetStructureStatus('Could not start charge_flipping_worker.js: ' + err.message, 'warn');
+        return;
+    }
+
+    const done = () => {
+        document.body.style.cursor = 'default';
+        worker.terminate();
+    };
+
+    worker.onerror = (ev) => {
+        done();
+        cfSetStructureStatus('Structure worker crashed: ' + (ev.message || 'unknown error'), 'warn');
+    };
+    worker.onmessage = (e) => {
+        const msg = e.data || {};
+        if (msg.type === 'cf-error') { done(); cfSetStructureStatus(msg.message, 'warn'); return; }
+        if (msg.type === 'cf-structure') {
+            done();
+            cfStructure = msg.results;
+            cfStructure.spaceGroup = sg;
+            // The worker returns the operators as xyz strings for the report.
+            // The 3D viewer needs the matrices to expand the asymmetric unit,
+            // so keep the objects that went in.
+            cfStructure.opMatrices = got.symops;
+            renderStructure(cfStructure, got);
+            cfSetStructureStatus(
+                `${msg.results.sites.length} unique site(s) in ${sg.symbol || 'SG ' + sg.number}, ` +
+                `symmetry correlation ${msg.results.symmetryCorrelation.toFixed(3)}.`);
+            // Cache it on the run it belongs to, so flipping back through the
+            // history does not rebuild the same structure over and over.
+            const entry = rpHistory.cf.find(e => e.result === cfLastResult);
+            if (entry) entry.structure = { results: msg.results, got };
+            if (!quiet) showToast(`Structure built — ${msg.results.sites.length} unique site(s).`, 'success');
+        }
+    };
+
+    // The map is copied because cfLastResult.map is still needed by the
+    // section viewer; a transfer would detach it.
+    const mapCopy = Float32Array.from(cfLastResult.map);
+    worker.postMessage({
+        type: 'build-structure',
+        map: mapCopy,
+        gridSize: cfLastResult.gridSize,
+        symops: got.symops,
+        cell: cfLastResult.cell,
+        minPeakSeparation: parseFloat(document.getElementById('cf-min-sep').value) || 0.9,
+        maxPeaks: 60,
+        peakHeightCutoff: 0.04,
+        amplitudeCutoff: 0.05,
+        originCandidates: 12
+    }, [mapCopy.buffer]);
+}
+
+
+function renderStructure(st, got) {
+ // A fresh structure starts with every site HIDDEN, so the density is read
+    // on its own first and the spheres are brought in one at a time. The set
+    // is rebuilt from this structure's ranks rather than left alone: rank 3 of
+    // the old solution has nothing to do with rank 3 of this one.
+    cfHiddenSiteRanks.clear();
+    st.sites.forEach(site => cfHiddenSiteRanks.add(site.rank));
+
+    cfRenderSiteLegend();
+    cfScheduleIsosurface(0);
+
+    const sg = st.spaceGroup;
+    const rows = [
+        ['Space group', `${sg.symbol || got.entry.standard_symbol} (No. ${sg.number})`],
+        ['Operators applied', String(st.nOps)],
+        ['Origin shift', `(${st.originShift.map(v => v.toFixed(4)).join(', ')})`],
+        ['Solution hand', st.hand > 0 ? 'as solved' : 'inverted'],
+        ['Symmetry correlation', st.symmetryCorrelation.toFixed(3)],
+        ['Phase agreement', st.originScore.toFixed(3)],
+        ['Peaks → unique sites', `${st.rawPeakCount} → ${st.sites.length}`]
+    ];
+    document.getElementById('cf-structure-summary').innerHTML =
+        rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+
+    document.querySelector('#cf-site-table tbody').innerHTML = st.sites.map(s =>
+        `<tr><td>${s.rank}</td><td>${s.x.toFixed(4)}</td><td>${s.y.toFixed(4)}</td>` +
+        `<td>${s.z.toFixed(4)}</td><td>${s.multiplicity}${s.special ? '*' : ''}</td>` +
+        `<td>${s.relative.toFixed(3)}</td></tr>`).join('')
+        || '<tr><td colspan="6">No site above the cutoff.</td></tr>';
+
+    // The correlation is the number that says whether the space group is
+    // actually consistent with the density. Say so when it is not.
+    const out = document.getElementById('cf-structure-output');
+    const old = out.querySelector('.cf-warn');
+    if (old) old.remove();
+    let warn = '';
+    if (st.symmetryCorrelation < 0.5) {
+        warn = 'The symmetrised map correlates poorly with the solution. Either the charge-flipping run has not converged, or the space group is wrong. Check the space-group test before trusting these sites.';
+    } else if (st.symmetryCorrelation < 0.7) {
+        warn = 'Moderate symmetry correlation. The heavier sites are usually reliable at this level; the light ones may not be.';
+    }
+    if (warn) {
+        const div = document.createElement('div');
+        div.className = 'cf-warn';
+        div.textContent = warn;
+        out.querySelector('#cf-structure-summary').after(div);
+    }
+}
+
+function exportStructureCIF() {
+    if (!cfStructure) { showToast('Build a structure first.', 'error'); return; }
+    const st = cfStructure, c = st.cell, sg = st.spaceGroup;
+    const L = [];
+    L.push('data_charge_flipping_solution');
+    L.push("_audit_creation_method        'Powder 5 charge flipping'");
+    L.push(`_cell_length_a                ${c.a.toFixed(5)}`);
+    L.push(`_cell_length_b                ${c.b.toFixed(5)}`);
+    L.push(`_cell_length_c                ${c.c.toFixed(5)}`);
+    L.push(`_cell_angle_alpha             ${(c.alpha ?? 90).toFixed(4)}`);
+    L.push(`_cell_angle_beta              ${(c.beta ?? 90).toFixed(4)}`);
+    L.push(`_cell_angle_gamma             ${(c.gamma ?? 90).toFixed(4)}`);
+    L.push(`_space_group_IT_number        ${sg.number}`);
+    L.push(`_space_group_name_H-M_alt     '${sg.symbol || ''}'`);
+    if (sg.hall) L.push(`_space_group_name_Hall        '${sg.hall}'`);
+    L.push('');
+    if (st.symops && st.symops.length) {
+        L.push('loop_');
+        L.push('_space_group_symop_operation_xyz');
+        st.symops.forEach(op => L.push(`  '${op}'`));
+        L.push('');
+    }
+    L.push('# Peak heights are on an arbitrary scale; occupancies are NOT refined.');
+    L.push('# Assign element types yourself — charge flipping gives electron');
+    L.push('# density, not chemistry.');
+    L.push('loop_');
+    L.push('_atom_site_label');
+    L.push('_atom_site_fract_x');
+    L.push('_atom_site_fract_y');
+    L.push('_atom_site_fract_z');
+    L.push('_atom_site_symmetry_multiplicity');
+    L.push('_atom_site_occupancy');
+    st.sites.forEach(s => {
+        L.push(`  Q${s.rank}  ${s.x.toFixed(5)}  ${s.y.toFixed(5)}  ${s.z.toFixed(5)}  ${s.multiplicity}  1.000`);
+    });
+    downloadTextFile(L.join('\n'), 'charge_flipping_structure.cif');
+}
+
+function exportChargeFlipMap() {
+    if (!cfLastResult) { showToast('Nothing to export yet.', 'error'); return; }
+    const N = cfLastResult.gridSize, c = cfLastResult.cell, map = cfLastResult.map;
+    // Plain ASCII grid: header, then one value per line in h-fastest order.
+    const out = [
+        'Charge-flipping electron density (normalised, arbitrary scale)',
+        `${c.a} ${c.b} ${c.c} ${c.alpha} ${c.beta} ${c.gamma}`,
+        `${N} ${N} ${N}`
+    ];
+    for (let i = 0; i < map.length; i++) out.push(map[i].toFixed(5));
+    downloadTextFile(out.join('\n'), 'charge_flipping_map.grd');
+}
+
 
        
 
@@ -817,6 +2580,12 @@ if (tooltipContainer && tooltipContent) {
                     // re-plots them.
                     if (fitResults && fitResults.params) enforceSymmetryConstraints(fitResults.params);
                     lastFitResultsCache = JSON.parse(JSON.stringify(fitResults)); // Update cache
+
+                    // Append this completed run to the right-panel history.
+                    try {
+                        const histMode = (fitResults.refinementMode === 'pawley') ? 'pawley' : 'lebail';
+                        rpSnapshotFit(histMode, fitResults);
+                    } catch (histErr) { console.warn('history snapshot failed:', histErr); }
 
                     // Calculate display patterns based on worker results
                     // Need to recalculate background and net pattern here for display
@@ -1274,14 +3043,12 @@ const base =
     `#${currentSG.number} · ${currentSG.standard_symbol}`
     + settingInfo
     + ` · Laue ${currentSG.laue_class}`;
-            // The only hard correctness issue with non-standard settings in
-            // the current HKL generator is monoclinic off unique-axis-b:
-            let warn = '';
-            if (currentSG.system === 'monoclinic'
-                && !/^b/.test(currentSG.setting_description || '')) {
-                warn = ' — HKL generator assumes unique axis b';
-            }
-            el.textContent = base + warn;
+            // Monoclinic settings off unique axis b used to carry a warning
+            // here: the generator assumed b and quietly computed the wrong
+            // pattern. It now reads the unique axis from the setting and
+            // varies the matching angle, so there is nothing left to warn
+            // about.
+            el.textContent = base;
             el.style.color = 'var(--system-secondary-label)';
         }
 
@@ -1309,6 +3076,26 @@ const base =
                 rhombohedral:[{ name: 'a', label: 'a', value: 5.5, step: 0.001 }, { name: 'c', label: 'c', value: 15.0, step: 0.001 }],
                 cubic:       [{ name: 'a', label: 'a', value: 4.23, step: 0.001 }]
             };
+            // Monoclinic: exactly one angle is free, and which one depends on
+            // the setting. P 1 2_1/c 1 varies beta, P 1 1 2_1/b varies gamma,
+            // P 2_1/b 1 1 varies alpha. Carry the previous value across when
+            // the user switches between settings so the cell is not lost.
+            if (system === 'monoclinic') {
+                const monoAngle = MONOCLINIC_ANGLE_FOR_AXIS[monoclinicUniqueAxis(currentSG)];
+                const LABEL = { alpha: 'α', beta: 'β', gamma: 'γ' };
+                const carried = ['alpha', 'beta', 'gamma']
+                    .map(k => currentValues[k])
+                    .find(v => v !== undefined && parseFloat(v) !== 90);
+                params.monoclinic = [
+                    { name: 'a', label: 'a', value: 4.0, step: 0.001 },
+                    { name: 'b', label: 'b', value: 5.0, step: 0.001 },
+                    { name: 'c', label: 'c', value: 6.0, step: 0.001 },
+                    { name: monoAngle, label: LABEL[monoAngle],
+                      value: (carried !== undefined) ? parseFloat(carried) : 105.0,
+                      step: 0.01, isAngle: true }
+                ];
+                currentValues[monoAngle] = params.monoclinic[3].value;
+            }
             if(params[system]) params[system].forEach(p => createInput(p.name, p.label, p.value, p.step, p.isAngle));
         }
 
@@ -2390,12 +4177,473 @@ setTimeout(() => {
         function isReflectionAllowed(h, k, l, spaceGroup) {
             return SG_ENGINE.isReflectionAllowed(h, k, l, spaceGroup);
         }
-        function getMultiplicityAndCanonicalHKL(h, k, l, laue_class) {
-            return SG_ENGINE.getMultiplicity(h, k, l, laue_class);
+        // `sg` is optional and only matters for Laue -3m, where P-3m1 and
+        // P-31m give different h0l / hhl multiplicities and the class string
+        // alone cannot tell them apart. Pass the space group when you have it.
+        function getMultiplicityAndCanonicalHKL(h, k, l, laue_class, sg) {
+            return SG_ENGINE.getMultiplicity(h, k, l, laue_class, sg);
         }
 
 
+    /* ------------------------------------------------------------------
+     *  LAUE ORBITS IN RECIPROCAL SPACE
+     *
+     *  The generator used to hard-code an "asymmetric wedge" per crystal
+     *  SYSTEM. That is wrong wherever two Laue classes share a system,
+     *  because the wedge silently assumed the higher-symmetry one:
+     *
+     *    system        old wedge          right for   WRONG for
+     *    cubic         h>=k>=l>=0         m-3m        m-3    (axes only cycle)
+     *    tetragonal    h>=k>=0, l>=0      4/mmm       4/m    ((h,k) != (k,h))
+     *    hexagonal     h>=k>=0, l>=0      6/mmm       6/m
+     *    trigonal      h>=k>=0, l free    -3m         -3
+     *
+     *  In each WRONG case about half of the symmetry-independent
+     *  reflections were dropped. They are positionally coincident with the
+     *  survivors (d depends on h^2+hk+k^2, or on h^2+k^2+l^2, both of which
+     *  are permutation-symmetric), so no peak vanished from the plot -- the
+     *  intensities were simply halved, silently.
+     *
+     *  The trigonal branch additionally DOUBLE-counted the 00l line: for
+     *  Laue -3 the orbit of (0,0,l) is just {(0,0,l),(0,0,-l)}, both members
+     *  satisfied "h>=k>=0, l free", and the dedup key was the raw index
+     *  triple, so 00l came out at twice its proper weight.
+     *
+     *  Rather than maintain eight hand-derived wedges, generation now works
+     *  from the actual rotation operators. Each candidate index is mapped
+     *  onto its Laue orbit; the orbit is kept once, labelled by a canonical
+     *  member, and weighted by the true orbit size. Correct by construction
+     *  for every Laue class and setting.
+     * ------------------------------------------------------------------ */
+
+    const _laueOpsCache = new Map();
+
+    // Row-major 3x3 as a flat 9-array. Accepts [9], [[3],[3],[3]], {r:[...]}.
+    function _normRot(entry) {
+        let r = entry;
+        if (r && !Array.isArray(r) && Array.isArray(r.r)) r = r.r;
+        if (!Array.isArray(r)) return null;
+        if (r.length === 3 && Array.isArray(r[0])) r = [].concat(r[0], r[1], r[2]);
+        if (r.length !== 9) return null;
+        const out = new Array(9);
+        for (let i = 0; i < 9; i++) {
+            const v = Math.round(Number(r[i]));
+            if (!Number.isFinite(v) || Math.abs(v) > 1) return null;
+            out[i] = v;
+        }
+        return out;
+    }
+
+    function _matMul3(A, B) {
+        const C = new Array(9);
+        for (let i = 0; i < 3; i++) {
+            for (let j = 0; j < 3; j++) {
+                C[i * 3 + j] = A[i * 3] * B[j] + A[i * 3 + 1] * B[3 + j] + A[i * 3 + 2] * B[6 + j];
+            }
+        }
+        return C;
+    }
+
+    // Close a seed set into a group and force -1 in, giving the Laue group.
+    // Returns null if it fails to close inside 48 operators (i.e. the input
+    // was not a crystallographic rotation set).
+    function _closeLaueGroup(seeds) {
+        const map = new Map();
+        const push = (m) => {
+            const k = m.join(',');
+            if (map.has(k)) return false;
+            map.set(k, m);
+            return true;
+        };
+        push([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+        push([-1, 0, 0, 0, -1, 0, 0, 0, -1]);   // Laue class = point group + -1
+        for (const m of seeds) if (m) push(m);
+        for (let pass = 0; pass < 8; pass++) {
+            const cur = Array.from(map.values());
+            let grew = false;
+            for (let i = 0; i < cur.length; i++) {
+                for (let j = 0; j < cur.length; j++) {
+                    if (push(_matMul3(cur[i], cur[j]))) grew = true;
+                    if (map.size > 48) return null;
+                }
+            }
+            if (!grew) return Array.from(map.values());
+        }
+        return null;
+    }
+
+    // Generators of the Laue classes, in the conventional lattice basis.
+    // Only used when the space-group JSON carries no operator list.
+    //
+    // -3m MUST be split. The two settings are not interchangeable: with the
+    // secondary directions <100> carrying the symmetry (-3m1) h0l is special
+    // and hhl is general; with the tertiary directions <1-10> carrying it
+    // (-31m) it is the other way round. Verified from the mirror matrices:
+    //   m perp <100>   = (x,y,z) -> (-x+y, y, z)  ==  2 || [110]   -> -3m1
+    //   m perp <1-10>  = (x,y,z) -> ( y, x, z)    ==  2 || [1-10]  -> -31m
+    // giving -3m1: h0l = 6, hhl = 12   and   -31m: h0l = 12, hhl = 6.
+    const _LAUE_GENERATORS = {
+        '-1':    [],
+        '2/m':   [[-1, 0, 0, 0, 1, 0, 0, 0, -1]],                                        // 2 || b (default)
+        '2/m_a': [[1, 0, 0, 0, -1, 0, 0, 0, -1]],                                        // 2 || a
+        '2/m_b': [[-1, 0, 0, 0, 1, 0, 0, 0, -1]],                                        // 2 || b
+        '2/m_c': [[-1, 0, 0, 0, -1, 0, 0, 0, 1]],                                        // 2 || c
+        'mmm':   [[1, 0, 0, 0, -1, 0, 0, 0, -1], [-1, 0, 0, 0, 1, 0, 0, 0, -1]],
+        '4/m':   [[0, -1, 0, 1, 0, 0, 0, 0, 1]],                                         // 4 || c
+        '4/mmm': [[0, -1, 0, 1, 0, 0, 0, 0, 1], [1, 0, 0, 0, -1, 0, 0, 0, -1]],
+        '-3':    [[0, -1, 0, 1, -1, 0, 0, 0, 1]],                                        // 3 || c, hex axes
+        '-3m1':  [[0, -1, 0, 1, -1, 0, 0, 0, 1], [0, 1, 0, 1, 0, 0, 0, 0, -1]],          // 2 || <100>
+        '-31m':  [[0, -1, 0, 1, -1, 0, 0, 0, 1], [0, -1, 0, -1, 0, 0, 0, 0, -1]],        // 2 || <1-10>
+        '6/m':   [[1, -1, 0, 1, 0, 0, 0, 0, 1]],                                         // 6 || c
+        '6/mmm': [[1, -1, 0, 1, 0, 0, 0, 0, 1], [0, 1, 0, 1, 0, 0, 0, 0, -1]],
+        'm-3':   [[-1, 0, 0, 0, -1, 0, 0, 0, 1], [-1, 0, 0, 0, 1, 0, 0, 0, -1], [0, 0, 1, 1, 0, 0, 0, 1, 0]],
+        'm-3m':  [[0, -1, 0, 1, 0, 0, 0, 0, 1], [0, 0, 1, 1, 0, 0, 0, 1, 0]]
+    };
+
+    // The seven trigonal groups whose symmetry sits on the TERTIARY
+    // directions: P312, P3112, P3212, P31m, P31c, P-31m, P-31c. Everything
+    // else in 149-167 is -3m1. sg_engine.js reports both as plain "-3m", so
+    // the split has to come from the number.
+    const _LAUE_31M_NUMBERS = new Set([149, 151, 153, 157, 159, 162, 163]);
+
+    // The lowest-symmetry Laue class of each system. Used as a last resort:
+    // under-merging costs nothing physical, because the sub-orbits it
+    // produces sit at identical d and their multiplicities still sum to the
+    // true one, so the total intensity of every peak stays correct.
+    const _MINIMAL_LAUE_FOR_SYSTEM = {
+        triclinic: '-1', monoclinic: '2/m', orthorhombic: 'mmm',
+        tetragonal: '4/m', trigonal: '-3', rhombohedral: '-3',
+        hexagonal: '6/m', cubic: 'm-3'
+    };
+
+    const _LAUE_ORDER_BY_SYSTEM = {
+        triclinic: [2], monoclinic: [4], orthorhombic: [8],
+        tetragonal: [8, 16], trigonal: [6, 12], rhombohedral: [6, 12],
+        hexagonal: [12, 24], cubic: [24, 48]
+    };
+
+    function _normaliseLaue(s) {
+        if (typeof s !== 'string') return null;
+        const t = s.trim().toLowerCase().replace(/[\s_]+/g, '');
+        const alias = {
+            '-1': '-1', '1bar': '-1',
+            '2/m': '2/m', '2/m1': '2/m', '12/m1': '2/m', '112/m': '2/m',
+            'mmm': 'mmm', '2/mmm': 'mmm',
+            '4/m': '4/m', '4/mmm': '4/mmm',
+            '-3': '-3', '3bar': '-3',
+            '-3m': '-3m', '-3m1': '-3m1', '-31m': '-31m', '3barm': '-3m',
+            '6/m': '6/m', '6/mmm': '6/mmm',
+            'm-3': 'm-3', 'm3': 'm-3', 'm3bar': 'm-3',
+            'm-3m': 'm-3m', 'm3m': 'm-3m', 'm3barm': 'm-3m'
+        };
+        return alias[t] || null;
+    }
+
+    // Laue key for the generator table, resolving the -3m setting from the
+    // space-group number when the class alone is ambiguous.
+    function _laueKeyFor(spaceGroup) {
+        const key = _normaliseLaue(spaceGroup && spaceGroup.laue_class);
+        if (key === '-3m') {
+            return _LAUE_31M_NUMBERS.has(spaceGroup.number) ? '-31m' : '-3m1';
+        }
+        if (key === '2/m') {
+            return '2/m_' + monoclinicUniqueAxis(spaceGroup);
+        }
+        return key;
+    }
+
     /**
+     * The database record for a space group's CURRENT setting, or null.
+     * Exact match only, and never a ":R" one -- every index in this program is
+     * on hexagonal axes, and settings[0] is not a safe default because a
+     * different setting can be a different Laue group entirely.
+     */
+    function _findSettingRecord(spaceGroup) {
+        if (!spaceGroup) return null;
+        const db = (typeof globalThis !== 'undefined') ? globalThis.SG_DATABASE : null;
+        const entry = db && db.space_groups && db.space_groups[String(spaceGroup.number)];
+        const settings = (entry && Array.isArray(entry.settings)) ? entry.settings : null;
+        if (!settings || !settings.length) return null;
+        const usable = settings.filter(s => {
+            const sym = String((s && s.symbol) || '').replace(/\s+/g, '');
+            const hall = String((s && s.hall) || '');
+            return !/:R$/i.test(sym) && hall.indexOf('*') === -1;
+        });
+        const norm = (x) => String(x || '').replace(/\s+/g, '').toUpperCase();
+        const setting = usable.find(s => spaceGroup.hall && s.hall === spaceGroup.hall)
+                     || usable.find(s => spaceGroup.symbol && s.symbol === spaceGroup.symbol)
+                     || usable.find(s => spaceGroup.symbol && norm(s.symbol) === norm(spaceGroup.symbol))
+                     || null;
+        return setting ? { entry, setting } : null;
+    }
+
+    /** Whichever operator array a setting carries: v7 "symops" or v5 "rotations". */
+    function _settingRotations(st) {
+        if (!st) return null;
+        if (Array.isArray(st.symops) && st.symops.length) return st.symops;
+        if (Array.isArray(st.rotations) && st.rotations.length) return st.rotations;
+        return null;
+    }
+
+    /**
+     * Unique axis implied by a monoclinic operator list, or null if the list
+     * does not describe one. Every rotation must be diagonal: a 2-fold along
+     * an axis is diag with a single +1, the perpendicular mirror is diag with
+     * a single -1, and identity and inversion carry no information. Anything
+     * off-diagonal means the 2-fold is not along a cell axis.
+     */
+    function _monoclinicAxisFromRotations(raw) {
+        if (!Array.isArray(raw) || !raw.length) return null;
+        const AX = ['a', 'b', 'c'];
+        let found = null;
+        for (const item of raw) {
+            const r = _normRot(item);
+            if (!r) return null;
+            if (r[1] || r[2] || r[3] || r[5] || r[6] || r[7]) return null;   // off-diagonal
+            const d = [r[0], r[4], r[8]];
+            const plus = d.filter(v => v === 1).length;
+            let idx = -1;
+            if (plus === 1) idx = d.indexOf(1);          // 2-fold along that axis
+            else if (plus === 2) idx = d.indexOf(-1);    // mirror perpendicular to it
+            else continue;                                // identity or inversion
+            if (idx < 0) continue;
+            if (found && found !== AX[idx]) return null;  // self-contradictory
+            found = AX[idx];
+        }
+        return found;
+    }
+
+    /**
+     * Rotation operators of the Laue group of `spaceGroup`, as flat row-major
+     * 3x3 integer matrices. Applied to indices as (h,k,l) -> (h,k,l)*R, which
+     * is the same convention already used by cfIsCentric() above.
+     */
+    function getLaueReciprocalOps(spaceGroup) {
+        if (!spaceGroup) return null;
+        const system = spaceGroup.system;
+        const cacheK = `${spaceGroup.number}|${spaceGroup.hall || spaceGroup.symbol || ''}|${spaceGroup.laue_class || ''}`;
+        if (_laueOpsCache.has(cacheK)) return _laueOpsCache.get(cacheK);
+
+        const allowed = _LAUE_ORDER_BY_SYSTEM[system] || null;
+        const accept = (ops) => (ops && (!allowed || allowed.indexOf(ops.length) !== -1)) ? ops : null;
+
+        let ops = null;
+        let source = '';
+
+        //  1. Best source: the operators of THIS setting, straight from the
+        //     database. The v7 generator writes "symops" (full operator list,
+        //     r = 9 ints row-major, x' = r.x + t) and "rotations" (rotation
+        //     parts only, deduplicated). Either works here, because only the
+        //     rotation parts matter for a reflection orbit -- translations
+        //     move the phase, not the index. Setting-correct, so it resolves
+        //     -3m1 / -31m, the monoclinic unique axis and m-3 / m-3m without
+        //     guessing.
+        try {
+            const rec = _findSettingRecord(spaceGroup);
+            const entry = rec && rec.entry;
+            const st = rec && rec.setting;
+            if (!ops && st) {
+                const raw = _settingRotations(st);
+                if (raw) {
+                    const seeds = raw.map(_normRot);
+                    // The monoclinic metric can put its oblique angle on one
+                    // cell axis only, so a 2-fold along anything other than a,
+                    // b or c cannot be represented. Refuse it here rather than
+                    // build orbits the metric disagrees with.
+                    const monoOK = (system !== 'monoclinic') || !!_monoclinicAxisFromRotations(raw);
+                    if (!monoOK) {
+                        console.warn(`HKL Gen: SG ${spaceGroup.number} setting "${st.symbol}" has a `
+                            + `monoclinic axis that is not a cell axis. The reciprocal metric cannot `
+                            + `express it, so the operators are being ignored and unique axis `
+                            + `${monoclinicUniqueAxis(spaceGroup)} assumed. Peak positions for this `
+                            + `setting will not be right.`);
+                    }
+                    if (monoOK && seeds.every(Boolean)) {
+                        const grp = _closeLaueGroup(seeds);
+                        // order_p is the point-group order, written by the v7
+                        // generator. The Laue group is the point group plus -1,
+                        // so its order is order_p for a centrosymmetric group
+                        // and twice that otherwise. An exact check, and a much
+                        // sharper one than the per-system list below.
+                        let expected = 0;
+                        if (grp && st.order_p > 0) {
+                            const centro = (entry.centrosymmetric !== undefined)
+                                ? !!entry.centrosymmetric : !!spaceGroup.centrosymmetric;
+                            expected = centro ? st.order_p : 2 * st.order_p;
+                        }
+                        if (grp && expected && grp.length !== expected) {
+                            console.warn(`HKL Gen: operators for SG ${spaceGroup.number} setting `
+                                + `"${st.symbol}" closed to order ${grp.length}, expected ${expected} `
+                                + `from order_p=${st.order_p}. Ignoring them.`);
+                        } else {
+                            ops = accept(grp);
+                            if (ops) source = 'space-group operators';
+                        }
+                    }
+                }
+            }
+        } catch (e) { ops = null; }
+
+        //  2. Generators keyed on the declared Laue class.
+        if (!ops) {
+            const gens = _LAUE_GENERATORS[_laueKeyFor(spaceGroup)];
+            if (gens) {
+                ops = accept(_closeLaueGroup(gens));
+                if (ops) source = 'Laue-class table';
+            }
+        }
+
+        //  3. Last resort: the minimal Laue class of the system (see note on
+        //     _MINIMAL_LAUE_FOR_SYSTEM -- safe, only over-splits).
+        if (!ops) {
+            const gens = _LAUE_GENERATORS[_MINIMAL_LAUE_FOR_SYSTEM[system]];
+            if (gens) {
+                ops = _closeLaueGroup(gens);
+                if (ops) {
+                    source = 'minimal Laue class for the system';
+                    console.warn(`HKL Gen: could not identify the Laue group of SG ${spaceGroup.number} `
+                        + `(laue_class="${spaceGroup.laue_class}"). Falling back to ${_MINIMAL_LAUE_FOR_SYSTEM[system]}: `
+                        + `peak positions and total intensities stay correct, but some orbits will be listed twice.`);
+                }
+            }
+        }
+
+        //  Cross-check against sg_engine.js. Diagnostic only: the orbit size
+        //  computed here is what the dedup below actually uses, so generation
+        //  and weighting can never disagree with each other. One probe is not
+        //  enough -- sg_engine's tables are right for general hkl in several
+        //  classes and wrong only on the special forms -- so probe a general
+        //  reflection, the axial and mirror-plane forms, and (1,-2,l), which
+        //  is on a hexagonal mirror even though |h| != |k|.
+        if (ops) {
+            try {
+                const probes = [[3, 2, 1], [1, 0, 1], [1, 1, 1], [2, 1, 0], [1, -2, 1], [1, 1, 0], [0, 0, 1], [1, 0, 0]];
+                const bad = [];
+                for (const [ph, pk, pl] of probes) {
+                    const mine = _laueOrbit(ph, pk, pl, ops).size;
+                    // Hand sg_engine the axis THIS module resolved from the
+                    // operators, so a missing or wrong qualifier does not make
+                    // the two disagree over something they actually agree on.
+                    const probeSg = (system === 'monoclinic')
+                        ? Object.assign({}, spaceGroup, { setting_description: monoclinicUniqueAxis(spaceGroup) })
+                        : spaceGroup;
+                    const theirs = getMultiplicityAndCanonicalHKL(ph, pk, pl, spaceGroup.laue_class, probeSg);
+                    if (theirs && theirs.multiplicity > 0 && theirs.multiplicity !== mine) {
+                        bad.push(`(${ph},${pk},${pl}) engine=${theirs.multiplicity} orbit=${mine}`);
+                    }
+                }
+                if (bad.length) {
+                    console.warn(`HKL Gen: sg_engine.js getMultiplicity disagrees with the Laue orbit for `
+                        + `${spaceGroup.symbol || spaceGroup.number} (Laue ${spaceGroup.laue_class}, ops from the ${source}): `
+                        + bad.join(', ') + '. The orbit sizes are used.');
+                }
+            } catch (e) { /* diagnostic only */ }
+        }
+
+        _laueOpsCache.set(cacheK, ops);
+        return ops;
+    }
+
+    /**
+     * Orbit of (h,k,l) under a Laue operator set.
+     * Returns { key, size, h, k, l }:
+     *   key  - lexicographic maximum over the whole orbit; an orbit invariant,
+     *          used to deduplicate.
+     *   size - number of DISTINCT images = the powder multiplicity.
+     *   h,k,l- lexicographic maximum among the members with l >= 0. Every
+     *          orbit has one, because -1 is in the group. Used as the label,
+     *          so the list reads (1,0,4) rather than (-1,1,-4).
+     */
+    function _laueOrbit(h, k, l, ops) {
+        const images = new Set();
+        let kh = -Infinity, kk = 0, kl = 0;
+        let rh = null, rk = 0, rl = 0;
+        for (let i = 0; i < ops.length; i++) {
+            const r = ops[i];
+            const H = h * r[0] + k * r[3] + l * r[6];
+            const K = h * r[1] + k * r[4] + l * r[7];
+            const L = h * r[2] + k * r[5] + l * r[8];
+            images.add(H + ',' + K + ',' + L);
+            if (H > kh || (H === kh && (K > kk || (K === kk && L > kl)))) { kh = H; kk = K; kl = L; }
+            if (L >= 0 && (rh === null || H > rh || (H === rh && (K > rk || (K === rk && L > rl))))) {
+                rh = H; rk = K; rl = L;
+            }
+        }
+        return { key: kh + ',' + kk + ',' + kl, size: images.size, h: rh, k: rk, l: rl };
+    }
+
+    /**
+     * 1/d^2 as a function of (h,k,l), using exactly the same metric as
+     * updateHklPositions() so that generation and the downstream 2-theta
+     * filter can never disagree about which reflections are in range.
+     * `lSeparable` is true when 1/d^2 has no h*l or k*l cross term, i.e. when
+     * the l loop can break as soon as one l fails.
+     */
+    function buildInvDsq(system, params) {
+        const { a, b, c, alpha, beta, gamma } = params;
+        if (!(a > 0)) return null;
+        const deg2rad = Math.PI / 180;
+        const a_sq = a * a;
+
+        switch (system) {
+            case 'cubic':
+                return { f: (h, k, l) => (h * h + k * k + l * l) / a_sq, lSeparable: true };
+
+            case 'tetragonal': {
+                const c_sq = (c > 0) ? c * c : a_sq;
+                return { f: (h, k, l) => (h * h + k * k) / a_sq + (l * l) / c_sq, lSeparable: true };
+            }
+
+            case 'orthorhombic': {
+                const b_sq = (b > 0) ? b * b : a_sq;
+                const c_sq = (c > 0) ? c * c : a_sq;
+                return { f: (h, k, l) => (h * h) / a_sq + (k * k) / b_sq + (l * l) / c_sq, lSeparable: true };
+            }
+
+            case 'hexagonal':
+            case 'trigonal':
+            case 'rhombohedral': {
+                const c_sq = (c > 0) ? c * c : a_sq;
+                return {
+                    f: (h, k, l) => 4 * (h * h + h * k + k * k) / (3 * a_sq) + (l * l) / c_sq,
+                    lSeparable: true
+                };
+            }
+
+            // Monoclinic is not special-cased: the general metric below
+            // reduces to the monoclinic closed form exactly once the two
+            // fixed angles are 90, and it does so for unique axis a, b and c
+            // alike. updateHklPositions() shares the same treatment, so the
+            // generator and the 2-theta filter cannot drift apart.
+            case 'monoclinic':
+            case 'triclinic': {
+                const b_val = (b > 0) ? b : a;
+                const c_val = (c > 0) ? c : a;
+                const al = (alpha || 90) * deg2rad, be = (beta || 90) * deg2rad, ga = (gamma || 90) * deg2rad;
+                const cosA = Math.cos(al), cosB = Math.cos(be), cosG = Math.cos(ga);
+                const sinA = Math.sin(al), sinB = Math.sin(be), sinG = Math.sin(ga);
+                const vf = 1 - cosA * cosA - cosB * cosB - cosG * cosG + 2 * cosA * cosB * cosG;
+                if (vf <= 1e-9 || Math.abs(sinA) < 1e-9 || Math.abs(sinB) < 1e-9 || Math.abs(sinG) < 1e-9) return null;
+                const V = a * b_val * c_val * Math.sqrt(vf);
+                const as = b_val * c_val * sinA / V, bs = a * c_val * sinB / V, cs = a * b_val * sinG / V;
+                const cAs = (cosB * cosG - cosA) / (sinB * sinG);
+                const cBs = (cosA * cosG - cosB) / (sinA * sinG);
+                const cGs = (cosA * cosB - cosG) / (sinA * sinB);
+                const as_sq = as * as, bs_sq = bs * bs, cs_sq = cs * cs;
+                const ab = 2 * as * bs * cGs, bc = 2 * bs * cs * cAs, ac = 2 * as * cs * cBs;
+                return {
+                    f: (h, k, l) => h * h * as_sq + k * k * bs_sq + l * l * cs_sq
+                                  + h * k * ab + k * l * bc + h * l * ac,
+                    lSeparable: false
+                };
+            }
+
+            default:
+                return null;
+        }
+    }
+
+/**
  * Generates the list of raw HKL indices {h, k, l, multiplicity} for PREVIEW/REFINEMENT.
  * Checks cache first in the worker context.
  * @param {object} spaceGroup - The space group object containing rules, system, laue_class.
@@ -2411,7 +4659,7 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     // can never be reused after a parameter change.
     let cacheKey = null;
     if (spaceGroup && typeof spaceGroup.number === 'number' && params) {
-        cacheKey = `${spaceGroup.number}|${params.a}|${params.b}|${params.c}|${params.lambda}|${maxTth}`;
+        cacheKey = `${spaceGroup.number}|${params.a}|${params.b}|${params.c}|${params.alpha}|${params.beta}|${params.gamma}|${params.lambda}|${maxTth}`;
         if (typeof self !== 'undefined' && typeof importScripts === 'function' && hklIndexCache[cacheKey]) {
              return hklIndexCache[cacheKey]; // Return cached version from worker
         }
@@ -2435,167 +4683,73 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     const maxDim = Math.max(a || 0, b || a || 0, c || a || 0);
     if (maxDim <= 0) return [];
 
-    //   OPTIMIZATION: Calculate max 1/d^2 for pruning  
+    //   Pruning limits  
     const sinThetaMax = Math.sin(maxTth * Math.PI / 360);
     if (sinThetaMax <= 0) return [];
     const dMin = lambda / (2 * sinThetaMax);
-    if (dMin <= 0) return []; // Safety check for dMin
+    if (dMin <= 0) return [];
     const inv_d_sq_max = 1.0 / (dMin * dMin);
-    // Be more conservative with maxIndex if maxDim is very large, prevent huge loops
     const baseMaxIndex = Math.ceil(maxDim / dMin) + 5;
-    const maxIndex = Math.min(baseMaxIndex, 50); // Set an absolute max index limit (e.g., 50)
+    const maxI = Math.min(baseMaxIndex, 50); // absolute safety cap
 
+    const metric = buildInvDsq(sgSystem, params);
+    if (!metric) {
+        console.error(`HKL Gen Error: could not build the metric for system "${sgSystem}".`);
+        return [];
+    }
+    const invDsq = metric.f;
 
-    // Pre-calculate params squared
-    const a_sq = a * a;
-    // Handle cases where b or c might not be relevant for the system but are passed in params
-    const b_sq = (sgSystem === 'orthorhombic' || sgSystem === 'monoclinic' || sgSystem === 'triclinic') ? ((b && b > 0) ? b * b : a_sq) : a_sq;
-    const c_sq = (sgSystem !== 'cubic') ? ((c && c > 0) ? c * c : a_sq) : a_sq;
-    //   End Optimization Setup  
+    const ops = getLaueReciprocalOps(spaceGroup);
+    if (!ops) {
+        console.error(`HKL Gen Error: no Laue operators for SG ${spaceGroup.number} (system "${sgSystem}").`);
+        return [];
+    }
 
     let rawReflections = [];
-    const addedHKLs = new Set();
-    const getKey = (h, k, l) => `${h},${k},${l}`;
+    const seenOrbits = new Set();
 
-    const loopAndAdd = (h, k, l) => {
-        if (h === 0 && k === 0 && l === 0) return;
-        const key = getKey(h, k, l);
-        if (addedHKLs.has(key)) return;
+    //   Candidate region  
+    // Every Laue group contains -1, so the half-space l >= 0 (with h and k
+    // unrestricted) is guaranteed to contain at least one member of every
+    // orbit, for every crystal system. Over-generation is harmless: the
+    // orbit key below collapses it. This replaces the eight hand-derived
+    // wedges, which were the source of the dropped and duplicated
+    // reflections described above.
+    for (let h = -maxI; h <= maxI; h++) {
+        for (let k = -maxI; k <= maxI; k++) {
 
-        // Pass the full spaceGroup object to isReflectionAllowed
-        if (isReflectionAllowed(h, k, l, spaceGroup)) {
-            const { multiplicity } = getMultiplicityAndCanonicalHKL(h, k, l, sgLaueClass);
-             if (multiplicity > 0) {
-                 rawReflections.push({
-                    h_orig: h, k_orig: k, l_orig: l,
-                    hkl_list: [`(${h},${k},${l})`],
-                    multiplicity: multiplicity
+            // Cheapest possible rejection of a whole (h,k) column. For the
+            // separable metrics 1/d^2 is minimised over l at l = 0, so if
+            // even that is out of range nothing in the column can be in.
+            if (metric.lSeparable && invDsq(h, k, 0) > inv_d_sq_max && !(h === 0 && k === 0)) continue;
+
+            for (let l = 0; l <= maxI; l++) {
+                if (h === 0 && k === 0 && l === 0) continue;   // origin
+
+                const q = invDsq(h, k, l);
+                if (!(q > 0) || !isFinite(q)) continue;
+                if (q > inv_d_sq_max) {
+                    if (metric.lSeparable) break;               // no larger l can pass
+                    continue;                                   // cross terms: keep scanning
+                }
+
+                const orb = _laueOrbit(h, k, l, ops);
+                if (seenOrbits.has(orb.key)) continue;
+                seenOrbits.add(orb.key);
+
+                // Systematic absences are an orbit invariant, so testing the
+                // canonical member decides the whole orbit.
+                if (!isReflectionAllowed(orb.h, orb.k, orb.l, spaceGroup)) continue;
+                if (!(orb.size > 0)) continue;
+
+                rawReflections.push({
+                    h_orig: orb.h, k_orig: orb.k, l_orig: orb.l,
+                    hkl_list: [`(${orb.h},${orb.k},${orb.l})`],
+                    multiplicity: orb.size
                 });
-                addedHKLs.add(key);
-             }
-        }
-    };
-
-    const maxI = maxIndex;
-
-    // Use sgSystem consistently
-    if (sgSystem === 'monoclinic') {
-        // Laue 2/m (unique axis b): wedge k>=0, l>=0, h free.
-        // FIX: for l=0, (h,k,0) and (-h,k,0) are 2/m-equivalent, so require
-        // h>=0 there to avoid duplicated peaks at the same position.
-        for (let h = -maxI; h <= maxI; h++) {
-            for (let k = 0; k <= maxI; k++) {
-                for (let l = 0; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue; // Origin
-                    if (l === 0 && h < 0) continue;
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else if (sgSystem === 'triclinic') {
-        // FIX: Laue -1 only relates (h,k,l) to (-h,-k,-l). The old k>=0, l>=0
-        // wedge missed every reflection with mixed signs, e.g. (2,1,-3).
-        // Friedel-unique hemisphere:
-        //   l > 0, or (l = 0 and k > 0), or (l = 0, k = 0, h > 0).
-        for (let h = -maxI; h <= maxI; h++) {
-            for (let k = -maxI; k <= maxI; k++) {
-                for (let l = 0; l <= maxI; l++) {
-                    if (l === 0 && (k < 0 || (k === 0 && h <= 0))) continue;
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else if (sgSystem === 'orthorhombic') {
-        if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0) return []; // Need valid params
-        for (let h = 0; h <= maxI; h++) {
-            const h_term = (h*h) / a_sq;
-            if (h_term > inv_d_sq_max && h > 0) break; // Prune h loop
-
-            for (let k = 0; k <= maxI; k++) {
-                const hk_term = h_term + (k*k) / b_sq;
-                if (hk_term > inv_d_sq_max && k > 0) break; // Prune k loop
-
-                for (let l = 0; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
-                    const hkl_term = hk_term + (l*l) / c_sq;
-                    if (hkl_term > inv_d_sq_max) {
-                         // If l=0 fails, all higher l will fail for this h,k. Break inner loop.
-                         // If l>0 fails, move to next k.
-                         break; // Prune l loop
-                    }
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else if (sgSystem === 'hexagonal' || sgSystem === 'trigonal' || sgSystem === 'rhombohedral') {
-        if (a_sq <= 0 || c_sq <= 0) return []; // Need a and c
-        const a_term_prefactor = 4.0 / (3.0 * a_sq);
-        // Asymmetric unit for hexagonal Laue groups (6/m, 6/mmm): h>=k>=0, l>=0
-        // For trigonal Laue groups (-3, -3m), depends on centering if R.
-        // Let's use h>=k>=0, l can be +/- for -3, -3m for broader coverage initially
-        const l_limit = (sgLaueClass === '6/m' || sgLaueClass === '6/mmm') ? 0 : -maxI;
-
-        for (let h = 0; h <= maxI; h++) {
-            const h_term_only = a_term_prefactor * (h*h);
-            // Optimization: if even h=1 is too large, break early (check h > 0)
-             if (h_term_only > inv_d_sq_max && h > 0) break;
-
-            for (let k = 0; k <= h; k++) { // Use h >= k >= 0 convention
-                const hk_term = a_term_prefactor * (h*h + h*k + k*k);
-                 // Optimization: if hk term exceeds limit, increasing k further won't help
-                 if (hk_term > inv_d_sq_max && k > 0) break;
-
-                for (let l = l_limit; l <= maxI; l++) { // Use l>=0 or l+/- depending on Laue group
-                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
-                    const hkl_term = hk_term + (l*l) / c_sq;
-                    if (hkl_term > inv_d_sq_max) {
-                        // If l is increasing and positive, break loop for this h,k
-                        if (l >= 0) break;
-                         // If l is negative and increasing towards 0, continue until l>=0 check fails
-                    }
-                     // Specific check for hexagonal 000 point which is not allowed
-                     if (h === 0 && k === 0 && l === 0) continue;
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else if (sgSystem === 'tetragonal') {
-        // FIX: tetragonal previously shared the cubic h>=k>=l wedge, which is
-        // only valid when the axes are interchangeable. In tetragonal, l is a
-        // distinct axis, so restricting l<=k dropped every reflection with
-        // l > k (e.g. 001, 101, 102, 112). Correct wedge: h>=k>=0, l>=0 free.
-        if (a_sq <= 0 || c_sq <= 0) return [];
-        for (let h = 0; h <= maxI; h++) {
-            const h_term = (h*h) / a_sq;
-            if (h_term > inv_d_sq_max && h > 0) break;
-            for (let k = 0; k <= h; k++) {
-                const hk_term = h_term + (k*k) / a_sq;
-                if (hk_term > inv_d_sq_max && k > 0) break;
-                for (let l = 0; l <= maxI; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
-                    const hkl_term = hk_term + (l*l) / c_sq;
-                    if (hkl_term > inv_d_sq_max) break; // l increasing: no larger l can pass
-                    loopAndAdd(h, k, l);
-                }
-            }
-        }
-    } else { // Cubic: h >= k >= l >= 0 wedge is valid (axes interchangeable)
-        if (a_sq <= 0) return [];
-        for (let h = 0; h <= maxI; h++) {
-            const h_term_factor = (h*h);
-            if (h_term_factor / a_sq > inv_d_sq_max && h > 0) break;
-            for (let k = 0; k <= h; k++) {
-                const hk_term_factor = h_term_factor + (k*k);
-                if (hk_term_factor / a_sq > inv_d_sq_max && k > 0) break;
-                for (let l = 0; l <= k; l++) {
-                    if (h === 0 && k === 0 && l === 0) continue; // Skip origin
-                    if ((hk_term_factor + l*l) / a_sq > inv_d_sq_max) break;
-                    loopAndAdd(h, k, l);
-                }
             }
         }
     }
-
 
     //   Worker Cache Update  
     // Only update cache if in worker context and cacheKey is valid
@@ -2606,7 +4760,6 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
 
     return rawReflections;
 }
-
 function updateHklPositions(hklList, params, system) {
     const { a, b, c, alpha, beta, gamma, lambda } = params;
     if (!hklList || hklList.length === 0) return;
@@ -2619,10 +4772,14 @@ function updateHklPositions(hklList, params, system) {
     const lambda_sq_over_4 = (lambda * lambda) / 4.0;
     const a_sq = a * a;
 
-    let b_sq, c_sq, sin_beta_sq, cos_beta;
+    let b_sq, c_sq;
     let a_star_sq, b_star_sq, c_star_sq, ab_star, bc_star, ac_star;
 
-    if (system === 'triclinic') {
+    // Monoclinic shares the general reciprocal metric with triclinic. With
+    // the two fixed angles at 90 it reduces to the closed form it replaces,
+    // exactly (agreement to 1 part in 1e16), and unique axis a, b and c all
+    // come out right without a branch each.
+    if (system === 'triclinic' || system === 'monoclinic') {
         const al = (alpha || 90) * deg2rad;
         const be = (beta || 90) * deg2rad;
         const ga = (gamma || 90) * deg2rad;
@@ -2654,18 +4811,7 @@ function updateHklPositions(hklList, params, system) {
         bc_star = 2 * b_star * c_star * cosA_star;
         ac_star = 2 * a_star * c_star * cosB_star;
         
-    } else if (system === 'monoclinic') {
-        const beta_rad = (beta || 90) * deg2rad;
-        sin_beta_sq = Math.sin(beta_rad);
-        sin_beta_sq *= sin_beta_sq;
-        cos_beta = Math.cos(beta_rad);
-        b_sq = (b && b > 0) ? (b * b) : a_sq;
-        c_sq = (c && c > 0) ? (c * c) : a_sq;
-         if (Math.abs(sin_beta_sq) < 1e-9) {
-             hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
-             return;
-         }
-    } else if (system === 'tetragonal' || system === 'hexagonal' || system === 'rhombohedral' || system === 'trigonal') {
+        } else if (system === 'tetragonal' || system === 'hexagonal' || system === 'rhombohedral' || system === 'trigonal') {
          c_sq = (c && c > 0) ? (c * c) : a_sq;
     } else if (system === 'orthorhombic') {
          b_sq = (b && b > 0) ? (b * b) : a_sq;
@@ -2703,9 +4849,6 @@ function updateHklPositions(hklList, params, system) {
                     inv_d_sq = 4 * (h2 + h*k + k2) / (3 * a_sq) + l2 / c_sq;
                     break;
                 case 'monoclinic':
-                     if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0 || a <= 0 || c <= 0) throw new Error("Invalid lattice param");
-                    inv_d_sq = (1/sin_beta_sq) * (h2/a_sq + k2*sin_beta_sq/b_sq + l2/c_sq - (2*h*l*cos_beta)/(a*c));
-                    break;
                 case 'triclinic':
                     if (a_star_sq === undefined) throw new Error("Invalid lattice param");
                     inv_d_sq = h2 * a_star_sq + k2 * b_star_sq + l2 * c_star_sq + h * k * ab_star + k * l * bc_star + h * l * ac_star;
@@ -2914,25 +5057,7 @@ function softFloor(x, f) {
     return f * Math.pow(Math.pow(r, 4) + 1, 0.25);
 }
 
-/**
- * Floors the profile widths at the resolvable FWHM.
- *
- * FIX: the floor used to be applied to GW and LX individually, via hard bounds
- * in getParameterMapping. But sigma^2 = GU tan^2(th) + GV tan(th) + GW +
- * GP/cos^2(th), so bounding GW alone is simultaneously too weak -- GV < 0 can
- * still collapse the peak at low angle -- and too strong, since it ignores what
- * the other terms already contribute. And a HARD bound is what killed the
- * Jacobian column: once a width sat on its floor the finite difference returned
- * exactly zero and the parameter was frozen for the rest of the fit.
- *
- * Both COMPONENTS are floored, not just the convoluted total: simple_pvoigt and
- * split_pvoigt give the Gaussian and the Lorentzian independent widths, so one
- * of them alone can be an unresolvable sub-step spike while the combined FWHM
- * still looks healthy -- and with the area-correct eta mixing that spike then
- * carries its full share of the peak area. Flooring the components implies the
- * floor on the total, so no second pass is needed (which also keeps the five
- * Math.pow calls in getPeakFWHM out of this hot path).
- */
+
 function applyFwhmFloor(gamma_G, gamma_L) {
     return {
         gamma_G: softFloor(gamma_G, MIN_PROFILE_FWHM_DEG),
@@ -3743,9 +5868,14 @@ function calculateWilliamsonHall(params, hklList) {
                 case 'hexagonal': 
                     params.alpha = params.beta = 90; params.gamma = 120; 
                     break;
-                case 'monoclinic': 
-                    params.alpha = params.gamma = 90; 
+                case 'monoclinic': {
+                    // Only the angle about the unique axis is free; the other
+                    // two are exactly 90 by symmetry, whichever axis it is.
+                    const ang = MONOCLINIC_ANGLE_FOR_AXIS[monoclinicUniqueAxis(currentSG)];
+                    ['alpha', 'beta', 'gamma'].forEach(k => { if (k !== ang) params[k] = 90; });
+                    if (!isFinite(params[ang])) params[ang] = 90;
                     break;
+                }
             }
 
             switch (profileType) {
@@ -4135,74 +6265,6 @@ function debounce(func, wait) {
         //  "A Probabilistic Approach to Space-Group Determination from
         //   Powder Diffraction Data."
         //
-        //  WHAT IT DOES
-        //  ------------
-        //  A Pawley refinement treats every integrated intensity as a free
-        //  least-squares parameter, so it returns not only the extracted
-        //  intensities Ihat but the normal matrix behind them. A candidate
-        //  space group S makes exactly one testable statement about that
-        //  vector: a particular subset e of the reflections is systematically
-        //  absent, i.e. their TRUE intensities are identically zero.
-        //  Everything else it leaves free.
-        //
-        //  Model the true intensities as I ~ N(0, P_S), diagonal, with
-        //        P_S[j] = 0          if j is extinct under S
-        //        P_S[j] = tau_j^2    otherwise
-        //  (tau_j = local Wilson-like intensity scale, estimated from the data)
-        //  and the Pawley result as Ihat | I ~ N(I, Q^-1), Q the intensity
-        //  precision. Marginalising over the unknown true intensities:
-        //
-        //        Ihat ~ N(0, Q^-1 + P_S)
-        //
-        //  Writing f for the non-extinct set, doing the Gaussian integral in
-        //  precision space and dropping everything that does not depend on S:
-        //
-        //        -2 ln P(D|S) = SUM_f ln tau_j^2 + ln det B_S - b_S^T B_S^-1 b_S
-        //        B_S = Q_ff + diag(1/tau_f^2),   b_S = (Q Ihat)_f
-        //
-        //  The quadratic form is the evidence carried by the would-be-absent
-        //  reflections, evaluated with the FULL correlation structure. That is
-        //  the whole point of the paper: heavily overlapped reflections are
-        //  strongly correlated in a Pawley fit, and a "supposedly absent"
-        //  reflection can carry a large apparent intensity purely by borrowing
-        //  it from an overlapping neighbour. Treating them as independent (the
-        //  naive sum of (I/sigma)^2) badly misjudges the evidence. The
-        //  log-determinant is the Occam factor; without it the group with no
-        //  extinction conditions at all would always win by construction.
-        //
-        //  WHY PRECISION SPACE
-        //  -------------------
-        //  The obvious route is to invert the normal matrix and work with the
-        //  covariance. That fails outright whenever two reflections coincide
-        //  exactly in 2-theta -- (333)/(511) in a cubic cell, and most
-        //  rhombohedral and high-symmetry lattices -- because their intensities
-        //  are then individually undeterminable and the covariance does not
-        //  exist. B_S above needs no such inversion: Q may be singular, while
-        //  Q + diag(1/tau^2) is always positive definite. The test therefore
-        //  still works on exactly the high-symmetry cells where the candidate
-        //  list is longest and the answer is most worth having.
-        //
-        //  Only the intensity block is wanted, marginalised over the lattice,
-        //  profile and background parameters -- that is the Schur complement
-        //  Q_II - Q_IO Q_OO^-1 Q_OI, not the raw sub-block, which would treat
-        //  the rest of the model as exactly known and understate the errors.
-        //
-        //  tau is estimated per candidate, from the reflections that candidate
-        //  says are PRESENT -- see tauForFreeSet() for why a single global
-        //  estimate silently breaks centred lattices.
-        //
-        //  Posteriors follow by normalising over the candidate list with a
-        //  flat prior over distinct EXTINCTION SYMBOLS. Settings that predict
-        //  identical absences are indistinguishable by powder diffraction, so
-        //  they are pooled into one row and listed together.
-        //
-        //  DEVIATION FROM THE PAPER
-        //  ------------------------
-        //  The paper uses a Wilson (exponential) prior on the intensities; a
-        //  Gaussian of the same scale is used here because it makes the
-        //  marginalisation exact in closed form. Rankings are essentially
-        //  unchanged; the absolute probabilities should be read as approximate.
-        //
         //  IMPORTANT LIMITATION
         //  --------------------
         //  A reflection can only be tested if it was actually a parameter of
@@ -4296,10 +6358,13 @@ function debounce(func, wait) {
 
             // Every setting sharing the Laue class of the refinement. The Laue
             // class is fixed by the diffraction symmetry the user has already
-            // committed to (it sets the reflection wedge and the
+            // committed to (it sets the reflection orbits and the
             // multiplicities), so it is not itself under test here -- only the
             // absences are. SG_ENGINE.listSettings already drops the
             // rhombohedral-axes settings the HKL generator cannot index.
+            // Monoclinic settings off unique axis b are no longer excluded:
+            // the generator reads the unique axis from the setting and the
+            // metric follows it, so they are scored on their own terms.
             function candidateSettings(laue, system) {
                 const out = [];
                 for (let num = 1; num <= 230; num++) {
@@ -4307,12 +6372,6 @@ function debounce(func, wait) {
                     try { entries = SG_ENGINE.listSettings(num) || []; } catch { entries = []; }
                     for (const rec of entries) {
                         if (!rec || rec.laue_class !== laue) continue;
-                        // The HKL generator only handles monoclinic on unique
-                        // axis b, so a unique-a / unique-c setting would be
-                        // scored against the wrong reflection wedge. Leave them
-                        // out rather than report a number that cannot be trusted.
-                        if (system === 'monoclinic'
-                            && !/^b/.test(rec.setting_description || '')) continue;
                         out.push(rec);
                     }
                 }
@@ -4974,6 +7033,7 @@ function debounce(func, wait) {
    
         updatePawleyButtonState();
         updateSgTestButtonState();
+        updateChargeFlippingTabState();
     }
         
     function updateUI(params, stats, netPeakPattern_full, background_full, scaleFactor, hklList) {
@@ -5559,6 +7619,8 @@ function rescalePlot(updateY = false) {
 
             const finalBkg = calculateTotalBackground(expData.tth, params, backgroundAnchors);
             const i_obs_map = new Map();
+            const sigma_map = new Map();
+            const withData = new Set();
 
             // Pass 2: partition the observed net intensity over each peak's window.
             // NOTE: in Le Bail mode this reproduces the extraction exactly (it is
@@ -5571,8 +7633,12 @@ function rescalePlot(updateY = false) {
                 const s = shapes[j];
                 if (!s) return;
 
-                let area = 0;
-                let prev_partitioned_I = 0;
+                // Two passes over the window: collect the partitioned points,
+                // then integrate. The second pass also propagates counting
+                // statistics, which is the only usable uncertainty when the
+                // normal matrix is singular -- and with exactly overlapping
+                // reflections it usually is.
+                const wTth = [], wPart = [], wVar = [];
                 for (let i = s.startIdx; i < n_points; i++) {
                     const tth = expData.tth[i];
                     if (tth > s.hi) break;
@@ -5583,26 +7649,63 @@ function rescalePlot(updateY = false) {
                     // leBailIntensityExtraction. Clipping here would bias weak
                     // reflections high.
                     const y_obs_net = expData.intensity[i] - finalBkg[i];
-                    const partitioned_I = y_obs_net * fraction;
-
-                    if (i > s.startIdx) {
-                        const step_width = tth - expData.tth[i - 1];
-                        if (step_width > 0) {
-                            area += ((prev_partitioned_I + partitioned_I) / 2) * step_width;
-                        }
-                    }
-                    prev_partitioned_I = partitioned_I;
+                    wTth.push(tth);
+                    wPart.push(y_obs_net * fraction);
+                    // Poisson on the raw counts; the smooth background model
+                    // contributes negligibly to the point variance.
+                    wVar.push(Math.max(1, expData.intensity[i]) * fraction * fraction);
                 }
 
-                if (isFinite(area) && area > 0) {
-                    i_obs_map.set(hkl_string, i_obs_map.get(hkl_string) + area);
+                const npts = wTth.length;
+                let area = 0, variance = 0;
+                for (let i = 1; i < npts; i++) {
+                    const step_width = wTth[i] - wTth[i - 1];
+                    if (step_width > 0) area += ((wPart[i - 1] + wPart[i]) / 2) * step_width;
+                }
+                for (let i = 0; i < npts; i++) {
+                    // Trapezoidal weight of point i, half-steps at the ends.
+                    const lo = i > 0 ? wTth[i] - wTth[i - 1] : 0;
+                    const hi2 = i < npts - 1 ? wTth[i + 1] - wTth[i] : 0;
+                    const w = 0.5 * (lo + hi2);
+                    variance += w * w * wVar[i];
+                }
+
+                if (npts < 2) {
+                    // The peak's window falls outside the fitted 2-theta slice,
+                    // so there is nothing to partition. That is a different
+                    // statement from "the observed area is zero" and the report
+                    // needs to be able to tell them apart.
+                    if (!withData.has(hkl_string)) i_obs_map.set(hkl_string, null);
+                    return;
+                }
+
+                if (isFinite(area)) {
+                    // Do NOT clip. The old guard was `area > 0`, which left the
+                    // map at its initialised 0 whenever the partitioned net
+                    // intensity came out negative -- and then the report showed
+                    // "0.0" for a reflection whose refined intensity was large
+                    // and well determined, which looks like the fit lost the
+                    // peak. A negative partitioned area is a real and useful
+                    // signal: it means the background is running above the data
+                    // across that peak's window. Print it.
+                    const prev = i_obs_map.get(hkl_string);
+                    i_obs_map.set(hkl_string, (typeof prev === 'number' ? prev : 0) + area);
+                    const prevV = sigma_map.get(hkl_string);
+                    sigma_map.set(hkl_string, (typeof prevV === 'number' ? prevV : 0) + variance);
+                    withData.add(hkl_string);
                 }
             });
 
-            return i_obs_map;
+            // Variances were accumulated; report standard deviations.
+            for (const [k, v] of sigma_map) sigma_map.set(k, Math.sqrt(Math.max(0, v)));
+
+            return { area: i_obs_map, sigma: sigma_map };
         }
 
-        function generateReportContent(format = 'summary') {
+        function generateReportContent(format = 'summary', resultsArg = null) {
+            // resultsArg lets the per-run history export a specific snapshot;
+            // callers that pass nothing keep using the live global fitResults.
+            const fitResults = resultsArg || window.__activeReportResults || globalThis.fitResults;
             // Ensure fit results and necessary data are available
             if (!fitResults || !fitResults.params || !fitResults.stats || !fitResults.fitFlags || !fitResults.hklList) {
                 return "Error: Fit results are incomplete or not available.";
@@ -5656,17 +7759,24 @@ function rescalePlot(updateY = false) {
             // FIX: report the SELECTED setting's symbol (e.g. "Pcnm"), not the
             // general/standard symbol (e.g. "Pnma"). Fall back to standard if
             // no setting-specific symbol is present. Note the setting name too.
-            const spaceGroupName = selectedSg
+           
+const spaceGroupName = selectedSg
                 ? `${selectedSg.number} – ${selectedSg.symbol || selectedSg.standard_symbol}`
                   + (selectedSg.setting_description && selectedSg.setting_description !== 'standard'
                      ? ` (setting: ${selectedSg.setting_description})` : '')
                 : 'N/A';
 
+            // Calculate Rexp and safely grab Rp just like in the UI
+            const rexp = stats.r_exp ?? stats.rexp ?? ((stats.rwp && stats.chi2) ? (stats.rwp / Math.sqrt(stats.chi2)) : undefined);
+            const rpVal = stats.r_p ?? stats.rp;
+
             const statsSection = [
                 '--- Refinement Statistics ---',
-                `Rp (%):       ${stats.r_p !== undefined ? stats.r_p.toFixed(3) : 'N/A'}`,
+                `Rp (%):       ${rpVal !== undefined ? rpVal.toFixed(3) : 'N/A'}`,
                 `Rwp (%):      ${stats.rwp !== undefined ? stats.rwp.toFixed(3) : 'N/A'}`,
+                `Rexp (%):     ${rexp !== undefined ? rexp.toFixed(3) : 'N/A'}`,
                 `χ² (GOF):     ${stats.chi2 !== undefined ? stats.chi2.toFixed(3) : 'N/A'}`,
+                `Reflections:  ${hklList ? hklList.length : 'N/A'}`,
                 `Algorithm:    ${algorithmName}`,
                 `Refinement:   ${modeName}`,
                 `Profile:      ${profileName} (${profileType})`,
@@ -5956,7 +8066,7 @@ function rescalePlot(updateY = false) {
                 let i_obs_map = new Map();
                 if (isPawley) {
                     try {
-                         i_obs_map = calculateAllObservedIntensities(hklList, finalParams, workerWorkingData);
+                         i_obs_map = calculateAllObservedIntensities(hklList, finalParams, workerWorkingData).area;
                     } catch(iobsError) {
                          console.error("Error calculating observed intensities:", iobsError);
                          reflectionsSection.push("(Error calculating I_obs)");
@@ -5984,24 +8094,7 @@ function rescalePlot(updateY = false) {
                         // is truncated and pedestal-subtracted. Fall back to the
                         // analytic route only for reflections the extraction
                         // never visited (e.g. a Pawley run).
-                        let total_calc_area;
-                        if (typeof hkl.shapeArea === 'number' && hkl.shapeArea > 0) {
-                            total_calc_area = i_calc_height * hkl.shapeArea;
-                        } else {
-                            total_calc_area = i_calc_height * getPseudoVoigtArea(hkl.tth, hkl, finalParams);
-                            const lambda1 = finalParams.lambda;
-                            const lambda2 = finalParams.lambda2;
-                            const ratio21 = finalParams.ratio;
-                            if (ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6 && i_calc_height > 0) {
-                                const deg2rad = Math.PI / 180;
-                                const sinTheta2 = Math.sin(hkl.tth * deg2rad / 2.0) * (lambda2 / lambda1);
-                                if (Math.abs(sinTheta2) < 1) {
-                                    const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                                    total_calc_area += i_calc_height * ratio21 * getPseudoVoigtArea(tth2, hkl, finalParams);
-                                }
-                            }
-                        }
-                        total_calc_area *= mainScaleFactor;
+                        const total_calc_area = integratedPeakArea(hkl, finalParams, mainScaleFactor);
 
                         // 5. Calculate Effective Width Factor for ESD Scaling
                         // The matrix gives ESD for Height. We need ESD for Area.
@@ -6009,7 +8102,10 @@ function rescalePlot(updateY = false) {
                         // EffectiveWidth = TotalArea / Height.
                         const effective_width_factor = (i_calc_height > 1e-9) ? (total_calc_area / i_calc_height) : 0;
 
-                        const i_obs = i_obs_map.get(hkl.hkl_list[0]) || 0;
+                        const i_obs_raw = i_obs_map.get(hkl.hkl_list[0]);
+                        const i_obs_known = typeof i_obs_raw === 'number' && isFinite(i_obs_raw);
+                        const i_obs = i_obs_known ? i_obs_raw : 0;
+                        const i_obs_str = i_obs_known ? i_obs_raw.toFixed(1) : 'n/a';
                         let esd_I_str = '';
 
                         if (isPawley) {
@@ -6039,14 +8135,14 @@ function rescalePlot(updateY = false) {
                              esd_I_str = isFinite(scaled) ? scaled.toFixed(1) : '-';
                         }
 
-                        if (i_obs > 0.01 || total_calc_area > 0.01) {
+                        if (Math.abs(i_obs) > 0.01 || total_calc_area > 0.01) {
                             const row = [
                                 hkl.hkl_list[0],
                                 tthCorr.toFixed(4),
                                 total_calc_area.toFixed(1),
                                 esd_I_str
                             ];
-                            if (isPawley) row.push(i_obs.toFixed(1));
+                            if (isPawley) row.push(i_obs_str);
                             reflectionsSection.push(formatLine(row, reflWidths));
                         }
                     });
@@ -6249,6 +8345,10 @@ document.getElementById('profile-function-select').addEventListener('change', ha
                     sgUsedForFit = null;
                     lastFitResultsCache = null;
                     backgroundAnchors = [];
+
+                    // The run histories, the charge-flipping map and the CF
+                    // progress readout all belong to the previous sample.
+                    rpClearAllRuns();
                     
                     controls.fileName.textContent = file.name;
                     controls.placeholder.style.display = 'none';
@@ -6257,6 +8357,7 @@ document.getElementById('profile-function-select').addEventListener('change', ha
                     document.getElementById('le-bail-button').disabled = false;
                     updatePawleyButtonState();
                     updateSgTestButtonState();
+                    updateChargeFlippingTabState();
                     // Fresh data, no fit yet: revert Save Report to its
                     // normal "refine first" state (it was active in the
                     // data-free theoretical mode).
@@ -6302,17 +8403,344 @@ document.getElementById('profile-function-select').addEventListener('change', ha
             reader.readAsText(file);
         });
 
+
+// ===========================================================================
+//  RIGHT-PANEL RESULTS HISTORY
+//
+//  Every completed run (Le Bail, Pawley, Charge Flipping) is snapshotted into
+//  a growing, timestamped history and rendered in its own tab. The Plot tab is
+//  unchanged. Save Report / Generate PDF in the Le Bail and Pawley tabs export
+//  whichever run is selected in that tab's dropdown -- not necessarily the
+//  latest -- by handing the stored snapshot to the existing exporters.
+// ===========================================================================
+const rpHistory = { lebail: [], pawley: [], cf: [] };
+const rpSelected = { lebail: null, pawley: null, cf: null };
+let rpRunCounter = 0;
+
+function rpTimestamp(d) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+           `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// Deep clone a fit-results object for storage, dropping nothing the exporters
+// need. structuredClone would choke on any typed arrays with transferred
+// buffers, so JSON round-trip is used (these objects are already JSON-safe --
+// lastFitResultsCache is built the same way one line up from the call site).
+function rpSnapshotFit(mode, results) {
+    let clone;
+    try { clone = JSON.parse(JSON.stringify(results)); }
+    catch (e) { console.warn('Could not snapshot fit results:', e); return; }
+
+    const when = new Date();
+    rpRunCounter++;
+    const entry = {
+        id: rpRunCounter,
+        when,
+        label: `#${rpRunCounter} · ${rpTimestamp(when)}`,
+        results: clone,
+        // A lightweight stats copy so the card can render without re-reading
+        // the whole object.
+        stats: clone.stats || {},
+        algorithm: clone.algorithm || (clone.params && clone.params.algorithm) || '',
+        refinementMode: clone.refinementMode || mode
+    };
+    rpHistory[mode].push(entry);
+    rpSelected[mode] = entry.id;
+    rpRefreshRunSelect(mode);
+    rpRenderRun(mode);
+    rpMarkTabHasData(mode);
+}
+
+// Wipes every run panel and every piece of charge-flipping state. Called when
+// a new pattern is loaded: the histories belong to the old sample, and a
+// Le Bail card or a charge-flipping map left on screen next to a different
+// diffractogram is worse than no result at all, because it looks current.
+function rpClearAllRuns() {
+    // A charge-flipping run still in flight would otherwise finish and push a
+    // result belonging to the previous pattern into the fresh history.
+    cfCancelled = true;
+    terminateChargeFlipWorker();
+    cfSetRunning(false);
+    cfCancelled = false;
+
+    ['lebail', 'pawley', 'cf'].forEach(mode => {
+        rpHistory[mode].length = 0;
+        rpSelected[mode] = null;
+        rpRefreshRunSelect(mode);
+    });
+    rpRunCounter = 0;
+
+    // The Le Bail and Pawley bodies are plain markup and can be replaced. The
+    // charge-flipping body is not: it hosts the relocated #cf-results-group,
+    // so rewriting its innerHTML would delete the whole results block and
+    // every element the render functions look up by id. rpRenderCFRun with an
+    // empty history hides the group and restores the placeholder instead.
+    const bodies = {
+        lebail: 'No Le Bail run yet. Results appear here after each fit.',
+        pawley: 'No Pawley run yet. Results appear here after each fit.'
+    };
+    Object.entries(bodies).forEach(([mode, text]) => {
+        const body = document.getElementById(`${mode}-run-body`);
+        if (body) body.innerHTML = `<p class="rp-empty">${text}</p>`;
+    });
+    rpRenderCFRun();
+
+    cfResetState();
+    rpSwitchTab('plot');
+}
+
+// Charge-flipping UI back to its pre-run state: no map, no structure, no
+// progress bar left showing the last run's R factor.
+function cfResetState() {
+    cfLastResult = null;
+    cfStructure = null;
+
+    const group = document.getElementById('cf-results-group');
+    if (group) group.classList.add('hidden');
+    const so = document.getElementById('cf-structure-output');
+    if (so) so.classList.add('hidden');
+    const cif = document.getElementById('cf-export-cif-btn');
+    if (cif) cif.disabled = true;
+
+    const status = document.getElementById('cf-structure-status');
+    if (status) { status.textContent = '–'; status.className = 'cf-hint'; }
+
+    const prog = document.getElementById('cf-progress-container');
+    if (prog) prog.classList.add('hidden');
+    const bar = document.getElementById('cf-progress-bar');
+    if (bar) bar.style.width = '0%';
+    const rf = document.getElementById('cf-r-factor');
+    if (rf) rf.textContent = '--';
+    const iter = document.getElementById('cf-iter-count');
+    if (iter) iter.textContent = '0 / 0';
+
+    ['cf-sym-status', 'cf-estimate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = '';
+    });
+
+    if (cfIsoTimer) { clearTimeout(cfIsoTimer); cfIsoTimer = null; }
+    const isoNote = document.getElementById('cf-iso-note');
+    if (isoNote) isoNote.textContent = '–';
+    cfRefreshIsoSourceOptions();
+}
+
+function rpMarkTabHasData(mode) {
+    // Nudge the user toward the freshly-filled tab without stealing focus.
+    const tab = document.querySelector(`.rp-tab[data-rptab="${mode}"]`);
+    if (tab && !tab.classList.contains('active')) {
+        tab.classList.add('rp-tab-flash');
+        setTimeout(() => tab.classList.remove('rp-tab-flash'), 1200);
+    }
+}
+
+function rpRefreshRunSelect(mode) {
+    const sel = document.getElementById(`${mode === 'lebail' ? 'lebail' : mode === 'pawley' ? 'pawley' : 'cf'}-run-select`);
+    if (!sel) return;
+    const hist = rpHistory[mode];
+    sel.innerHTML = hist.map(e =>
+        `<option value="${e.id}"${e.id === rpSelected[mode] ? ' selected' : ''}>${e.label}</option>`
+    ).join('');
+    // Newest first is friendlier; reverse the visible order.
+    const opts = Array.from(sel.options).reverse();
+    sel.innerHTML = '';
+    opts.forEach(o => sel.appendChild(o));
+    sel.value = String(rpSelected[mode]);
+
+    // Enable the export buttons for the fit tabs.
+    if (mode === 'lebail' || mode === 'pawley') {
+        const has = hist.length > 0;
+        const sb = document.getElementById(`${mode}-save-report`);
+        const pb = document.getElementById(`${mode}-generate-pdf`);
+        if (sb) sb.disabled = !has;
+        if (pb) pb.disabled = !has;
+    }
+}
+
+function rpGetSelected(mode) {
+    return rpHistory[mode].find(e => e.id === rpSelected[mode]) || null;
+}
+
+function rpRenderRun(mode) {
+    if (mode === 'cf') return rpRenderCFRun();
+    const body = document.getElementById(`${mode}-run-body`);
+    const entry = rpGetSelected(mode);
+    if (!body) return;
+    if (!entry) { body.innerHTML = '<p class="rp-empty">No run yet.</p>'; return; }
+
+    const r = entry.results, st = r.stats || {};
+    const p = r.params || {};
+    const num = (v, d = 4) => (v === undefined || v === null || Number.isNaN(v)) ? '–' : Number(v).toFixed(d);
+    const modeName = r.refinementMode === 'pawley' ? 'Pawley' : 'Le Bail';
+
+    // Derive R_exp if the worker didn't explicitly send it: chi^2 = (Rwp / Rexp)^2
+    const rexp = st.r_exp ?? st.rexp ?? ((st.rwp && st.chi2) ? (st.rwp / Math.sqrt(st.chi2)) : undefined);
+
+    const cards = [
+        ['R<sub>wp</sub> (%)', num(st.rwp, 3)],
+        ['R<sub>p</sub> (%)', num(st.r_p ?? st.rp, 3)], // <-- FIXED: look for r_p
+        ['χ² (GOF)', num(st.chi2 ?? st.gof, 3)],
+        ['R<sub>exp</sub> (%)', num(rexp, 3)],          // <-- FIXED: use derived rexp
+        ['Reflections', r.hklList ? r.hklList.length : '–']
+    ].map(([k, v]) => `<div class="rp-stat-card"><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+
+    const cell = [
+        ['a', num(p.a, 5)], ['b', num(p.b, 5)], ['c', num(p.c, 5)],
+        ['α', num(p.alpha, 3)], ['β', num(p.beta, 3)], ['γ', num(p.gamma, 3)]
+    ].map(([k, v]) => `<div class="rp-stat-card"><div class="k">${k} (Å/°)</div><div class="v">${v}</div></div>`).join('');
+
+    body.innerHTML =
+        `<div class="rp-run-meta">${modeName} · ${entry.label} · algorithm: ${r.algorithm || '—'}</div>` +
+        `<div class="rp-stat-grid">${cards}</div>` +
+        `<h2 style="font-size:15px;">Unit cell</h2>` +
+        `<div class="rp-stat-grid">${cell}</div>` +
+        `<h2 style="font-size:15px;margin-top:8px;">Report preview</h2>` +
+        `<pre style="font-size:11px;white-space:pre-wrap;background:var(--system-gray-6,rgba(127,127,127,0.08));padding:10px;border-radius:8px;max-height:320px;overflow:auto;">` +
+        escapeHtml(generateReportContent('summary', r)) + `</pre>`;
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+// Export helpers that target a chosen snapshot rather than the live fit.
+function rpExportReport(mode) {
+    const entry = rpGetSelected(mode);
+    if (!entry) { showToast('No run selected.', 'error'); return; }
+    window.__activeReportResults = entry.results;
+    try {
+        const text = generateReportContent('full', entry.results);
+        const tag = mode === 'pawley' ? 'Pawley' : 'LeBail';
+        downloadTextFile(text, `${tag}-Run${entry.id}-${rpTimestamp(entry.when).replace(/[: ]/g, '_')}.txt`);
+        showToast('Report saved.', 'success');
+    } catch (e) {
+        showToast('Save failed: ' + (e.message || e), 'error');
+    } finally {
+        window.__activeReportResults = null;
+    }
+}
+
+async function rpExportPDF(mode) {
+    const entry = rpGetSelected(mode);
+    if (!entry) { showToast('No run selected.', 'error'); return; }
+    window.__activeReportResults = entry.results;
+    try {
+        await generatePdfReport(entry.results, mode === 'pawley' ? 'Pawley' : 'LeBail');
+    } catch (e) {
+        alert('An error occurred while generating the report: ' + (e.message || e));
+    } finally {
+        window.__activeReportResults = null;
+    }
+}
+
+// Right-panel tab switching. The Plot tab needs the chart to resize once it
+// becomes visible again (Chart.js measures a hidden canvas as zero).
+function rpSwitchTab(name) {
+    document.querySelectorAll('.rp-tab').forEach(b =>
+        b.classList.toggle('active', b.dataset.rptab === name));
+    document.querySelectorAll('.rp-panel').forEach(pnl =>
+        pnl.classList.toggle('active', pnl.id === `rp-panel-${name}`));
+    if (name === 'plot' && typeof mainChart !== 'undefined' && mainChart) {
+        requestAnimationFrame(() => { try { mainChart.resize(); } catch (e) {} });
+    }
+}
+
+// Charge-flipping runs carry a big density map, so the history stores the full
+// result object and re-points cfLastResult when a run is selected. The actual
+// DOM (peaks table, density section, structure builder) is the relocated
+// cf-results-group, driven by the existing render functions.
+function rpSnapshotCF(result, opts) {
+    const when = new Date();
+    rpRunCounter++;
+    const entry = {
+        id: rpRunCounter, when,
+        label: `#${rpRunCounter} · R=${result.bestR.toFixed(3)} · ${rpTimestamp(when)}`,
+        result, opts
+    };
+    rpHistory.cf.push(entry);
+    rpSelected.cf = entry.id;
+    rpRefreshRunSelect('cf');
+    rpRenderCFRun();
+    rpMarkTabHasData('cf');
+}
+
+function rpRenderCFRun() {
+    const entry = rpHistory.cf.find(e => e.id === rpSelected.cf) || null;
+    const empty = document.querySelector('#cf-run-body .rp-empty');
+    const group = document.getElementById('cf-results-group');
+    if (!entry) {
+        if (group) group.classList.add('hidden');
+        if (empty) empty.style.display = '';
+        return;
+    }
+    if (empty) empty.style.display = 'none';
+    // Re-point the live CF state at the selected run and re-render into the
+    // relocated results group.
+    cfLastResult = entry.result;
+    cfStructure = null;
+    const so = document.getElementById('cf-structure-output');
+    if (so) so.classList.add('hidden');
+    renderChargeFlipResults(entry.result, entry.opts);
+
+    // The structure is no longer built on demand. A run that has one restores
+    // it from the cache; a run that does not -- which means this is a fresh
+    // snapshot straight out of rpSnapshotCF -- builds it now.
+    if (entry.structure) {
+        cfStructure = entry.structure.results;
+        renderStructure(cfStructure, entry.structure.got);
+        const sg = cfStructure.spaceGroup || {};
+        cfSetStructureStatus(
+            `${cfStructure.sites.length} unique site(s) in ${sg.symbol || 'SG ' + sg.number}, ` +
+            `symmetry correlation ${cfStructure.symmetryCorrelation.toFixed(3)}.`);
+    } else {
+        runBuildStructure(true);
+    }
+}
+
         // 5. General UI Listeners (not related to HKL caching)
         document.querySelector('.tab-buttons').addEventListener('click', (e) => { 
-            const clickedTab = e.target.closest('.tab-btn'); 
-            if (clickedTab && !clickedTab.disabled) { 
-                e.currentTarget.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active')); 
-                clickedTab.classList.add('active'); 
-                document.querySelectorAll('.tab-content-panel').forEach(panel => panel.classList.remove('active')); 
-                document.getElementById(`tab-panel-${clickedTab.dataset.tab}`).classList.add('active'); 
-            } 
-        });
+    const clickedTab = e.target.closest('.tab-btn'); 
+    if (clickedTab && !clickedTab.disabled) { 
+        e.currentTarget.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active')); 
+        clickedTab.classList.add('active'); 
         
+        document.querySelectorAll('.tab-content-panel').forEach(panel => panel.classList.remove('active')); 
+        const tabName = clickedTab.dataset.tab;
+        document.getElementById(`tab-panel-${tabName}`).classList.add('active'); 
+        
+        // This is the crucial part that hides the old menus
+        const isChargeFlipping = (tabName === 'charge-flipping');
+        document.querySelector('.bottom-actions').style.display = isChargeFlipping ? 'none' : '';
+        document.getElementById('action-button-bar').style.display = isChargeFlipping ? 'none' : '';
+    } 
+});
+
+        // Right-panel results tabs
+        document.getElementById('rp-tabbar').addEventListener('click', (e) => {
+            const t = e.target.closest('.rp-tab');
+            if (t && !t.disabled) rpSwitchTab(t.dataset.rptab);
+        });
+        ['lebail', 'pawley', 'cf'].forEach(mode => {
+            const selId = `${mode}-run-select`;
+            const sel = document.getElementById(selId);
+            if (sel) sel.addEventListener('change', () => {
+                rpSelected[mode] = Number(sel.value);
+                rpRenderRun(mode);
+            });
+        });
+        const lbSave = document.getElementById('lebail-save-report');
+        const lbPdf  = document.getElementById('lebail-generate-pdf');
+        const pwSave = document.getElementById('pawley-save-report');
+        const pwPdf  = document.getElementById('pawley-generate-pdf');
+        if (lbSave) lbSave.addEventListener('click', () => rpExportReport('lebail'));
+        if (lbPdf)  lbPdf.addEventListener('click',  () => rpExportPDF('lebail'));
+        if (pwSave) pwSave.addEventListener('click', () => rpExportReport('pawley'));
+        if (pwPdf)  pwPdf.addEventListener('click',  () => rpExportPDF('pawley'));
+
+
+
+
         const resizer = document.getElementById('drag-handle'); 
         const leftPanel = document.getElementById('controls-panel');
         resizer.addEventListener('mousedown', (e) => { 
@@ -6816,25 +9244,18 @@ document.getElementById('show-spline-points-checkbox').addEventListener('change'
 });
 
 
-controls.reportButton.addEventListener('click', async () => {
-    if (!fitResults) {
-        alert("Cannot generate report: Fit results are missing.");
-        return;
-    }
-
-    const originalText = controls.reportButton.textContent;
-    controls.reportButton.textContent = 'Generating...';
-    controls.reportButton.disabled = true;
-
+// Reusable PDF generator. `results` is the snapshot to report; `modeName` is
+// 'Pawley' or 'LeBail'. Refactored out of the old button handler so the
+// per-run history tabs can export any stored run, not just the live fit.
+async function generatePdfReport(results, modeName) {
+    window.__activeReportResults = results;
     try {
-        // Explicit check: without it a missing script surfaces as an opaque
-        // "Cannot destructure property 'jsPDF' of undefined".
         if (!window.jspdf || !window.jspdf.jsPDF) {
             throw new Error('jspdf.umd.min.js was not loaded. Place it next to powder5.html.');
         }
-        if (typeof html2canvas !== 'function') {
-            throw new Error('html2canvas.min.js was not loaded. Place it next to powder5.html.');
-        }
+        
+        // Removed the html2canvas check here since we no longer need it.
+
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
         const margin = 15;
@@ -6877,29 +9298,39 @@ controls.reportButton.addEventListener('click', async () => {
         }
 
         doc.addPage();
-        const chartCanvas = await html2canvas(controls.mainChartCanvas, { backgroundColor: '#ffffff', scale: 2 });
-        const mainImgData = chartCanvas.toDataURL('image/png', 0.95);
-        const mainImgProps = doc.getImageProperties(mainImgData);
-        const mainImgHeight = Math.min((mainImgProps.height * contentWidth) / mainImgProps.width, 250); 
-        doc.addImage(mainImgData, 'PNG', margin, 20, contentWidth, mainImgHeight);
         
-        // Determine the filename based on the refinement mode from the results
-        const { refinementMode } = fitResults;
-        const modeName = refinementMode === 'pawley' ? 'Pawley' : 'LeBail';
-        doc.save(`${modeName}-Report-${new Date().toISOString().slice(0, 10)}.pdf`);
+        // --- Native Canvas Image Extraction ---
+        const chartCanvas = controls.mainChartCanvas;
+        
+        // Create a temporary canvas to apply a white background
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = chartCanvas.width;
+        tempCanvas.height = chartCanvas.height;
+        const ctx = tempCanvas.getContext('2d');
+        
+        // Fill white, then draw the chart over it
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        ctx.drawImage(chartCanvas, 0, 0);
 
-    } catch (error) {
-        alert(`An error occurred while generating the report: ${error.message}`);
+        // Extract image data natively
+        const mainImgData = tempCanvas.toDataURL('image/png', 1.0);
+        const mainImgHeight = Math.min((tempCanvas.height * contentWidth) / tempCanvas.width, 250); 
+        
+        doc.addImage(mainImgData, 'PNG', margin, 20, contentWidth, mainImgHeight);
+        // --------------------------------------
+        
+        doc.save(`${modeName}-Report-${new Date().toISOString().slice(0, 10)}.pdf`);
     } finally {
-        controls.reportButton.textContent = 'Generate PDF';
-        if (fitResults) {
-            controls.reportButton.disabled = false;
-        }
+        window.__activeReportResults = null;
     }
-});
+}
+
+
         controls.algorithmSelect.addEventListener('change', updatePawleyButtonState);
         updatePawleyButtonState();
         updateSgTestButtonState();
+        updateChargeFlippingTabState();
 
 if (!currentSG && globalThis.SG_ENGINE) {
             //   Default space group: Pnma (No. 62, standard setting).

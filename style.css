@@ -595,6 +595,7 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
     background: var(--bg-elevated);
 }
 
+
 .tab-content-panels { position: relative; padding-top: 0; }
 .tab-content-panel { display: none; flex-direction: column; }
 .tab-content-panel.active { display: flex; }
@@ -1424,4 +1425,259 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     color: var(--warning);
     border: 1px solid rgba(214,138,42,0.45);
     background: rgba(214,138,42,0.10);
+}
+
+/* ============================================================================
+   CHARGE FLIPPING & RIGHT-PANEL RESULTS TABS
+   Moved here from an inline <style> block in powder5.html so all styling
+   lives in one place. These rules use the same --system-* / theme tokens as
+   the rest of this sheet, so they follow light/dark automatically.
+   ============================================================================ */
+.cf-summary-grid {
+    display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+    font-size: 12px; margin-bottom: 12px;
+}
+.cf-summary-grid dt { color: var(--system-secondary-label); }
+.cf-summary-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
+.cf-peak-table {
+    width: 100%; border-collapse: collapse; font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+.cf-peak-table th, .cf-peak-table td {
+    padding: 3px 6px; text-align: right; white-space: nowrap;
+}
+.cf-peak-table th {
+    text-align: right; font-weight: 600; position: sticky; top: 0;
+    background: var(--system-background, #1c1c1e);
+    color: var(--system-secondary-label);
+    border-bottom: 1px solid var(--system-gray-5);
+}
+.cf-peak-table th:first-child, .cf-peak-table td:first-child { text-align: left; }
+.cf-peak-table tbody tr:nth-child(even) { background: rgba(127,127,127,0.06); }
+.cf-table-scroll { max-height: 240px; overflow-y: auto; }
+/* ---------- Charge-flipping density section ----------
+   Three columns: the map with its colour bar and caption, the controls that
+   choose what is drawn, and the exports. Flex rather than grid so a narrow
+   right-hand panel wraps the columns instead of crushing them. */
+.cf-section-grid {
+    display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start;
+}
+/* The section image, its colour bar and the tick labels form one figure, so
+   the bar always sits directly under the map it describes and matches its
+   width however the panel is resized. */
+.cf-section-figure {
+    flex: 1 1 260px; min-width: 190px; max-width: 520px;
+    display: flex; flex-direction: column; gap: 4px;
+}
+#cf-section-canvas {
+    image-rendering: pixelated;
+    display: block; width: 100%; height: auto; aspect-ratio: 1 / 1;
+    border: 1px solid var(--system-gray-5); border-radius: 6px;
+}
+#cf-section-scalebar {
+    display: block; width: 100%; height: 10px;
+    border: 1px solid var(--system-gray-5); border-radius: 3px;
+}
+/* The 3D canvas matches the section image so the two read as a pair.
+   touch-action is off because the pointer handlers own drag and wheel. */
+#cf-iso-canvas {
+    display: block; width: 100%; height: auto; aspect-ratio: 1 / 1;
+    border: 1px solid var(--system-gray-5); border-radius: 6px;
+    background: transparent; cursor: grab; touch-action: none;
+}
+#cf-iso-canvas:active { cursor: grabbing; }
+.cf-scale-ticks {
+    display: flex; justify-content: space-between;
+    font-variant-numeric: tabular-nums;
+}
+/* Deliberately narrow: at full width the select and the range input dwarfed
+   the map they control. */
+.cf-section-controls { flex: 0 1 190px; min-width: 150px; }
+.cf-section-controls .control-select,
+.cf-section-controls input[type="range"] { width: 100%; }
+.cf-section-controls input[type="range"] { margin: 2px 0 4px; display: block; }
+.cf-checkbox-label {
+    display: flex; align-items: flex-start; gap: 6px; margin-top: 10px;
+    cursor: pointer; font-weight: 400; font-size: 11px;
+    color: var(--system-secondary-label); line-height: 1.35;
+}
+.cf-checkbox-label input { margin: 1px 0 0; flex: none; }
+/* Export buttons, matching the Save Report treatment used in the run-history
+   panels: same width, hard right. */
+.cf-export-column {
+    flex: 0 0 auto; margin-left: auto;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+}
+.cf-export-row { display: flex; justify-content: flex-end; margin-top: 12px; }
+.cf-hint { font-size: 11px; color: var(--system-secondary-label); }
+.cf-warn {
+    font-size: 11px; margin-top: 8px; padding: 6px 8px; border-radius: 6px;
+    background: rgba(255,159,10,0.12); color: var(--system-orange, #ff9f0a);
+}
+/* Neutral toast variant used by the charge-flipping cancel path.
+   (.toast.error and .toast.success are defined above.) */
+.toast.info {
+    background: var(--system-gray-5, #3a3a3c);
+    color: var(--system-label, #f2f2f7);
+}
+
+/* ---- Right-panel results tabs ---- */
+#rp-tabbar {
+    display: flex; gap: 2px; align-items: flex-end;
+    /* extra right padding leaves room for the floating mode-toggle
+       and help icon (both absolute at the top-right) */
+    padding: 6px 92px 0 10px; flex: 0 0 auto;
+    border-bottom: 1px solid var(--system-gray-5);
+    position: relative; z-index: 40;
+}
+.rp-tab {
+    appearance: none; border: none; cursor: pointer;
+    font: inherit; font-size: 12px; font-weight: 600;
+    padding: 7px 14px; border-radius: 8px 8px 0 0;
+    color: var(--system-secondary-label);
+    background: transparent; white-space: nowrap;
+}
+.rp-tab:hover { color: var(--system-label); }
+
+.rp-tab.active {
+    color: var(--fg);
+    /* Uses the theme's solid gray to pop out against the dark canvas */
+    background: var(--rule-soft); 
+    border-radius: 4px;
+    box-shadow: var(--shadow-1);
+}
+.rp-tab:disabled { opacity: 0.4; cursor: default; }
+#rp-panels { position: relative; flex: 1 1 auto; min-height: 0; }
+.rp-panel { display: none; position: absolute; inset: 0; }
+.rp-panel.active { display: block; }
+/* The Plot panel hosts the chart machinery and must fill the area
+   exactly as the old results-area did, so it is a full-size flow box
+   rather than a scroller. */
+#rp-panel-plot { display: none; }
+#rp-panel-plot.active { display: block; }
+/* The three results panels scroll their content. */
+#rp-panel-lebail, #rp-panel-pawley, #rp-panel-cf { overflow-y: auto; padding: 14px 16px; }
+.rp-results-head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
+}
+.rp-results-head h2 { margin: 0; }
+/* The picker and the export buttons are stacked, both right-aligned, so the
+   right edge of Generate PDF lines up with the right edge of the Run selector
+   instead of drifting with the button text. */
+.rp-results-actions {
+    display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+    margin-left: auto;
+}
+.rp-run-picker { display: flex; align-items: center; gap: 8px; }
+.rp-action-row { display: flex; justify-content: flex-end; gap: 8px; }
+.rp-run-label { font-size: 12px; color: var(--system-secondary-label); }
+/* A fixed width, not a minimum. As a flex item the selector inherited
+   width:100% from .control-select and so came out a different size on the
+   Charge Flipping tab, where it has no buttons beside it to compete with.
+   308px = two action buttons plus the gap between them, which is what makes
+   the two stacked rows share a right edge. */
+.rp-run-select {
+    width: 308px; min-width: 308px; flex: 0 0 auto; height: auto;
+}
+/* One width for every export button in the right-hand panels, so Save Report,
+   Generate PDF and the charge-flipping exports all match. The horizontal
+   padding is trimmed from the .btn default of 16px to keep the longest label
+   inside that width at 12px uppercase with letter-spacing. */
+.rp-action-btn {
+    width: 150px; min-width: 150px; flex: 0 0 auto; padding: 0 12px;
+}
+.rp-empty { font-size: 13px; color: var(--system-secondary-label); padding: 20px 0; }
+.rp-run-meta {
+    font-size: 12px; color: var(--system-secondary-label);
+    margin-bottom: 10px; font-variant-numeric: tabular-nums;
+}
+.rp-stat-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px; margin-bottom: 14px;
+}
+.rp-stat-card {
+    background: var(--system-gray-6, rgba(127,127,127,0.08));
+    border-radius: 8px; padding: 8px 10px;
+}
+.rp-stat-card .k { font-size: 11px; color: var(--system-secondary-label); }
+.rp-stat-card .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+@keyframes rpFlash { 0%,100% { background: transparent; } 30% { background: var(--system-blue, #0a84ff); color:#fff; } }
+.rp-tab-flash { animation: rpFlash 1.2s ease; }
+/* #3: compact, evenly-sized export buttons in the CF results, instead
+   of three stacked full-width bars. */
+.cf-btn-row { display: flex; gap: 8px; margin-top: 12px; }
+.cf-btn-row .btn { flex: 1; }
+/* A disabled left-panel tab (e.g. Charge before a Pawley fit exists)
+   must read clearly as unavailable. */
+.tab-btn:disabled,
+.tab-btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+    color: var(--system-secondary-label);
+}
+.tab-btn:disabled:hover,
+.tab-btn[disabled]:hover { color: var(--system-secondary-label); }
+
+
+/* --- 3D isosurface: per-site legend -------------------------------------
+   One row per unique site: rank, the colour density3d.js draws it in, the
+   peak height and a show/hide toggle. It sits in the controls column where
+   the old "Atom positions" checkbox was; "hide all" does what that checkbox
+   used to do, one row at a time or all at once.
+
+   The list shows ten rows and scrolls beyond that, so a solution with forty
+   sites cannot push the rest of the panel off the screen. The cap is written
+   in rows rather than pixels, and the row height is fixed, so the two cannot
+   disagree about what ten rows measures. */
+.cf-site-legend {
+    --cf-site-row-h: 20px;
+    --cf-site-rows: 10;
+    display: flex; flex-direction: column; gap: 4px;
+    margin-top: 10px; width: 100%;
+}
+.cf-site-legend.hidden { display: none; }
+.cf-site-legend-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 6px; font-size: 11px; color: var(--system-secondary-label);
+    font-weight: 500; flex: none;
+}
+.cf-site-legend-all {
+    background: none; border: none; padding: 0; cursor: pointer;
+    font: inherit; color: var(--system-blue, #0a84ff); text-decoration: underline;
+}
+.cf-site-legend-all:hover { opacity: 0.75; }
+.cf-site-legend-all:disabled {
+    color: var(--system-secondary-label); text-decoration: none;
+    cursor: default; opacity: 0.5;
+}
+.cf-site-legend-list {
+    overflow-y: auto; overscroll-behavior: contain;
+    border: 1px solid var(--system-gray-5); border-radius: 6px;
+    padding: 2px;
+    /* ten rows, plus this element's own padding and borders */
+    max-height: calc(var(--cf-site-row-h) * var(--cf-site-rows) + 6px);
+}
+.cf-site-row {
+    display: flex; align-items: center; gap: 6px;
+    box-sizing: border-box; height: var(--cf-site-row-h);
+    padding: 0 4px; border-radius: 4px;
+    font-size: 11px; line-height: 1;
+    color: var(--system-label, inherit);
+    cursor: pointer; user-select: none;
+    font-variant-numeric: tabular-nums;
+}
+.cf-site-row:hover { background: var(--system-gray-6, rgba(127,127,127,0.14)); }
+.cf-site-row.is-hidden { opacity: 0.4; }
+.cf-site-rank { flex: none; width: 1.6em; text-align: right; font-weight: 600; }
+.cf-site-swatch {
+    flex: none; width: 11px; height: 11px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.35);
+}
+.cf-site-row.is-hidden .cf-site-swatch { background: transparent !important; }
+.cf-site-height { flex: 1 1 auto; text-align: right; }
+.cf-site-mult { flex: none; color: var(--system-secondary-label); }
+.cf-site-eye { flex: none; width: 13px; text-align: center; opacity: 0.75; }
+.cf-site-legend-empty {
+    padding: 4px; font-size: 11px; color: var(--system-secondary-label);
 }

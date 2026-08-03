@@ -98,7 +98,11 @@
         const settings = (sgEntry.settings || []).filter(s => !isRhombAxesSetting(s));
         let s = settings.find(x => x.description === 'standard');
         if (s) return s;
-        s = settings.find(x => x.description === 'b');
+        // cctbx qualifiers are "b1", "-b2", "c1" and so on -- the letter is
+        // the unique axis. The old test was `=== 'b'`, which never matched
+        // anything, so monoclinic groups silently fell through to whichever
+        // setting happened to sort first.
+        s = settings.find(x => /^-?b/i.test(x.description || ''));
         if (s) return s;
         return settings[0];
     }
@@ -281,118 +285,130 @@
         return true;
     }
 
-    //mod 16 july 2026
-function getMultiplicity(h, k, l, laue_class) {
+    //   Multiplicities from Laue orbits (replaces the hand-written table).
+    //
+    //   The old switch was a lookup table keyed on |h|, |k|, |l|. Three of
+    //   its branches were wrong, and each error was masked by the HKL
+    //   generator, which only ever fed it indices from an h>=k>=l>=0 or
+    //   h>=k>=0 wedge:
+    //
+    //     6/mmm  {h,-2h,l} (e.g. (1,-2,l), (2,-4,l)) came out 24; it is 12.
+    //            |h| and |k| are not the hexagonal invariants -- the third
+    //            Bravais-Miller index i = -(h+k) is on a mirror whenever
+    //            h = i or k = i, which |h| vs |k| cannot see.
+    //     m-3    {hhl} and {hkk} came out 12; they are 24. m-3 has no mirror
+    //            swapping two axes, so those forms are general, not special.
+    //     -3m    h0l / hhl were given the same value. They differ, and which
+    //            one is special depends on the setting.
+    //
+    //   Computing the orbit under the actual Laue operators removes the whole
+    //   class of error. Operators are applied as (h,k,l) -> (h,k,l)*R, the
+    //   same convention used elsewhere in this project.
+    //
+    //   `sg` is optional and only consulted for -3m: pass the space-group
+    //   number (or a record with .number) to pick the right setting. Without
+    //   it, -3m1 is assumed, which covers 12 of the 19 groups involved.
+
+    const LAUE_GENERATORS = {
+        '-1':    [],
+        '2/m':   [[-1, 0, 0, 0, 1, 0, 0, 0, -1]],                                   // 2 || b (default)
+        '2/m_a': [[1, 0, 0, 0, -1, 0, 0, 0, -1]],                                   // 2 || a
+        '2/m_b': [[-1, 0, 0, 0, 1, 0, 0, 0, -1]],                                   // 2 || b
+        '2/m_c': [[-1, 0, 0, 0, -1, 0, 0, 0, 1]],                                   // 2 || c
+        'mmm':   [[1, 0, 0, 0, -1, 0, 0, 0, -1], [-1, 0, 0, 0, 1, 0, 0, 0, -1]],
+        '4/m':   [[0, -1, 0, 1, 0, 0, 0, 0, 1]],
+        '4/mmm': [[0, -1, 0, 1, 0, 0, 0, 0, 1], [1, 0, 0, 0, -1, 0, 0, 0, -1]],
+        '-3':    [[0, -1, 0, 1, -1, 0, 0, 0, 1]],
+        '-3m1':  [[0, -1, 0, 1, -1, 0, 0, 0, 1], [0, 1, 0, 1, 0, 0, 0, 0, -1]],     // 2 || <100>
+        '-31m':  [[0, -1, 0, 1, -1, 0, 0, 0, 1], [0, -1, 0, -1, 0, 0, 0, 0, -1]],   // 2 || <1-10>
+        '6/m':   [[1, -1, 0, 1, 0, 0, 0, 0, 1]],
+        '6/mmm': [[1, -1, 0, 1, 0, 0, 0, 0, 1], [0, 1, 0, 1, 0, 0, 0, 0, -1]],
+        'm-3':   [[-1, 0, 0, 0, -1, 0, 0, 0, 1], [-1, 0, 0, 0, 1, 0, 0, 0, -1], [0, 0, 1, 1, 0, 0, 0, 1, 0]],
+        'm-3m':  [[0, -1, 0, 1, 0, 0, 0, 0, 1], [0, 0, 1, 1, 0, 0, 0, 1, 0]]
+    };
+
+    // P312, P3112, P3212, P31m, P31c, P-31m, P-31c -- the trigonal groups
+    // whose symmetry sits on the tertiary directions. All other groups in
+    // 149-167 are -3m1.
+    const LAUE_31M_NUMBERS = { 149: 1, 151: 1, 153: 1, 157: 1, 159: 1, 162: 1, 163: 1 };
+
+    function matMul3(A, B) {
+        const C = new Array(9);
+        for (let i = 0; i < 3; i++) {
+            for (let j = 0; j < 3; j++) {
+                C[i * 3 + j] = A[i * 3] * B[j] + A[i * 3 + 1] * B[3 + j] + A[i * 3 + 2] * B[6 + j];
+            }
+        }
+        return C;
+    }
+
+    const LAUE_GROUP_CACHE = {};
+
+    function laueGroup(key) {
+        if (LAUE_GROUP_CACHE[key]) return LAUE_GROUP_CACHE[key];
+        const gens = LAUE_GENERATORS[key];
+        if (!gens) return null;
+        const map = new Map();
+        const push = (m) => {
+            const k = m.join(',');
+            if (map.has(k)) return false;
+            map.set(k, m);
+            return true;
+        };
+        push([1, 0, 0, 0, 1, 0, 0, 0, 1]);
+        push([-1, 0, 0, 0, -1, 0, 0, 0, -1]);      // Laue class = point group + -1
+        gens.forEach(push);
+        for (let pass = 0; pass < 8; pass++) {
+            const cur = Array.from(map.values());
+            let grew = false;
+            for (let i = 0; i < cur.length; i++) {
+                for (let j = 0; j < cur.length; j++) {
+                    if (push(matMul3(cur[i], cur[j]))) grew = true;
+                    if (map.size > 48) return null;
+                }
+            }
+            if (!grew) break;
+        }
+        LAUE_GROUP_CACHE[key] = Array.from(map.values());
+        return LAUE_GROUP_CACHE[key];
+    }
+
+    function laueKey(laue_class, sg) {
+        if (laue_class === '-3m') {
+            const n = (sg && typeof sg === 'object') ? sg.number : sg;
+            return LAUE_31M_NUMBERS[n] ? '-31m' : '-3m1';
+        }
+        if (laue_class === '2/m') {
+            // Monoclinic multiplicities depend on which axis is unique:
+            // (h,k,0) has m = 2 on unique axis b but m = 4 on unique axis c.
+            // The setting qualifier ("b1", "-b2", "c1", ...) carries it.
+            const d = (sg && typeof sg === 'object') ? sg.setting_description : null;
+            const m = (typeof d === 'string') ? d.match(/^-?([abc])/i) : null;
+            return m ? '2/m_' + m[1].toLowerCase() : '2/m';
+        }
+        return laue_class;
+    }
+
+    function getMultiplicity(h, k, l, laue_class, sg) {
         if (h === 0 && k === 0 && l === 0) {
             return { multiplicity: 1, canonical_hkl_obj: [0, 0, 0] };
         }
-        const abs_h = Math.abs(h);
-        const abs_k = Math.abs(k);
-        const abs_l = Math.abs(l);
-        
-        // Sorting is strictly only valid for Cubic systems (m-3m, m-3)
-        const sorted = [abs_h, abs_k, abs_l].sort((a, b) => b - a);
-        const h_p = sorted[0], k_p = sorted[1], l_p = sorted[2];
-        let m = 0;
-
-        switch (laue_class) {
-            case 'm-3m':
-                if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;            // {h00}
-                else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;    // {hh0}
-                else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;   // {hhh}
-                else if (h_p > k_p && k_p > 0 && l_p === 0) m = 24;      // {hk0}
-                else if (h_p > k_p && k_p > l_p && l_p > 0) m = 48;      // {hkl}, h>k>l>0
-                else if (h_p === k_p && k_p > l_p && l_p > 0) m = 24;    // {hhl}, h=k>l>0
-                else if (h_p > k_p && k_p === l_p && l_p > 0) m = 24;    // {hkk}, h>k=l>0
-                else m = 1;
-                break;
-            case 'm-3':
-                if (h_p > 0 && k_p === 0 && l_p === 0) m = 6;            // {h00}
-                else if (h_p === k_p && l_p === 0 && h_p > 0) m = 12;    // {hh0}
-                else if (h_p === k_p && k_p === l_p && l_p > 0) m = 8;   // {hhh}
-                else if (h_p > k_p && k_p > 0 && l_p === 0) m = 12;      // {hk0} - note 12, not 24
-                else if (h_p > k_p && k_p > l_p && l_p > 0) m = 24;      // {hkl}
-                else if ((h_p === k_p && k_p > l_p && l_p > 0) ||
-                         (h_p > k_p && k_p === l_p && l_p > 0)) m = 12;
-                else m = 1;
-                break;
-            case '6/mmm':
-                if (abs_l > 0) {
-                    if (abs_h === 0 && abs_k === 0) m = 2;
-                    else if (abs_h > 0 && abs_k === 0) m = 12;
-                    else if (abs_h === abs_k && abs_k > 0) m = 12;
-                    else if (abs_h > abs_k && abs_k >= 0) m = 24;
-                    else m = 24;
-                } else {
-                    if (abs_h === 0 && abs_k === 0) m = 1;
-                    else if (abs_h > 0 && abs_k === 0) m = 6;
-                    else if (abs_h === abs_k && abs_k > 0) m = 6;
-                    else if (abs_h > abs_k && abs_k >= 0) m = 12;
-                    else m = 12;
-                }
-                break;
-            case '6/m':
-                if (abs_l > 0) m = (abs_h > 0 || abs_k > 0) ? 12 : 2;
-                else m = (abs_h > 0 || abs_k > 0) ? 6 : 1;
-                break;
-            case '-3m':
-                // NOTE: -3m1 and -31m are not distinguished; special-form
-                // values (h0l / hhl) are setting-dependent (6 or 12), the
-                // ones below are indicative. General hkl = group order = 12.
-                if (abs_l !== 0) {
-                    if (abs_h === 0 && abs_k === 0) m = 2;
-                    else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 12;
-                    else m = 12;   // FIX: was 24 - cannot exceed |Laue -3m| = 12
-                } else {
-                    if (abs_h === 0 && abs_k === 0) m = 1;
-                    else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 6;
-                    else m = 12;
-                }
-                break;
-            case '-3':
-                if (abs_h === 0 && abs_k === 0 && abs_l === 0) m = 1;
-                else if (abs_h === 0 && abs_k === 0) m = 2;
-                else m = 6;
-                break;
-            case '4/mmm':
-                if (abs_l > 0) {
-                    if (abs_h === 0 && abs_k === 0) m = 2;
-                    else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 8;
-                    else m = 16;
-                } else {
-                    if (abs_h === 0 && abs_k === 0) m = 1;
-                    else if (abs_h === 0 || abs_k === 0 || abs_h === abs_k) m = 4;
-                    else m = 8;
-                }
-                break;
-            case '4/m':
-                if (abs_l > 0) m = (abs_h > 0 || abs_k > 0) ? 8 : 2;
-                else m = (abs_h > 0 || abs_k > 0) ? 4 : 1;
-                break;
-            case 'mmm':
-                if (abs_h > 0 && abs_k > 0 && abs_l > 0) m = 8;
-                else if ((abs_h > 0 && abs_k > 0 && abs_l === 0) ||
-                         (abs_h > 0 && abs_k === 0 && abs_l > 0) ||
-                         (abs_h === 0 && abs_k > 0 && abs_l > 0)) m = 4;
-                else if (abs_h > 0 || abs_k > 0 || abs_l > 0) m = 2;
-                else m = 1;
-                break;
-            case '2/m':
-                // Unique axis b: the k axis is special.
-                if (abs_k > 0 && (abs_h > 0 || abs_l > 0)) m = 4;
-                else if (abs_k > 0) m = 2;   // FIX: (0k0) has multiplicity 2, was 4
-                else if (abs_k === 0 && (abs_h !== 0 || abs_l !== 0)) m = 2;
-                else m = 1;
-                break;
-            case '-1':
-                if (abs_h === 0 && abs_k === 0 && abs_l === 0) m = 1;
-                else m = 2;
-                break;
-            default:
-                console.warn('SG_ENGINE: unknown Laue class', laue_class, '-> m=1');
-                m = 1;
+        const ops = laueGroup(laueKey(laue_class, sg));
+        if (!ops) {
+            console.warn('SG_ENGINE: unknown Laue class', laue_class, '-> m=1');
+            return { multiplicity: 1, canonical_hkl_obj: [h, k, l] };
         }
-        return { multiplicity: m, canonical_hkl_obj: [h, k, l] };
+        const seen = new Set();
+        let ch = -Infinity, ck = 0, cl = 0;
+        for (let i = 0; i < ops.length; i++) {
+            const r = ops[i];
+            const H = h * r[0] + k * r[3] + l * r[6];
+            const K = h * r[1] + k * r[4] + l * r[7];
+            const L = h * r[2] + k * r[5] + l * r[8];
+            seen.add(H + ',' + K + ',' + L);
+            if (H > ch || (H === ch && (K > ck || (K === ck && L > cl)))) { ch = H; ck = K; cl = L; }
+        }
+        return { multiplicity: seen.size, canonical_hkl_obj: [ch, ck, cl] };
     }
 
     // 5. Helpers exposed for the UI: list of all 230 standard symbols

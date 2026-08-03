@@ -431,11 +431,21 @@ blockquote {
             <li><a href="#algorithms-pt" class="sub-link">Parallel Tempering</a></li>
             <li><a href="#parameters">Parameter Guide</a></li>
             <li><a href="#parameters-crystal" class="sub-link">Crystal & Space Group</a></li>
+            <li><a href="#parameters-reflections" class="sub-link">Reflections & Multiplicities</a></li>
             <li><a href="#parameters-instrumental" class="sub-link">Instrumental</a></li>
             <li><a href="#parameters-background" class="sub-link">Background (Spline)</a></li> <li><a href="#parameters-profile4" class="sub-link">Simple pVoigt</a></li>
             <li><a href="#parameters-profile3" class="sub-link">TCH (Anisotropic)</a></li>
             <li><a href="#parameters-profile-split" class="sub-link">Split pVoigt (Asymmetric)</a></li>
             <li><a href="#space-group-test">Space-Group Determination</a></li>
+            <li><a href="#charge-flipping">Charge Flipping</a></li>
+            <li><a href="#cf-principle" class="sub-link">The Principle</a></li>
+            <li><a href="#cf-symmetry" class="sub-link">Space-Group Constraints</a></li>
+            <li><a href="#cf-workflow" class="sub-link">Workflow &amp; Controls</a></li>
+            <li><a href="#cf-settings" class="sub-link">Recommended Settings</a></li>
+            <li><a href="#cf-reading" class="sub-link">Reading the Solution</a></li>
+            <li><a href="#cf-structure" class="sub-link">Building a Structure</a></li>
+            <li><a href="#cf-output-fields" class="sub-link">Result Fields</a></li>
+            <li><a href="#cf-caveats" class="sub-link">Limitations</a></li>
             <li><a href="#strategy">Refinement Strategy</a></li>
             <li><a href="#results">Interpreting Results</a></li>
             <blockquote>
@@ -496,7 +506,7 @@ blockquote {
                     <tr><td><code>powder5.html</code></td><td>The application itself.</td></tr>
                     <tr><td><code>refinement_worker.js</code></td><td>Web Worker that runs the refinement off the UI thread.</td></tr>
                     <tr><td><code>sg_engine.js</code></td><td>Space-group resolution, reflection conditions, multiplicities.</td></tr>
-                    <tr><td><code>cctbx_space_groups_all_settings_v5.json</code></td><td>Symmetry database for all settings of the 230 groups.</td></tr>
+                    <tr><td><code>cctbx_space_groups_all_settings_v7.json</code></td><td>Symmetry database for all settings of the 230 groups.</td></tr>
                     <tr><td><code>chart.umd.min.js</code></td><td>Chart.js.</td></tr>
                     <tr><td><code>jspdf.umd.min.js</code></td><td>PDF export only.</td></tr>
                     <tr><td><code>html2canvas.min.js</code></td><td>PDF export only (renders the chart into the PDF).</td></tr>
@@ -648,6 +658,20 @@ blockquote {
             <ul>
                 <li><b>Characteristics:</b> LM is a local minimizer, exhibiting rapid quadratic convergence when the initial parameters are close to the true minimum. It is the preferred method for final, high-precision refinement and is the only algorithm here that can calculate valid estimated standard deviations (ESDs) for the refined parameters from the covariance matrix.</li>
                 <li><b>Limitations:</b> It is susceptible to converging to a local minimum if the starting model is far from the global solution.</li>
+                <li><b>Parameter bounds:</b> several parameters are bounded &mdash; profile widths and
+                    Pawley intensities below at zero, the mixing parameter $\eta$ to $[0,1]$, cell
+                    angles to $(0^\circ, 180^\circ)$. A step that would cross a bound is clipped to it,
+                    and the gain ratio
+                    $\rho = \Delta\chi^2_{\mathrm{actual}} / \Delta\chi^2_{\mathrm{predicted}}$
+                    is formed from the step that was <em>actually applied</em>. This matters in Pawley
+                    mode, where weak reflections routinely park at zero intensity: the damping
+                    parameter $\lambda$ is shared by the whole model, so measuring $\rho$ against a
+                    step that was never taken would let a handful of pinned intensities throttle the
+                    cell and profile terms as well.</li>
+                <li><b>Stopping at a bound:</b> if an entire step is blocked &mdash; the model sitting in
+                    a corner of the bound box with the gradient pointing out of it &mdash; the
+                    refinement stops and reports it, rather than spending its remaining iterations
+                    raising $\lambda$ against a wall.</li>
                 <li><b>Pawley Mode: Generally the recommended algorithm for Pawley refinements due to stability and efficiency.</b></li>
             </ul>
 
@@ -684,9 +708,83 @@ blockquote {
             <ul>
                 <li>The <strong>System</strong> selection imposes metrical constraints on the lattice parameters (e.g., for Cubic, $a=b=c$, $\alpha=\beta=\gamma=90^\circ$).</li>
                 <li>The <strong>Space Group</strong> selection determines the systematic reflection conditions ($hkl$ absences) used to generate the list of Bragg peaks. The underlying logic for these conditions is consistent with established crystallographic libraries and was taken from Computational Crystallography Toolbox (cctbx).</li>
-                <li>Space groups are chosen from a searchable modal listing every setting of all 230 groups. Where a group has several settings (for example No. 62: $Pnma$, $Pmnb$, $Pbnm$, $Pcmn$, $Pmcn$, $Pnam$) each is offered separately, since the reflection conditions differ between them. Rhombohedral groups are offered on hexagonal axes only, because the $d$-spacing formula and the asymmetric-unit loop are written for that indexing.</li>
+                <li>Space groups are chosen from a searchable modal listing every setting of all 230 groups. Where a group has several settings (for example No. 62: $Pnma$, $Pmnb$, $Pbnm$, $Pcmn$, $Pmcn$, $Pnam$) each is offered separately, since the reflection conditions differ between them. Rhombohedral groups are offered on hexagonal axes only, because the $d$-spacing formula is written for that indexing.</li>
+                <li><b>Monoclinic settings.</b> All three unique-axis choices are supported. The unique
+                    axis is read from the symmetry operators of the setting you select, and the lattice
+                    panel then offers the one angle that is free: $\beta$ for unique axis $b$
+                    ($P12_1/c1$), $\gamma$ for unique axis $c$ ($P112_1/b$), $\alpha$ for unique axis
+                    $a$ ($P2_1/b11$). The other two are fixed at $90^\circ$ and are neither shown nor
+                    refined. The reciprocal metric, the reflection orbits and the multiplicities all
+                    follow that same axis, so the three settings of one lattice give identical peak
+                    positions and identical intensities. Switching between settings carries the angle
+                    across, so the cell is not lost.</li>
                 <li><b>Startup default:</b> the application opens on $Pnma$ (No. 62, standard setting) with an orthorhombic cell of $a = 8.478$, $b = 5.397$, $c = 6.958$ &#8491;. This is only a starting point &mdash; change it to match your material before refining.</li>
             </ul>
+
+            <h3 id="parameters-reflections">Reflection List &amp; Multiplicities</h3>
+            <p>
+                The Bragg peak list is built from the <em>rotation operators</em> of the selected
+                space-group setting. Every candidate $hkl$ inside the resolution sphere is mapped
+                onto its orbit under the Laue group; the orbit is kept once, labelled by a canonical
+                member, and its size becomes the multiplicity $m$ that scales the intensity,
+                $I \propto m \cdot LP \cdot |F|^2$. Systematic absences are then tested on that
+                representative, which decides the whole orbit, since an absence is a property of the
+                orbit and not of any one index triple.
+            </p>
+            <p>
+                Working from the operators rather than from a fixed index range per crystal system
+                matters wherever two Laue classes share a system, because the two classes have
+                genuinely different sets of independent reflections:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>System</th><th>Laue classes</th><th>What separates them</th></tr></thead>
+                <tbody>
+                    <tr><td>Cubic</td><td>$m\bar{3}m$ / $m\bar{3}$</td>
+                        <td>$m\bar{3}$ permutes the axes cyclically only, so $(210)$ and $(201)$ are
+                            independent reflections. In $m\bar{3}m$ they are equivalent.</td></tr>
+                    <tr><td>Tetragonal</td><td>$4/mmm$ / $4/m$</td>
+                        <td>$4/m$ has no mirror exchanging $a$ and $b$, so $(hkl)$ and $(khl)$ are
+                            independent.</td></tr>
+                    <tr><td>Hexagonal</td><td>$6/mmm$ / $6/m$</td>
+                        <td>As above: in $6/m$, $(hkl)$ and $(khl)$ are independent.</td></tr>
+                    <tr><td>Trigonal</td><td>$\bar{3}m$ / $\bar{3}$</td>
+                        <td>In $\bar{3}$ the orbit is generated by the 3-fold and inversion alone, and
+                            is half the size.</td></tr>
+                    <tr><td>Trigonal</td><td>$\bar{3}m1$ / $\bar{3}1m$</td>
+                        <td>The two settings differ in which form is special: $\bar{3}m1$ gives
+                            $h0l$ multiplicity 6 and $hhl$ multiplicity 12, $\bar{3}1m$ the
+                            reverse.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                In the hexagonal and trigonal systems the special forms are set by the
+                Bravais&ndash;Miller index $i = -(h+k)$ as much as by $h$ and $k$: a reflection lies on
+                a mirror whenever any two of $h$, $k$, $i$ are equal in magnitude, so
+                $(1\bar{2}l)$ and $(2\bar{4}l)$ are special even though $|h| \neq |k|$. The orbit
+                calculation accounts for this automatically.
+            </p>
+            <p>
+                Operators are taken from the <code>symops</code> field of the space-group database
+                (or the older <code>rotations</code> field, which serves equally well here &mdash; only
+                the rotation parts affect a reflection orbit). The closed group is checked against the
+                <code>order_p</code> recorded for the setting before it is used. If the database
+                carries no operators, a built-in table of the Laue-class generators is used instead;
+                if the Laue class itself cannot be identified, the generator falls back to the lowest
+                Laue class of the crystal system. That last case is safe rather than wrong: orbits
+                split into smaller ones at identical $d$, so peak positions and total intensities are
+                unaffected, and only the number of listed entries changes. The browser console
+                records which source was used whenever it is not the first.
+            </p>
+            <div class="note">
+                <h4>Completeness</h4>
+                <p>
+                    The sum of the multiplicities over the generated list equals the number of
+                    reciprocal-lattice points inside the limiting sphere, exactly, for every Laue
+                    class. A reflection cannot be missed and cannot be counted twice without
+                    breaking that identity, which makes it a usable self-check if you modify the
+                    symmetry data.
+                </p>
+            </div>
 
             <h3 id="parameters-instrumental">Instrumental Parameters</h3>
             <p>
@@ -932,7 +1030,7 @@ blockquote {
             <ul>
                 <li><b>The Laue class is not under test.</b> Only the absences are. The Laue class
                     is fixed by the diffraction symmetry you have already chosen, since it determines
-                    the reflection wedge and the multiplicities. Running the test from $Pm\bar{3}m$
+                    the reflection orbits and the multiplicities. Running the test from $Pm\bar{3}m$
                     can never return a group belonging to Laue class $m\bar{3}$, such as $Pa\bar{3}$.
                     If the Laue class itself is in doubt, run the test from each candidate in turn.</li>
                 <li><b>Exact reflection coincidences are handled, but weaken the diagnostics.</b>
@@ -959,6 +1057,515 @@ blockquote {
         </section>
 
         <hr>
+
+        <section id="charge-flipping">
+            <h2>Ab Initio Structure Solution: Charge Flipping</h2>
+            <p>
+                Once a Pawley refinement has extracted a set of individual integrated
+                intensities, Powder&nbsp;5 can attempt to solve the crystal structure
+                <em>ab initio</em> &mdash; with no starting model &mdash; using the
+                dual-space <strong>charge-flipping</strong> algorithm of Oszl&aacute;nyi
+                and S&uuml;t&#337;. The result is an electron-density map and a list of
+                atomic positions, obtained purely from the diffraction intensities and
+                the unit cell.
+            </p>
+            <div class="note">
+                Charge Flipping is only available after a converged Pawley fit. The
+                tab stays disabled until one exists, because the method needs the
+                individual reflection intensities that only Pawley &mdash; not
+                Le&nbsp;Bail &mdash; provides, together with the normal matrix produced
+                by a Levenberg-Marquardt step (Parallel Tempering supplies this through
+                its LM polish).
+            </div>
+
+            <h3 id="cf-principle">The Principle</h3>
+            <p>
+                A diffraction experiment measures the amplitudes \(|F_{hkl}|\) but not
+                the phases \(\phi_{hkl}\); recovering those phases is the
+                <em>phase problem</em>. Charge flipping solves it by iterating between
+                real space (the electron density \(\rho\)) and reciprocal space (the
+                structure factors \(F\)), enforcing one simple constraint in each:
+            </p>
+            <ol>
+                <li>
+                    <strong>Real space.</strong> A correct electron density is
+                    non-negative almost everywhere. Every voxel whose density falls
+                    below a small positive threshold \(\delta\) has its sign
+                    <em>flipped</em>: \(\rho \rightarrow -\rho\). This deliberately
+                    wrong perturbation is what drives the phases toward consistency.
+                </li>
+                <li>
+                    <strong>Reciprocal space.</strong> Fourier-transform the flipped
+                    density, then reimpose everything that is actually known about the
+                    structure factors: the measured amplitudes, the point-group
+                    symmetry, and the systematic absences. The <em>calculated phases</em>
+                    are kept. Reflections that were never measured are left free &mdash;
+                    that freedom is what lets the map extend beyond the data.
+                </li>
+            </ol>
+            <p>
+                Transforming back gives an improved density, and the cycle repeats. The
+                threshold is expressed in units of the map's own RMS density \(\sigma\),
+                so \(\delta\) is scale-independent; values around
+                \(0.8\sigma\)&ndash;\(1.2\sigma\) work for most problems. The
+                agreement between calculated and observed amplitudes,
+            </p>
+            <p style="text-align:center;">
+                \( R = \dfrac{\sum_{c} \left| \sqrt{I^{calc}_{c}} - \sqrt{I^{obs}_{c}} \right|}{\sum_{c} \sqrt{I^{obs}_{c}}} \)
+            </p>
+            <p>
+                is tracked each iteration. The sum runs over <em>measured peaks</em>
+                \(c\), not over individual reflections: a powder pattern cannot
+                distinguish reflections that overlap in \(2\theta\), so scoring them
+                separately would be scoring noise. \(I^{calc}_{c}\) is the total
+                calculated intensity of everything under peak \(c\). A run that has
+                found the structure typically drops below \(R \approx 0.15\) and then
+                oscillates. Powder&nbsp;5 keeps the best iterate of the run, not the
+                last.
+            </p>
+
+            <h3 id="cf-symmetry">Space-Group Constraints</h3>
+            <p>
+                Classical charge flipping deliberately works in \(P1\): it throws the
+                symmetry away and lets the algorithm rediscover it, which is a useful
+                safeguard when the space group is uncertain. Powder&nbsp;5 keeps that
+                mode available, but by default it uses the selected space group
+                <em>inside</em> the iteration. Four separate constraints come out of it,
+                and they are worth distinguishing because they behave very differently.
+            </p>
+
+            <h4>1. Orbits: symmetry equivalents share one intensity</h4>
+            <p>
+                A Pawley fit reports one intensity per symmetry-unique reflection. Its
+                equivalents \(hR\) must be placed on the \(P1\) grid before a transform
+                is possible, and they are generated from the <em>actual symmetry
+                operators</em> of the selected group. The distinction matters: the Laue
+                class is not the holohedry of the crystal system. \(P4\) has Laue class
+                \(4/m\), so a general reflection has 8 equivalents, not the 16 that
+                \(4/mmm\) would give; the same applies to \(\bar 3\) versus \(\bar 3 m\),
+                \(6/m\) versus \(6/mmm\) and \(m\bar 3\) versus \(m\bar 3 m\). Spreading
+                one measured intensity over twice as many positions as really exist puts
+                half of it onto reflections that are not equivalent at all.
+            </p>
+            <p>
+                Within an orbit the amplitudes are <em>equal by symmetry</em>:
+                \(|F| = \sqrt{I^{obs}/m}\), where \(m\) is the orbit size. This is a hard
+                constraint, applied every cycle. Only the phases are free.
+            </p>
+
+            <h4>2. Overlap: distinct reflections may share one peak</h4>
+            <p>
+                The genuinely powder-specific ambiguity is different. Reflections that
+                are <em>not</em> symmetry equivalent can still fall at the same
+                \(2\theta\), either exactly (511/333 in a cubic cell) or accidentally.
+                The pattern gives only their sum. Powder&nbsp;5 groups such reflections
+                into a <em>cluster</em> and re-partitions the cluster's total intensity
+                between them each cycle in proportion to the current calculated values
+                &mdash; the same idea as Le&nbsp;Bail extraction, applied inside the
+                flipping loop. The split is free; the total is fixed.
+            </p>
+            <div class="note">
+                These two mechanisms are easy to confuse and they pull in opposite
+                directions. <strong>Symmetry equivalents must be equal</strong> (constraint);
+                <strong>overlapping distinct reflections are free to differ</strong>
+                (unknown). Letting the members of an orbit float would discard exactly
+                the information the space group provides.
+            </div>
+
+            <h4>3. Systematic absences are held at zero</h4>
+            <p>
+                Reflections forbidden by lattice centring, screw axes or glide planes are
+                forced to \(F = 0\) every cycle. They are found directly from the
+                operators: \(h\) is extinct if some operator \((R,\mathbf{t})\) satisfies
+                \(hR = h\) with \(h \cdot \mathbf{t}\) non-integral. Leaving them free
+                lets the density break the lattice centring outright, and for an \(F\) or
+                \(I\) lattice that is most of the reciprocal grid.
+            </p>
+
+            <h4>4. Symmetrisation of the phases</h4>
+            <p>
+                For a real-space operator \(\mathbf{x}' = \mathbf{x}R + \mathbf{t}\), the
+                structure factors of a correctly positioned structure satisfy
+            </p>
+            <p style="text-align:center;">
+                \( F(hR) = F(h)\,\exp(-2\pi i\, h \cdot \mathbf{t}) \)
+            </p>
+            <p>
+                Each cycle the members of an orbit are reduced to a common
+                representative, averaged, and pushed back out. The
+                <strong>Symmetry in loop</strong> control sets how strongly:
+                \(F \leftarrow (1-\lambda)F + \lambda F_{sym}\). At \(\lambda = 0\) nothing
+                is imposed and the run is classical \(P1\) charge flipping. At
+                \(\lambda = 1\) the projection is exact, which converges faster and has a
+                useful side effect: the solution comes out on a standard origin instead
+                of a random one, so the automatic origin search in the Structure block
+                becomes a verification rather than a necessity.
+            </p>
+            <div class="warning-note">
+                <strong>The trade-off.</strong> Strict symmetry cannot recover from a
+                wrong space group &mdash; it will happily converge to a low \(R\) for a
+                structure that does not exist. If the group is uncertain, run at
+                \(\lambda = 0\) as well and compare: a density that is genuinely
+                consistent with the group will symmetrise well afterwards (high symmetry
+                correlation) without having been forced to.
+            </div>
+
+            <h4>Intensity scaling</h4>
+            <p>
+                The refined Pawley parameter is a peak <em>height</em>, because the
+                profile functions Powder&nbsp;5 uses are normalised to unit height, not
+                unit area. What charge flipping needs is the integrated intensity, so
+                each height is multiplied by the area of its own profile (summed over
+                the K&alpha;<sub>1</sub>/K&alpha;<sub>2</sub> doublet) before it is used.
+                Skipping that step underweights the high-angle reflections by the full
+                Caglioti broadening, which is roughly a factor of two across a typical
+                scan.
+            </p>
+            <p>
+                The integrated intensity then carries
+                \(I \propto m \cdot LP \cdot |F|^2\). The multiplicity \(m\) is absorbed
+                by spreading the intensity across the \(m\) grid points of the orbit, but
+                the Lorentz-polarisation factor
+                \(LP = (1+\cos^2 2\theta)/(2\sin^2\theta\cos\theta)\) is divided out
+                explicitly. Without it the low-angle reflections are weighted several
+                times too heavily and the map is dominated by the first few peaks.
+            </p>
+            <div class="note">
+                All of this needs the full symmetry operators, i.e. the
+                <code>symops</code> field of the space-group database. If they are
+                missing, Powder&nbsp;5 falls back to a Laue-class table with no
+                translations: orbit sizes are still correct, but screw and glide absences
+                cannot be detected and the symmetrisation degrades to a plain orbit
+                average. The solution summary says which was used, under
+                <em>Expansion symmetry</em>.
+            </div>
+
+            <h3 id="cf-workflow">Workflow &amp; Controls</h3>
+            <p>The controls sit in the left panel; results appear in the
+               <strong>Charge Flipping</strong> tab of the right panel.</p>
+            <table class="param-table">
+                <thead><tr><th>Control</th><th>Meaning</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Grid Size (N&sup3;)</strong></td><td>Edge of the density grid. Must be a power of two (the FFT is radix-2). 32&sup3; is fast and usually sufficient; 64&sup3; and 128&sup3; resolve finer detail at rapidly increasing cost.</td></tr>
+                    <tr><td><strong>Threshold (&delta;/&sigma;)</strong></td><td>Flipping level in units of the map RMS. 0 flips every negative voxel and rarely converges; 0.8&ndash;1.2 is the working range.</td></tr>
+                    <tr><td><strong>Max Iterations</strong></td><td>Cycles per random start. A few hundred to ~1000 is typical.</td></tr>
+                    <tr><td><strong>Random Starts</strong></td><td>The method begins from random phases and does not converge every time. Each start is an independent trial; the best (lowest R) map is kept.</td></tr>
+                    <tr><td><strong>Peak Merge (&Aring;)</strong></td><td>Maxima closer than this are treated as one atom.</td></tr>
+                    <tr><td><strong>Symmetry in loop</strong></td><td>How strongly the space group is imposed on the structure factors each cycle (\(\lambda\), see <a href="#cf-symmetry">Space-Group Constraints</a>). <em>None</em> is classical \(P1\) charge flipping; <em>Damped</em> (\(\lambda = 0.5\)) is the default; <em>Strict</em> (\(\lambda = 1\)) is fastest and fixes the origin, but assumes the space group is right.</td></tr>
+                    <tr><td><strong>Overlap (&deg;2&theta;)</strong></td><td>Reflections closer than this in \(2\theta\) are treated as one measured peak and share their intensity dynamically. Exact overlaps are always caught regardless of the setting. Symmetry equivalents are unaffected &mdash; they are constrained to equal \(|F|\).</td></tr>
+                </tbody>
+            </table>
+            <div class="note">
+                A live time estimate is shown beneath the controls. Because the transform
+                dominates the cost and scales as \(N^3\log N\), moving from 64&sup3; to
+                128&sup3; is roughly an eight-fold increase in run time. The iteration
+                runs inside a Web Worker so the interface stays responsive, and it uses
+                <strong>WebGPU</strong> when the browser provides it &mdash; the entire
+                dual-space loop executes on the GPU, uploading the grid once and reading
+                it back once, which is many times faster than the CPU for the
+                transform-heavy inner loop. On browsers or devices without WebGPU it
+                falls back automatically to an equivalent CPU implementation. The two
+                paths run the same algorithm in the same order, but the GPU works in
+                single precision and the CPU in double, so the maps agree closely rather
+                than exactly; a difference in the last digit of \(R\) between backends is
+                normal. The reported <em>Compute</em> field in the solution shows which
+                path was used. The GPU path requires the file
+                <code>charge_flipping.wgsl</code> to be served alongside
+                <code>charge_flipping_worker.js</code>; if it fails to load or compile,
+                a message says so and the run continues on the CPU rather than failing.
+            </div>
+
+            <h3 id="cf-settings">Recommended Settings</h3>
+            <p>
+                The defaults are chosen to solve a typical small inorganic structure from
+                good laboratory data. The table below is a starting point by problem
+                type; the paragraphs after it explain what to change when a run fails.
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Situation</th><th>Grid</th><th>&delta;/&sigma;</th><th>Iterations</th><th>Starts</th><th>&lambda;</th><th>Overlap</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>First attempt</strong> (space group known, \(d_{min}\) ~1.0&nbsp;&Aring;)</td><td>32&sup3;</td><td>1.1</td><td>500</td><td>3</td><td>0.5</td><td>0.05&deg;</td></tr>
+                    <tr><td><strong>Small cell</strong> (\(V \lesssim 500\)&nbsp;&Aring;&sup3;, few atoms)</td><td>32&sup3;</td><td>1.0&ndash;1.1</td><td>300&ndash;500</td><td>3</td><td>1.0</td><td>0.05&deg;</td></tr>
+                    <tr><td><strong>Medium cell</strong> (500&ndash;2000&nbsp;&Aring;&sup3;)</td><td>64&sup3;</td><td>1.0&ndash;1.2</td><td>1000</td><td>5</td><td>0.5</td><td>0.05&deg;</td></tr>
+                    <tr><td><strong>Large / organic cell</strong> (&gt;2000&nbsp;&Aring;&sup3;)</td><td>64&ndash;128&sup3;</td><td>0.9&ndash;1.1</td><td>1500&ndash;3000</td><td>10&ndash;20</td><td>0.5</td><td>0.08&deg;</td></tr>
+                    <tr><td><strong>Space group uncertain</strong></td><td>32&ndash;64&sup3;</td><td>1.1</td><td>1000</td><td>10</td><td>0</td><td>0.05&deg;</td></tr>
+                    <tr><td><strong>Heavy overlap</strong> (high symmetry, broad peaks)</td><td>as above</td><td>1.1</td><td>1500</td><td>10</td><td>1.0</td><td>0.10&ndash;0.15&deg;</td></tr>
+                    <tr><td><strong>Poor / low-resolution data</strong> (\(d_{min} &gt; 1.5\)&nbsp;&Aring;)</td><td>32&sup3;</td><td>0.8&ndash;1.0</td><td>2000</td><td>20</td><td>1.0</td><td>0.10&deg;</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Choosing the grid</h4>
+            <p>
+                The grid must be large enough to hold every reflection in the fit: an
+                index \(h_{max}\) needs \(N \geq 2h_{max}+2\). If it is too small the
+                summary reports how many reflections did not fit and what \(N\) they
+                would need, and those reflections are simply lost. Beyond that
+                requirement, aim for a voxel of roughly 0.25&ndash;0.35&nbsp;&Aring;
+                (the summary prints the spacing). Finer than ~0.2&nbsp;&Aring; buys
+                nothing when the data stop at 1&nbsp;&Aring; resolution and costs
+                \(N^3\log N\): 64&sup3; to 128&sup3; is about an eight-fold increase in
+                run time.
+            </p>
+            <div class="note">
+                A 128&sup3; grid holds about 50&nbsp;MB of GPU memory and pushes several
+                dispatches close to the WebGPU ceiling of 65535 workgroups per
+                dimension. Powder&nbsp;5 checks every dispatch against the adapter's
+                reported limits before it encodes anything; if the device cannot take
+                the grid, the run falls back to the CPU with a message saying so rather
+                than producing a map that was never computed. The CPU path at 128&sup3;
+                is slow &mdash; expect minutes per random start &mdash; so on a
+                constrained device it is usually better to stay at 64&sup3;.
+            </div>
+
+            <h4>Choosing the threshold</h4>
+            <p>
+                \(\delta/\sigma\) is the single most sensitive parameter. Too low and
+                almost nothing is flipped, so the iteration stalls with \(R\) flat and
+                high; too high and the perturbation is so violent that the phases never
+                settle, giving an \(R\) that jumps around without trend. The working
+                range is 0.8&ndash;1.2 and 1.1 is a good default. If \(R\) plateaus above
+                0.3 with no oscillation, <em>lower</em> it in steps of 0.1; if \(R\) is
+                erratic from the first cycles, <em>raise</em> it. Weak or noisy data
+                generally want a slightly lower threshold.
+            </p>
+
+            <h4>Iterations and random starts</h4>
+            <p>
+                Charge flipping does not converge gradually &mdash; it stays flat and
+                then drops abruptly when the phases lock in, often after several hundred
+                cycles. Judge a run by whether that drop happened, not by the final
+                \(R\). More <em>starts</em> is usually a better investment than more
+                <em>iterations</em>: a run that has not found the solution by ~1000
+                cycles is unlikely to find it by 3000, whereas a fresh random start might
+                find it immediately. For a difficult problem, 10&ndash;20 starts of 1000
+                cycles beats 2 starts of 10000.
+            </p>
+
+            <h4>Choosing &lambda;</h4>
+            <p>
+                Use \(\lambda = 1\) when the space group is established (a clean
+                space-group test, a known compound, an unambiguous extinction pattern):
+                it converges in fewer cycles, needs fewer random starts, and delivers the
+                map already on a standard origin. Use \(\lambda = 0\) when the group is
+                in doubt, or as an independent check on a \(\lambda = 1\) solution &mdash;
+                if the \(P1\) map symmetrises to a high correlation without having been
+                forced to, the group is right. \(\lambda = 0.5\) is the compromise and
+                the default: it accelerates convergence appreciably while still allowing
+                the density to disagree with a slightly wrong group.
+            </p>
+
+            <h4>Choosing the overlap tolerance</h4>
+            <p>
+                Set it to roughly half the FWHM of a mid-angle peak. Too small and truly
+                overlapped reflections are treated as independently measured, which
+                imposes intensities the data never determined; too large and reflections
+                that <em>were</em> resolved get to trade intensity freely, discarding
+                real information. 0.05&deg; suits sharp laboratory data; broad peaks or a
+                high-symmetry cell with many coincidences want 0.10&ndash;0.15&deg;. The
+                summary reports how many reflections ended up sharing a peak &mdash; if
+                that number is close to the total, the tolerance is almost certainly too
+                large.
+            </p>
+            <div class="note">
+                <strong>Order of attack when a run fails.</strong> (1) Check the
+                reflection-count warnings: a grid too small, or intensities on
+                systematically absent reflections, are input problems and no parameter
+                will fix them. (2) Add random starts. (3) Adjust \(\delta/\sigma\) by
+                &plusmn;0.1. (4) Try \(\lambda = 0\) and \(\lambda = 1\) &mdash; a
+                solution that appears at \(\lambda = 0\) but not at \(\lambda = 1\) is
+                telling you the space group is wrong. (5) Only then increase the grid or
+                the iteration count.
+            </div>
+
+            <h3 id="cf-reading">Reading the Solution</h3>
+            <p>
+                Each run appends a timestamped entry to the Charge Flipping history, so
+                earlier attempts remain available from the run selector. A solution
+                contains:
+            </p>
+            <ul>
+                <li><strong>Best R.</strong> The amplitude agreement of the retained map, summed over measured peaks. Below ~0.15 is promising; above ~0.30 usually means the run has not converged &mdash; add random starts, adjust the threshold by &plusmn;0.1&sigma;, or see <a href="#cf-settings">Recommended Settings</a>.</li>
+                <li><strong>Electron-density peaks.</strong> Fractional coordinates. At \(\lambda = 0\) the map is in \(P1\) with an arbitrary origin and hand, so absolute positions are meaningless &mdash; compare interatomic <em>distances</em>. At \(\lambda &gt; 0\) the origin is pinned by the symmetrisation and the coordinates are directly comparable to the space group's Wyckoff positions. Relative peak heights are a rough guide to atomic number in both cases.</li>
+                <li><strong>Symmetry diagnostics.</strong> The summary reports which symmetry was used (operators or Laue-table fallback), how many reflections were forced to zero as systematically absent, and how many ended up sharing a peak with another reflection. A large absence count is normal for a centred lattice; an <em>absent-but-observed</em> warning is not, and usually means the space group is wrong.</li>
+                <li><strong>Density section.</strong> A slice through the map, with selectable axis and depth. The colour bar under the image is an <em>absolute</em> scale taken from the whole map, not from the slice on screen, so slices are directly comparable and an empty one looks empty. The caption gives the slice maximum in units of the map's \(\sigma\); anything under about 3&sigma; is ripple, not an atom. The <em>Stretch each slice to its own range</em> checkbox restores per-slice auto-contrast, which is occasionally useful for tracing weak features but makes noise look like structure &mdash; the caption says so whenever it is on.</li>
+                <li><strong>3D isosurface.</strong> The same map drawn as a surface of constant density, at a level you set in units of the map's \(\sigma\) — the same units as the section caption, so the two views can be read against each other. Drag to rotate, scroll to zoom. At 1&ndash;2&sigma; you will see mostly noise; real atoms usually appear as isolated closed blobs somewhere above 3&sigma;.
+                    <ul>
+                        <li><em>As solved</em> is the raw charge-flipping density, exactly what the algorithm produced.</li>
+                        <li><em>Symmetry-averaged</em> is the same density after the Structure step has shifted it onto the space-group origin and averaged it over the symmetry operators. It is much cleaner, because averaging \(n\) equivalent copies of the cell suppresses the noise by \(\sqrt{n}\) — but it <strong>assumes the space group is right</strong>, so judge the solution on the raw map and use this one to read it. It only becomes selectable once the structure has been built.</li>
+                        <li><em>Atom positions</em> is a list under the viewer controls, one row per
+                            unique site from the Structure block: rank, colour, peak height,
+                            multiplicity, and a show/hide toggle. Every site starts hidden, so the
+                            density can be judged on its own first; click a row to bring one in, or use
+                            <em>show all</em>. Ten rows are shown at a time and the list scrolls beyond
+                            that. The header counts what is visible, and the caption under the viewer
+                            says how many positions are drawn and how many sites are hidden.
+                            <p>
+                            Each site is drawn <strong>expanded over the symmetry operators</strong>: a
+                            site of multiplicity 4 appears four times, once beside each of its four
+                            density lobes, and hiding its row removes the whole orbit at once. The
+                            Structure table lists only one representative per orbit, so drawing that
+                            list directly would leave most of the lobes bare. The swatch in the list is
+                            the colour of the sphere &mdash; sixteen distinct colours, enough that a
+                            solution with more than eight sites does not reuse one &mdash; and the sphere
+                            radius follows the peak height, so in PbSO<sub>4</sub> the four Pb lobes are
+                            obvious against the lighter atoms.
+                            </p>
+                            <p>
+                            Nothing has been least-squares refined at this stage; these are located
+                            peaks. Seeing them sit centred inside the density lobes is the quickest
+                            visual confirmation that the solution hangs together, and bringing them in
+                            one at a time is the easiest way to tell which lobe belongs to which site
+                            when the cell is crowded.
+                            </p></li>
+                    </ul>
+                    The three cell edges meeting at the origin are coloured and labelled
+                    <span style="color:#f24d47;">a</span> /
+                    <span style="color:#6bd961;">b</span> /
+                    <span style="color:#5c9efa;">c</span>, so you can tell which axis you
+                    are looking down.
+                </li>
+            </ul>
+            <p>The two buttons beside the section viewer write the peak list
+               (<code>.csv</code>) and the full density grid (<code>.grd</code>); the
+               refined sites are exported separately, from the button under the
+               Structure block.</p>
+
+            <div class="note">
+                The surface is extracted with <strong>Surface Nets</strong> rather than
+                Marching Cubes. Its lookup tables are generated from the geometry of the
+                cube at load time instead of being transcribed, so there is no 2500-entry
+                triangle table to get subtly wrong, and it places one vertex per cell at
+                the centroid of the edge crossings — which gives a smoother mesh with far
+                fewer sliver triangles on noisy data. A charge-flipping map near the
+                noise floor is very noisy. Extraction always runs on the full grid: even
+                128&sup3;, which is two million cells, takes well under a second.
+            </div>
+
+            <h3 id="cf-structure">Building a Structure in the Space Group</h3>
+            <p>
+                This runs automatically at the end of every charge-flipping run, and
+                again whenever a run is re-selected from the history (the result is
+                cached, so re-selecting is instant). It takes the actual space-group
+                symmetry operators, read from the bundled database, and:
+            </p>
+            <ol>
+                <li>finds the origin shift that makes the map obey those operators &mdash;
+                    computed in closed form from a single Fourier transform, then
+                    validated by symmetrising the map and measuring the correlation;</li>
+                <li>averages the density over the symmetry operators;</li>
+                <li>reduces the peaks to one representative per symmetry orbit, reporting
+                    the site multiplicity of each (a peak that maps onto itself sits on a
+                    special position).</li>
+            </ol>
+            <div class="note">
+                This step does different work depending on \(\lambda\). At
+                \(\lambda = 0\) the map is in \(P1\) and step&nbsp;1 is doing the real
+                job: it is the only thing that places the structure on a crystallographic
+                origin. At \(\lambda = 1\) the map already sits on a standard origin, the
+                shift found should be near zero, and the step is effectively an
+                independent check &mdash; but it is worth having either way, because
+                the symmetry correlation it reports is the best single quality
+                indicator, and the reduction to the asymmetric unit with site
+                multiplicities is what produces the CIF.
+            </div>
+            <p>
+                The <strong>symmetry correlation</strong> reported alongside the sites is
+                the number to trust: a high value means the density is genuinely
+                consistent with the chosen space group; a low one means either the run
+                has not converged or the space group is wrong. The resulting sites can be
+                exported as a <code>.cif</code> file.
+            </p>
+            <div class="warning-note">
+                Charge flipping yields electron density, not chemistry. The peaks are
+                labelled generically (Q1, Q2, &hellip;) with unit occupancy; assigning
+                element types and refining occupancies is left to the user. The
+                <code>.cif</code> is a starting model for Rietveld refinement, not a
+                finished structure.
+            </div>
+            <div class="note">
+                The space-group database must include the full symmetry operators
+                (the <code>symops</code> field). If the status line under the Structure
+                heading reports them missing, regenerate the JSON with the current
+                <code>cctbx_generate_sg_harker</code> script; an older database that
+                carries only rotations will index reflections but cannot build a
+                structure.
+            </div>
+
+            <h3 id="cf-output-fields">Result Fields Explained</h3>
+            <p>The Charge Flipping tab reports several quantities. Each is defined below.</p>
+            <table class="param-table">
+                <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Best R</strong></td><td>The lowest residual reached during the run, for the map that is kept. Summed over measured peaks rather than individual reflections, because overlapping reflections are not separately observable. Below ~0.15 suggests a solution; above ~0.30 usually means non-convergence.</td></tr>
+                    <tr><td><strong>Reached at iteration</strong></td><td>Which cycle produced that best map. Powder&nbsp;5 retains the best iterate, not the last, because the algorithm oscillates once it has converged.</td></tr>
+                    <tr><td><strong>Random starts</strong></td><td>How many independent random-phase trials were run; the best across all of them is shown.</td></tr>
+                    <tr><td><strong>Grid / spacing</strong></td><td>The density-grid edge and the corresponding real-space voxel size in &Aring;ngstr&ouml;m.</td></tr>
+                    <tr><td><strong>Unique reflections used</strong></td><td>How many Pawley intensities entered the calculation, after dropping zero or negative values and any reflection whose orbit does not fit the grid.</td></tr>
+                    <tr><td><strong>Grid points filled</strong></td><td>Total reciprocal-grid points carrying an observed amplitude, i.e. the sum of all orbit sizes. Much larger than the number of unique reflections in a high-symmetry group.</td></tr>
+                    <tr><td><strong>Space group</strong></td><td>The group whose operators were used. This is the group the Pawley fit ran in, not necessarily the current selection.</td></tr>
+                    <tr><td><strong>Expansion symmetry</strong></td><td>How the orbits were generated: the number of real symmetry operators and the Laue class, or &mdash; if the database lacks the <code>symops</code> field &mdash; a note that only the Laue-class fallback was available. In the fallback case screw and glide absences are <em>not</em> applied.</td></tr>
+                    <tr><td><strong>Symmetry in loop</strong></td><td>The \(\lambda\) actually used. <em>none</em> means the map was solved in \(P1\) and its origin is arbitrary.</td></tr>
+                    <tr><td><strong>Absences forced to zero</strong></td><td>How many grid points were held at \(F = 0\) as systematically absent. Expect roughly half the grid for an \(I\) lattice and three quarters for \(F\); zero for a primitive group with no screws or glides.</td></tr>
+                    <tr><td><strong>Overlapping reflections</strong></td><td>How many of the reflection orbits share a measured peak with at least one other, and how many distinct peaks they occupy. If this approaches the total, either the sample really is heavily overlapped or the overlap tolerance is set too wide.</td></tr>
+                    <tr><td><strong>Symmetry correlation</strong></td><td>(From the automatic structure build.) The correlation between the map and its symmetrised copy in the chosen space group. This is the primary quality indicator: near 1 means the density genuinely obeys the symmetry; a low value means either non-convergence or a wrong space group.</td></tr>
+                    <tr><td><strong>Origin shift / hand</strong></td><td>(From the automatic structure build.) The translation applied to bring the map onto the space-group origin, and whether the inverted solution was chosen. At \(\lambda = 0\) both are arbitrary and are resolved here against the symmetry. At \(\lambda = 1\) the shift should already be close to zero &mdash; a large shift then means the in-loop symmetrisation and the origin search disagree, which is worth investigating.</td></tr>
+                </tbody>
+            </table>
+
+            <h4 id="cf-peak-columns">Peak and site table columns</h4>
+            <table class="param-table">
+                <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>#</strong></td><td>Peak rank by height (1 = strongest).</td></tr>
+                    <tr><td><strong>x, y, z</strong></td><td>Fractional coordinates. In the raw peak list these are in \(P1\) with an arbitrary origin; in the built structure they are placed on the space-group origin.</td></tr>
+                    <tr><td><strong>Height</strong></td><td>Peak density relative to the strongest peak (which is set to 1). A rough proxy for atomic number: heavier atoms scatter more and peak higher.</td></tr>
+                    <tr><td><strong>d<sub>min</sub> (&Aring;)</strong></td><td>(Peak list.) Distance to the nearest other peak &mdash; more meaningful than the absolute coordinates, since the origin is arbitrary.</td></tr>
+                    <tr><td><strong>Mult</strong></td><td>Site multiplicity: how many symmetry-equivalent copies of this site exist in the unit cell. See the note on the asterisk below.</td></tr>
+                </tbody>
+            </table>
+            <div class="note">
+                <strong>The asterisk (*) on a multiplicity</strong> marks a
+                <em>special position</em>. A site lying on a symmetry element &mdash; a
+                mirror plane, rotation axis or inversion centre &mdash; maps onto itself
+                under one or more symmetry operators, so it has <em>fewer</em>
+                equivalent copies than a general position. Its multiplicity is therefore
+                smaller than the space group's general multiplicity, and the asterisk
+                flags exactly that: this atom sits on a special position and its
+                coordinates are constrained by symmetry. For example, in \(Pnma\) a general
+                site has multiplicity 8; an atom on the mirror at \(y=\tfrac14\) has
+                multiplicity 4, shown as <code>4*</code>. Special positions are common and
+                expected &mdash; many atoms in real structures sit on them &mdash; and
+                recognising them is the first step toward assigning Wyckoff letters.
+            </div>
+
+            <h3 id="cf-caveats">Requirements and Limitations</h3>
+            <ul>
+                <li><strong>Data quality.</strong> The solution is only as good as the
+                    extracted intensities. Severe peak overlap, a poor background, or an
+                    incorrect cell will all degrade or prevent a solution.</li>
+                <li><strong>Resolution.</strong> Atomic-resolution data (roughly
+                    \(d \lesssim 1.2\)&nbsp;&Aring;) is normally needed to resolve
+                    individual atoms; lower resolution gives a blurred map.</li>
+                <li><strong>The space group is an assumption.</strong> With
+                    \(\lambda &gt; 0\) it is imposed, not tested. A wrong group can still
+                    produce a low \(R\), because the constraint makes the calculated
+                    intensities agree with the observed ones by construction. Cross-check
+                    with a \(\lambda = 0\) run and with the symmetry correlation from
+                    the Structure block.</li>
+                <li><strong>Non-uniqueness.</strong> Random starts can land on different
+                    origins or the inverted structure. This is expected at
+                    \(\lambda = 0\); the structure builder resolves origin and hand
+                    against the space-group symmetry.</li>
+                <li><strong>Light atoms near heavy ones.</strong> As with any
+                    Fourier method, light atoms sitting close to much heavier ones may be
+                    lost in truncation ripples.</li>
+                <li><strong>Overlap is modelled, not solved.</strong> Re-partitioning the
+                    intensity of a cluster in proportion to the calculated values is a
+                    reasonable guess, not a measurement. Structures whose solution
+                    depends on resolving a specific pair of overlapped reflections may be
+                    beyond reach from powder data alone.</li>
+            </ul>
+        </section>
 
         <section id="strategy">
             <h2>Recommended Refinement Strategy</h2>
@@ -1113,6 +1720,22 @@ blockquote {
                 Le Bail, A., Duroy, H. & Fourquet, J.L. (1988). "Ab-initio structure determination of LiSbWO6 by X-ray powder diffraction". <em>Materials Research Bulletin</em>, 23(3), 447-452.
             </div>
             <div class="reference-item">
+                <strong>Charge Flipping:</strong><br>
+                Oszlányi, G. &amp; Sütő, A. (2004). "Ab initio structure solution by charge flipping". <em>Acta Crystallographica Section A</em>, 60(2), 134-141.
+            </div>
+            <div class="reference-item">
+                <strong>Charge Flipping &mdash; practice and variants:</strong><br>
+                Oszlányi, G. &amp; Sütő, A. (2008). "The charge flipping algorithm". <em>Acta Crystallographica Section A</em>, 64(1), 123-134.
+            </div>
+            <div class="reference-item">
+                <strong>Charge Flipping with symmetry and powder data:</strong><br>
+                Palatinus, L. &amp; Chapuis, G. (2007). "SUPERFLIP &ndash; a computer program for the solution of crystal structures by charge flipping in arbitrary dimensions". <em>Journal of Applied Crystallography</em>, 40(4), 786-790.
+            </div>
+            <div class="reference-item">
+                <strong>Charge Flipping from powder data (intensity repartitioning):</strong><br>
+                Baerlocher, C., McCusker, L. B. &amp; Palatinus, L. (2007). "Charge flipping combined with histogram matching to solve complex crystal structures from powder diffraction data". <em>Zeitschrift für Kristallographie</em>, 222(2), 47-53.
+            </div>
+            <div class="reference-item">
                 <strong>GSAS Profile Functions:</strong><br>
                 Larson, A. C. & Von Dreele, R. B. (2004). "General Structure Analysis System (GSAS)". <em>Los Alamos National Laboratory Report LAUR 86-748</em>.
             </div>
@@ -1174,7 +1797,7 @@ blockquote {
             </div>
         </section>
         <footer id="help-footer">
-            Powder 5, version 131 &mdash; 29 July 2026
+            Powder 5, version 143, 03 August 2026
         </footer>
     </main>
 </div>

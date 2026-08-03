@@ -1,4 +1,8 @@
 // refinement_worker.js
+//version 143, 3 aug 2026... changes in the monoclinic settings, all accepted. added marching cubes 
+//version 134, 1 august 2026: explicit binding sizes for the GPU pattern
+//   kernel (arrayLength no longer reports a stale, larger buffer) and the
+//   readback staging buffer is now serialised against overlapping calls.
 //version 133, 31 july 2026, changed to cctbx v5, the json files holds the Harker data for further analysis 
 // Harker planes saved in the text report
 // version 131, 29 july 2026, LM: Marquardt-scaled solve + lambda no longer
@@ -8,7 +12,7 @@
 // version 123 (fixes: init race, tetragonal/triclinic HKL generation, LM step clamp)
 // Spline Background in nov 2025, version 115
 // FIX: must match the file the main thread loads (was stale "_v2", -> 404).
-const initPromise = fetch('cctbx_space_groups_all_settings_v5.json')
+const initPromise = fetch('cctbx_space_groups_all_settings_v7.json')
     .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -40,6 +44,11 @@ let gpuDevice = null;
 let computePipeline = null;
 let gpuBuffers = { tth: null, hkl: null, out: null, read: null, tthSize: 0, hklSize: 0, outSize: 0 };
 let reusableHklData = new Float32Array(1024);
+
+// The staging buffer is a single shared resource. Two overlapping
+// calculatePattern() calls would both hit mapAsync() on it and the second
+// throws "buffer is already mapped / pending map". Serialise on this chain.
+let gpuQueueTail = Promise.resolve();
 
 async function initWebGPU() {
     if (!navigator.gpu) {
@@ -150,7 +159,11 @@ async function calculatePattern(tthAxis, hklList, params, outArr = null) {
         }
     });
 
+    const myTurn = gpuQueueTail;
+    let releaseTurn;
+    gpuQueueTail = new Promise(res => { releaseTurn = res; });
     try {
+        await myTurn;
         const tthData = new Float32Array(tthAxis);
         if (!gpuBuffers.tth || gpuBuffers.tthSize < tthData.byteLength) {
             if (gpuBuffers.tth) gpuBuffers.tth.destroy();
@@ -178,9 +191,13 @@ async function calculatePattern(tthAxis, hklList, params, outArr = null) {
         const bindGroup = gpuDevice.createBindGroup({
             layout: computePipeline.getBindGroupLayout(0),
             entries: [
-                { binding: 0, resource: { buffer: gpuBuffers.tth } },
+                // FIX: the buffers only ever GROW, so an explicit size is
+                // required. Without it arrayLength(&tth_axis) reported the
+                // capacity of the largest pattern seen so far and the shader
+                // ran past the end of the current one.
+                { binding: 0, resource: { buffer: gpuBuffers.tth, size: tthData.byteLength } },
                 { binding: 1, resource: { buffer: gpuBuffers.hkl, size: hklByteLength } },
-                { binding: 2, resource: { buffer: gpuBuffers.out } },
+                { binding: 2, resource: { buffer: gpuBuffers.out, size: tthData.byteLength } },
             ],
         });
 
@@ -202,8 +219,11 @@ async function calculatePattern(tthAxis, hklList, params, outArr = null) {
         return pattern;
     } catch (e) {
         console.warn("GPU computation failed, falling back to CPU.", e);
+        try { gpuBuffers.read && gpuBuffers.read.unmap(); } catch (_) {}
         gpuDevice = null; 
         return calculatePatternCPU(tthAxis, hklList, params, outArr);
+    } finally {
+        releaseTurn();
     }
 }
 
@@ -576,10 +596,14 @@ function createMonotonicCubicSplineInterpolator(points) {
     const lambda_sq_over_4 = (lambda * lambda) / 4.0;
     const a_sq = a * a;
 
-    let b_sq, c_sq, sin_beta_sq, cos_beta;
+    let b_sq, c_sq;
     let a_star_sq, b_star_sq, c_star_sq, ab_star, bc_star, ac_star;
 
-    if (system === 'triclinic') {
+    // Monoclinic shares the general reciprocal metric with triclinic. With
+    // the two fixed angles at 90 it reduces to the closed form it replaces,
+    // exactly (agreement to 1 part in 1e16), and unique axis a, b and c all
+    // come out right without a branch each.
+    if (system === 'triclinic' || system === 'monoclinic') {
         const al = (alpha || 90) * deg2rad;
         const be = (beta || 90) * deg2rad;
         const ga = (gamma || 90) * deg2rad;
@@ -611,18 +635,7 @@ function createMonotonicCubicSplineInterpolator(points) {
         bc_star = 2 * b_star * c_star * cosA_star;
         ac_star = 2 * a_star * c_star * cosB_star;
         
-    } else if (system === 'monoclinic') {
-        const beta_rad = (beta || 90) * deg2rad;
-        sin_beta_sq = Math.sin(beta_rad);
-        sin_beta_sq *= sin_beta_sq;
-        cos_beta = Math.cos(beta_rad);
-        b_sq = (b && b > 0) ? (b * b) : a_sq;
-        c_sq = (c && c > 0) ? (c * c) : a_sq;
-         if (Math.abs(sin_beta_sq) < 1e-9) {
-             hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
-             return;
-         }
-    } else if (system === 'tetragonal' || system === 'hexagonal' || system === 'rhombohedral' || system === 'trigonal') {
+        } else if (system === 'tetragonal' || system === 'hexagonal' || system === 'rhombohedral' || system === 'trigonal') {
          c_sq = (c && c > 0) ? (c * c) : a_sq;
     } else if (system === 'orthorhombic') {
          b_sq = (b && b > 0) ? (b * b) : a_sq;
@@ -660,9 +673,6 @@ function createMonotonicCubicSplineInterpolator(points) {
                     inv_d_sq = 4 * (h2 + h*k + k2) / (3 * a_sq) + l2 / c_sq;
                     break;
                 case 'monoclinic':
-                     if (a_sq <= 0 || b_sq <= 0 || c_sq <= 0 || a <= 0 || c <= 0) throw new Error("Invalid lattice param");
-                    inv_d_sq = (1/sin_beta_sq) * (h2/a_sq + k2*sin_beta_sq/b_sq + l2/c_sq - (2*h*l*cos_beta)/(a*c));
-                    break;
                 case 'triclinic':
                     if (a_star_sq === undefined) throw new Error("Invalid lattice param");
                     inv_d_sq = h2 * a_star_sq + k2 * b_star_sq + l2 * c_star_sq + h * k * ab_star + k * l * bc_star + h * l * ac_star;
@@ -1926,19 +1936,56 @@ if (cost < bestTrueCost) {
              }
              const p_step_clamped = p_step.map(v => v * stepScale);
 
-             let predicted = 0;
-             for (let i = 0; i < n_params; i++) {
-                 predicted += 2 * p_step_clamped[i] * Jtr[i];
-                 let q = 0;
-                 for (let j = 0; j < n_params; j++) q += finalJtJ[i][j] * p_step_clamped[j];
-                 predicted -= p_step_clamped[i] * q;
-             }
-
             oldParams = cloneParams(params);
              oldHklList = cloneHkl(workingHklList);
 
              const p_new = p_current.map((v, i) => v + p_step_clamped[i]);
              paramMapping.forEach((m, i) => m.set(params, workingHklList, p_new[i]));
+
+             // FIX: set() silently clamps to [minVal, maxVal] (and returns
+             // without assigning on a non-finite value), so the step that is
+             // actually taken can be shorter than p_step_clamped -- zero, for a
+             // parameter already sitting on a bound with the step pointing
+             // outwards. `predicted` used to be computed from the PROPOSED
+             // step while `actual` measured the APPLIED one, so every bound
+             // contact depressed rho through pure bookkeeping.
+             //
+             // That never rejected a step -- acceptance below is decided by
+             // cost alone -- but it did drive lambda. With rho stuck under
+             // 0.75 the decrease branch is unreachable while the increase
+             // branch fires every iteration, so lambda ratchets towards 1e9
+             // and the whole refinement grinds to a halt, not just the
+             // parameter on the bound. Pawley mode is the bad case: intensity
+             // parameters are bounded below by zero and weak reflections park
+             // there permanently, throttling the cell and profile terms too.
+             //
+             // Read back what the bounds allowed and measure the same step
+             // the cost function sees. Same convention buildNormalEquations()
+             // already uses for the finite-difference denominator. This has to
+             // happen BEFORE calculateTotalPattern(), which runs
+             // enforceSymmetryConstraintsWorker() and, in Le Bail mode,
+             // re-extracts the intensities.
+             const p_applied  = paramMapping.map(m => m.get(params, workingHklList));
+             const p_step_real = p_applied.map((v, i) => v - p_current[i]);
+
+             let predicted = 0;
+             for (let i = 0; i < n_params; i++) {
+                 predicted += 2 * p_step_real[i] * Jtr[i];
+                 let q = 0;
+                 for (let j = 0; j < n_params; j++) q += finalJtJ[i][j] * p_step_real[j];
+                 predicted -= p_step_real[i] * q;
+             }
+
+             // Every component blocked: the model is sitting in a corner of
+             // the bound box with the step pointing out of it. Nothing will
+             // change, so stop rather than spin up lambda for the remaining
+             // iterations.
+             if (p_step_real.every(v => v === 0)) {
+                 console.warn(`LM iter ${iter}: the proposed step is entirely blocked by parameter bounds; stopping.`);
+                 params = oldParams;
+                 workingHklList = oldHklList;
+                 break;
+             }
 
              await calculateTotalPattern(y_calc_total);
              let new_cost = 0;
@@ -1960,8 +2007,14 @@ if (cost < bestTrueCost) {
              let stepAccepted = false;
              if (new_cost < cost && isFinite(new_cost)) {
                  stepAccepted = true;
-                 if (rho > 0.75 && stepScale > 0.99) lambda = Math.max(1e-9, lambda / 3);
-                 else if (rho < 0.25)                lambda = Math.min(1e9, lambda * 2);
+                 // The old gate was `stepScale > 0.99`, which meant any trust-
+                 // region clipping at all -- however slight -- also made the
+                 // decrease branch unreachable, so lambda could only ever go
+                 // up. Now that `predicted` describes the step that was really
+                 // taken, a mildly clipped step is still evidence the model is
+                 // good; only a heavily clipped one is not.
+                 if (rho > 0.75 && stepScale > 0.5) lambda = Math.max(1e-9, lambda / 3);
+                 else if (rho < 0.25)               lambda = Math.min(1e9, lambda * 2);
              } else {
                  params = oldParams;
                  workingHklList = oldHklList;

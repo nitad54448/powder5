@@ -1,0 +1,1743 @@
+// charge_flipping_worker.js
+// version 138, 2 august 2026 -- GPU (WebGPU) path with CPU fallback,
+// space group applied inside the iteration.
+//
+// Dual-space charge flipping (Oszlanyi & Suto, Acta Cryst A60 (2004) 134)
+// run on Pawley-extracted integrated intensities.
+//
+// ---------------------------------------------------------------------------
+//  What v137 got wrong
+// ---------------------------------------------------------------------------
+//  1. Neither path ran. The WGSL declared two different resources on
+//     @binding(4) and @binding(5), which is a validation error, so the GPU
+//     path always threw; and runChargeFlippingCPU still read prep.observedIdx
+//     and prep.fObs, which buildFobsGrid had stopped returning, so the
+//     fallback threw a TypeError on its first line.
+//
+//  2. The symmetry used for the orbit expansion was the HOLOHEDRY OF THE
+//     CRYSTAL SYSTEM, not the Laue class of the space group. P4 (Laue 4/m,
+//     multiplicity 8) was expanded with 4/mmm and got 16 grid points; the
+//     measured intensity was then divided among eight positions that are not
+//     equivalent to the other eight. Same for -3 vs -3m, 6/m vs 6/mmm and
+//     m-3 vs m-3m. Here the orbit is generated from the actual symmetry
+//     operators, so it is right by construction; the Laue tables below are
+//     only a fallback for space-group JSON that predates the "symops" field.
+//
+//  3. Systematic absences were left free. Charge flipping is then allowed to
+//     put density on reflections the lattice forbids -- for an F or I lattice
+//     that is most of the reciprocal grid, and it lets the map break the
+//     centring outright. They are now a hard zero every cycle.
+//
+//  4. The intensity repartition was inverted. v137 shared each observed
+//     intensity freely among the members of one SYMMETRY ORBIT. Those members
+//     are required by symmetry to have equal |F|; letting them float is
+//     precisely what throws the space-group information away. The free
+//     partition belongs between DISTINCT reflections that overlap in
+//     2-theta, which v137 never handled at all. Both are now modelled:
+//     an orbit gets equal amplitudes, a 2-theta cluster gets a Le Bail-style
+//     split proportional to the current calculated intensities.
+//
+//  5. No Lorentz-polarisation correction. A Pawley intensity is a peak AREA,
+//     which is proportional to m * LP * |F|^2. Without dividing by LP the
+//     low-angle reflections are weighted several times too heavily and the
+//     map is dominated by the first few peaks.
+//
+//  6. Symmetry was applied only afterwards, by findOriginShift +
+//     symmetryAverage. That is the orthodox choice and it is still available
+//     (set symLambda = 0), but with symLambda > 0 the group is imposed on the
+//     structure factors every cycle via F(hR) = F(h) exp(-2 pi i h.t), which
+//     converges faster and fixes the origin as a side effect.
+//
+// ---------------------------------------------------------------------------
+//  Everything below is shared by the GPU and CPU paths: the reflection model
+//  is built once, in JavaScript, and the two backends consume the same flat
+//  arrays. That is deliberate -- it is the only way to keep the fallback
+//  numerically comparable to the GPU result.
+// ---------------------------------------------------------------------------
+
+'use strict';
+
+// ---------------------------------------------------------------------------
+//  1D complex FFT, radix-2, in place, on a strided view of a flat array.
+// ---------------------------------------------------------------------------
+function fft1d(re, im, base, stride, n, inverse) {
+    for (let i = 1, j = 0; i < n; i++) {
+        let bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) {
+            const a = base + i * stride, b = base + j * stride;
+            let t = re[a]; re[a] = re[b]; re[b] = t;
+            t = im[a]; im[a] = im[b]; im[b] = t;
+        }
+    }
+
+    const sign = inverse ? 1 : -1;
+    for (let len = 2; len <= n; len <<= 1) {
+        const ang = sign * 2 * Math.PI / len;
+        const wRe = Math.cos(ang), wIm = Math.sin(ang);
+        for (let i = 0; i < n; i += len) {
+            let curRe = 1, curIm = 0;
+            const half = len >> 1;
+            for (let k = 0; k < half; k++) {
+                const iu = base + (i + k) * stride;
+                const iv = base + (i + k + half) * stride;
+                const uRe = re[iu], uIm = im[iu];
+                const vRe = re[iv] * curRe - im[iv] * curIm;
+                const vIm = re[iv] * curIm + im[iv] * curRe;
+                re[iu] = uRe + vRe; im[iu] = uIm + vIm;
+                re[iv] = uRe - vRe; im[iv] = uIm - vIm;
+                const nRe = curRe * wRe - curIm * wIm;
+                curIm = curRe * wIm + curIm * wRe;
+                curRe = nRe;
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  3D FFT on an N x N x N grid stored as idx = h + k*N + l*N*N.
+// ---------------------------------------------------------------------------
+function fft3d(re, im, N, inverse) {
+    const N2 = N * N;
+    for (let l = 0; l < N; l++)
+        for (let k = 0; k < N; k++)
+            fft1d(re, im, k * N + l * N2, 1, N, inverse);
+    for (let l = 0; l < N; l++)
+        for (let h = 0; h < N; h++)
+            fft1d(re, im, h + l * N2, N, N, inverse);
+    for (let k = 0; k < N; k++)
+        for (let h = 0; h < N; h++)
+            fft1d(re, im, h + k * N, N2, N, inverse);
+
+    if (inverse) {
+        const s = 1 / (N * N2);
+        for (let i = 0; i < re.length; i++) { re[i] *= s; im[i] *= s; }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Reciprocal-space rotations for the 11 Laue classes.
+//
+//  ONLY A FALLBACK. When the space-group JSON carries the "symops" field the
+//  orbit is generated from the real operators instead, which also supplies
+//  the translations that the symmetrisation and the absence test need. These
+//  tables are used when symops are missing, and they are keyed on the LAUE
+//  CLASS, not on the crystal system -- that distinction is the whole point.
+//
+//  Each operator maps (h,k,l) -> (h',k',l'). Friedel mates are added
+//  separately, so only proper rotations are listed. Note that every lower
+//  class is a prefix of its holohedry, which is why the arrays are built by
+//  slicing.
+// ---------------------------------------------------------------------------
+const OPS_4MMM = [
+    (h, k, l) => [h, k, l],
+    (h, k, l) => [-k, h, l],
+    (h, k, l) => [-h, -k, l],
+    (h, k, l) => [k, -h, l],
+    (h, k, l) => [-h, k, -l],
+    (h, k, l) => [h, -k, -l],
+    (h, k, l) => [k, h, -l],
+    (h, k, l) => [-k, -h, -l]
+];
+
+const OPS_6MMM = [
+    (h, k, l) => [h, k, l],
+    (h, k, l) => [-k, h + k, l],
+    (h, k, l) => [-h - k, h, l],
+    (h, k, l) => [-h, -k, l],
+    (h, k, l) => [k, -h - k, l],
+    (h, k, l) => [h + k, -h, l],
+    (h, k, l) => [-k, -h, -l],
+    (h, k, l) => [-h, h + k, -l],
+    (h, k, l) => [h + k, -k, -l],
+    (h, k, l) => [k, h, -l],
+    (h, k, l) => [h, -h - k, -l],
+    (h, k, l) => [-h - k, k, -l]
+];
+
+const OPS_M3M = [
+    (h, k, l) => [h, k, l],     (h, k, l) => [-h, -k, l],
+    (h, k, l) => [-h, k, -l],   (h, k, l) => [h, -k, -l],
+    (h, k, l) => [l, h, k],     (h, k, l) => [l, -h, -k],
+    (h, k, l) => [-l, -h, k],   (h, k, l) => [-l, h, -k],
+    (h, k, l) => [k, l, h],     (h, k, l) => [-k, l, -h],
+    (h, k, l) => [k, -l, -h],   (h, k, l) => [-k, -l, h],
+    (h, k, l) => [k, h, -l],    (h, k, l) => [-k, -h, -l],
+    (h, k, l) => [k, -h, l],    (h, k, l) => [-k, h, l],
+    (h, k, l) => [h, l, -k],    (h, k, l) => [-h, l, k],
+    (h, k, l) => [-h, -l, -k],  (h, k, l) => [h, -l, k],
+    (h, k, l) => [l, k, -h],    (h, k, l) => [l, -k, h],
+    (h, k, l) => [-l, k, h],    (h, k, l) => [-l, -k, -h]
+];
+
+const OPS_3BARM = [                       // 32, hexagonal axes
+    (h, k, l) => [h, k, l],
+    (h, k, l) => [-h - k, h, l],
+    (h, k, l) => [k, -h - k, l],
+    (h, k, l) => [-k, -h, -l],
+    (h, k, l) => [-h, h + k, -l],
+    (h, k, l) => [h + k, -k, -l]
+];
+
+const LAUE_OPS = {
+    '-1':    OPS_M3M.slice(0, 1),
+    '2/m':   [(h, k, l) => [h, k, l], (h, k, l) => [-h, k, -l]],   // unique axis b
+    'mmm':   OPS_M3M.slice(0, 4),
+    '4/m':   OPS_4MMM.slice(0, 4),
+    '4/mmm': OPS_4MMM,
+    '-3':    OPS_3BARM.slice(0, 3),
+    '-3m':   OPS_3BARM,
+    '6/m':   OPS_6MMM.slice(0, 6),
+    '6/mmm': OPS_6MMM,
+    'm-3':   OPS_M3M.slice(0, 12),
+    'm-3m':  OPS_M3M
+};
+
+// Crystal system -> holohedry, retained only so that a job that supplies
+// neither symops nor a Laue class still runs (with a warning).
+const SYSTEM_HOLOHEDRY = {
+    triclinic: '-1',
+    monoclinic: '2/m',
+    orthorhombic: 'mmm',
+    tetragonal: '4/mmm',
+    trigonal: '-3m',
+    rhombohedral: '-3m',
+    hexagonal: '6/mmm',
+    cubic: 'm-3m'
+};
+
+// Centring translations, used for the absence test when symops are missing.
+const CENTRING_VECTORS = {
+    P: [],
+    A: [[0, 0.5, 0.5]],
+    B: [[0.5, 0, 0.5]],
+    C: [[0.5, 0.5, 0]],
+    I: [[0.5, 0.5, 0.5]],
+    F: [[0, 0.5, 0.5], [0.5, 0, 0.5], [0.5, 0.5, 0]],
+    R: [[2 / 3, 1 / 3, 1 / 3], [1 / 3, 2 / 3, 2 / 3]],
+    H: [[2 / 3, 1 / 3, 0], [1 / 3, 2 / 3, 0]]
+};
+
+// ---------------------------------------------------------------------------
+//  Real-space metric, for converting fractional peak separations to angstroms.
+// ---------------------------------------------------------------------------
+function metricTensor(cell) {
+    const d2r = Math.PI / 180;
+    const a = cell.a, b = cell.b, c = cell.c;
+    const ca = Math.cos((cell.alpha || 90) * d2r);
+    const cb = Math.cos((cell.beta || 90) * d2r);
+    const cg = Math.cos((cell.gamma || 90) * d2r);
+    return [
+        [a * a, a * b * cg, a * c * cb],
+        [a * b * cg, b * b, b * c * ca],
+        [a * c * cb, b * c * ca, c * c]
+    ];
+}
+
+function fracDistance(G, dx, dy, dz) {
+    dx -= Math.round(dx); dy -= Math.round(dy); dz -= Math.round(dz);
+    const s = dx * (G[0][0] * dx + G[0][1] * dy + G[0][2] * dz)
+            + dy * (G[1][0] * dx + G[1][1] * dy + G[1][2] * dz)
+            + dz * (G[2][0] * dx + G[2][1] * dy + G[2][2] * dz);
+    return Math.sqrt(Math.max(0, s));
+}
+
+function cellVolume(cell) {
+    const d2r = Math.PI / 180;
+    const ca = Math.cos((cell.alpha || 90) * d2r);
+    const cb = Math.cos((cell.beta || 90) * d2r);
+    const cg = Math.cos((cell.gamma || 90) * d2r);
+    const t = 1 - ca * ca - cb * cb - cg * cg + 2 * ca * cb * cg;
+    return cell.a * cell.b * cell.c * Math.sqrt(Math.max(1e-12, t));
+}
+
+// ---------------------------------------------------------------------------
+//  Deterministic PRNG, so a run can be reproduced from its reported seed.
+// ---------------------------------------------------------------------------
+function mulberry32(seed) {
+    let t = seed >>> 0;
+    return function () {
+        t = (t + 0x6D2B79F5) | 0;
+        let r = Math.imul(t ^ (t >>> 15), 1 | t);
+        r = (r + Math.imul(r ^ (r >>> 7), 61 | r)) ^ r;
+        return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+// ===========================================================================
+//  SYMMETRY PLUMBING
+// ===========================================================================
+
+// (hR)_j = sum_i h_i R_ij, with r row-major (r[3*i+j] = R_ij).
+function applyRowVector(h, r) {
+    return [
+        h[0] * r[0] + h[1] * r[3] + h[2] * r[6],
+        h[0] * r[1] + h[1] * r[4] + h[2] * r[7],
+        h[0] * r[2] + h[1] * r[5] + h[2] * r[8]
+    ];
+}
+
+// Accept the operator list as it comes out of the space-group JSON, drop
+// anything malformed, and remove exact duplicates.
+function normalizeSymops(raw) {
+    if (!Array.isArray(raw) || raw.length === 0) return null;
+    const out = [];
+    const seen = new Set();
+    for (const op of raw) {
+        if (!op || !Array.isArray(op.r) || op.r.length !== 9) continue;
+        const r = op.r.map(Number);
+        let t = Array.isArray(op.t) ? op.t.map(Number) : [0, 0, 0];
+        if (op.t_num && op.t_den) t = op.t_num.map(n => Number(n) / Number(op.t_den));
+        if (r.some(v => !Number.isFinite(v)) || t.some(v => !Number.isFinite(v))) continue;
+        // Fold translations into [0,1) so the dedup key is canonical.
+        const tw = t.map(v => { const f = v - Math.floor(v); return Math.abs(f - 1) < 1e-9 ? 0 : f; });
+        const key = r.join(',') + '|' + tw.map(v => Math.round(v * 5040)).join(',');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ r, t: tw, xyz: op.xyz || '' });
+    }
+    return out.length ? out : null;
+}
+
+// Turn either representation into a uniform list of
+//   { apply(h,k,l) -> [h,k,l],  t: [tx,ty,tz] }
+// The translation is what makes the symmetrisation phase factor meaningful;
+// with the Laue fallback it is zero everywhere, which degrades symmetrize()
+// to a plain orbit average.
+function buildHklOps(symops, laueClass, system) {
+    if (symops) {
+        return {
+            ops: symops.map(op => ({
+                apply: (h, k, l) => applyRowVector([h, k, l], op.r),
+                t: op.t
+            })),
+            source: 'symops',
+            laue: laueClass || null
+        };
+    }
+    const key = LAUE_OPS[laueClass] ? laueClass
+              : (SYSTEM_HOLOHEDRY[String(system || '').toLowerCase()] || '-1');
+    return {
+        ops: LAUE_OPS[key].map(f => ({ apply: f, t: [0, 0, 0] })),
+        source: 'laue',
+        laue: key
+    };
+}
+
+// ---------------------------------------------------------------------------
+//  Systematic absences, straight from the operators.
+//
+//  h is extinct iff some operator (R, t) satisfies hR = h with h.t not an
+//  integer. That single test covers centring (R = I, t = the centring
+//  vector), screw axes and glide planes at once, so no reflection-condition
+//  parser and no space-group database is needed inside the worker.
+//
+//  Cost is N^3 times the number of DISTINCT rotations, which is at most 48;
+//  the translations attached to a rotation are only examined for the h that
+//  the rotation actually fixes.
+// ---------------------------------------------------------------------------
+function findSystematicAbsences(N, symops, centring) {
+    const N2 = N * N;
+    const out = [];
+
+    // Group translations by rotation.
+    let rots;
+    if (symops) {
+        const byRot = new Map();
+        for (const op of symops) {
+            const key = op.r.join(',');
+            if (!byRot.has(key)) byRot.set(key, { r: op.r, ts: [] });
+            byRot.get(key).ts.push(op.t);
+        }
+        rots = [...byRot.values()];
+    } else {
+        const vecs = CENTRING_VECTORS[String(centring || 'P').toUpperCase()] || [];
+        if (vecs.length === 0) return { absent: Uint32Array.from([]), tested: false };
+        rots = [{ r: [1, 0, 0, 0, 1, 0, 0, 0, 1], ts: vecs }];
+    }
+
+    // Rotations that fix nothing but the origin can be skipped only after the
+    // fixed-point test, which is cheap, so just run them all.
+    const half = N >> 1;
+    for (let ml = 0; ml < N; ml++) {
+        const l = ml > half ? ml - N : ml;
+        for (let mk = 0; mk < N; mk++) {
+            const k = mk > half ? mk - N : mk;
+            for (let mh = 0; mh < N; mh++) {
+                const h = mh > half ? mh - N : mh;
+                if (h === 0 && k === 0 && l === 0) continue;
+
+                let extinct = false;
+                for (let ri = 0; ri < rots.length && !extinct; ri++) {
+                    const r = rots[ri].r;
+                    // hR == h ?
+                    if (h * r[0] + k * r[3] + l * r[6] !== h) continue;
+                    if (h * r[1] + k * r[4] + l * r[7] !== k) continue;
+                    if (h * r[2] + k * r[5] + l * r[8] !== l) continue;
+                    const ts = rots[ri].ts;
+                    for (let ti = 0; ti < ts.length; ti++) {
+                        const t = ts[ti];
+                        const ht = h * t[0] + k * t[1] + l * t[2];
+                        if (Math.abs(ht - Math.round(ht)) > 1e-6) { extinct = true; break; }
+                    }
+                }
+                if (extinct) out.push(mh + mk * N + ml * N2);
+            }
+        }
+    }
+    return { absent: Uint32Array.from(out), tested: true };
+}
+
+// ---------------------------------------------------------------------------
+//  Lorentz-polarisation for a Bragg-Brentano powder scan.
+//
+//  A Pawley intensity is the peak AREA, which carries m * LP * |F|^2. The
+//  multiplicity m is absorbed by spreading the intensity over the m grid
+//  points of the orbit, but LP has to be divided out explicitly or the
+//  low-angle reflections dominate the map.
+// ---------------------------------------------------------------------------
+function lorentzPolarization(tthDeg, monoTthDeg) {
+    if (!Number.isFinite(tthDeg) || tthDeg <= 0 || tthDeg >= 180) return 1;
+    const d2r = Math.PI / 180;
+    const th = 0.5 * tthDeg * d2r;
+    const s = Math.sin(th), c = Math.cos(th);
+    if (s < 1e-6 || c < 1e-6) return 1;
+    let pol;
+    if (Number.isFinite(monoTthDeg) && monoTthDeg > 0) {
+        const cm2 = Math.cos(monoTthDeg * d2r) ** 2;
+        pol = (1 + cm2 * Math.cos(tthDeg * d2r) ** 2) / (1 + cm2);
+    } else {
+        pol = 0.5 * (1 + Math.cos(tthDeg * d2r) ** 2);
+    }
+    return pol / (s * s * c);
+}
+
+// ===========================================================================
+//  THE REFLECTION MODEL
+//
+//  Produces the flat tables that both backends iterate on:
+//
+//    orbits[g]      = { start, count, targetI }   symmetry orbit
+//    orbitIdx[p]    = grid index | (conjugate flag << 31)
+//    phase[2p,2p+1] = exp(+2 pi i h0.t) for that member
+//    clusters[c]    = { orbitStart, nOrbits, obsI }  2-theta overlap group
+//    absent[]       = grid indices forced to zero
+//
+//  Orbits are emitted in cluster order so that a cluster is a contiguous
+//  range, which is what lets one GPU thread handle a whole cluster.
+// ===========================================================================
+function buildReflectionModel(job, N) {
+    const N2 = N * N, N3 = N2 * N;
+    const wrap = v => ((v % N) + N) % N;
+
+    const symops = normalizeSymops(job.symops);
+    const built = buildHklOps(symops, job.laueClass, job.system);
+    const hklOps = built.ops;
+
+    const applyLP = job.applyLP !== false;
+    const tolTth = Number.isFinite(job.overlapTolTth) ? job.overlapTolTth : 0.05;
+
+    let droppedZero = 0, droppedRange = 0, droppedDuplicate = 0;
+    let maxIndexSeen = 0;
+    const claimed = new Map();      // grid index -> orbit ordinal, for collisions
+
+    // --- pass 1: build one orbit per unique reflection ----------------------
+    const refs = [];
+    for (const peak of job.hklList || []) {
+        if (!peak) continue;
+        const I = Number(peak.intensity);
+        // A ZERO is kept. Dropping it would tell the algorithm the reflection
+        // was never measured, which leaves it free to take any value the map
+        // finds convenient; keeping it with a target of zero says what the
+        // data actually say. Only a missing or negative value is refused --
+        // the caller is expected to have applied a French-Wilson correction,
+        // so anything still negative here is malformed input.
+        if (!Number.isFinite(I) || I < 0) { droppedZero++; continue; }
+
+        const h0 = peak.h_orig, k0 = peak.k_orig, l0 = peak.l_orig;
+        if (!Number.isFinite(h0) || !Number.isFinite(k0) || !Number.isFinite(l0)) continue;
+        if (h0 === 0 && k0 === 0 && l0 === 0) continue;
+
+        // Distinct positions of this reflection, including Friedel mates.
+        const positions = new Map();
+        for (const op of hklOps) {
+            const [h, k, l] = op.apply(h0, k0, l0);
+            const ht = h0 * op.t[0] + k0 * op.t[1] + l0 * op.t[2];
+            const cr = Math.cos(2 * Math.PI * ht);
+            const ci = Math.sin(2 * Math.PI * ht);
+            const key1 = `${h},${k},${l}`;
+            if (!positions.has(key1)) positions.set(key1, { h, k, l, cr, ci, conj: 0 });
+            const key2 = `${-h},${-k},${-l}`;
+            if (!positions.has(key2)) positions.set(key2, { h: -h, k: -k, l: -l, cr, ci, conj: 1 });
+        }
+
+        const mTrue = positions.size;
+        const members = [];
+        let outOfRange = false;
+        for (const p of positions.values()) {
+            const m = Math.max(Math.abs(p.h), Math.abs(p.k), Math.abs(p.l));
+            if (m > maxIndexSeen) maxIndexSeen = m;
+            if (2 * m >= N) { outOfRange = true; continue; }
+            members.push(p);
+        }
+        if (outOfRange) droppedRange++;
+        if (members.length === 0) continue;
+
+        const lp = applyLP ? lorentzPolarization(peak.tth, job.monochromatorTth) : 1;
+        // Truncated orbits keep only their share of the intensity; v137 spread
+        // the whole of it over the survivors and inflated their amplitudes.
+        const targetI = (I / lp) * (members.length / mTrue);
+
+        refs.push({
+            h0, k0, l0,
+            tth: Number.isFinite(peak.tth) ? peak.tth : null,
+            d: Number.isFinite(peak.d) ? peak.d : null,
+            members, mTrue, targetI
+        });
+    }
+
+    if (refs.length === 0) {
+        return { error: 'no-reflections', maxIndexSeen, minGridForAll: 2 * maxIndexSeen + 2,
+                 droppedZero, droppedRange };
+    }
+
+    // --- pass 2: sort by 2-theta and cluster overlapping reflections --------
+    const sortKey = r => (r.tth !== null ? r.tth : (r.d !== null ? 1 / r.d : 0));
+    refs.sort((a, b) => sortKey(a) - sortKey(b));
+
+    const clusterOf = new Array(refs.length).fill(0);
+    let nClusters = 0;
+    for (let i = 0; i < refs.length; i++) {
+        if (i === 0) { clusterOf[i] = nClusters; continue; }
+        const prev = refs[i - 1], cur = refs[i];
+        let same = false;
+        if (prev.tth !== null && cur.tth !== null) {
+            same = Math.abs(cur.tth - prev.tth) <= tolTth;
+        } else if (prev.d !== null && cur.d !== null) {
+            same = Math.abs(cur.d - prev.d) <= 1e-4 * Math.max(1e-9, prev.d);
+        }
+        if (!same) nClusters++;
+        clusterOf[i] = nClusters;
+    }
+    nClusters++;
+
+    // --- pass 3: flatten ----------------------------------------------------
+    const orbitStart = [], orbitCount = [], orbitTargetI = [];
+    const idxFlat = [], phaseFlat = [];
+    const clusterOrbitStart = [], clusterNOrbits = [], clusterObsI = [];
+
+    let cursor = 0;
+    let curCluster = -1;
+    let usedUnique = 0;
+
+    for (let i = 0; i < refs.length; i++) {
+        const r = refs[i];
+        if (clusterOf[i] !== curCluster) {
+            curCluster = clusterOf[i];
+            clusterOrbitStart.push(orbitStart.length);
+            clusterNOrbits.push(0);
+            clusterObsI.push(0);
+        }
+
+        const start = cursor;
+        let count = 0;
+        for (const p of r.members) {
+            const gi = wrap(p.h) + wrap(p.k) * N + wrap(p.l) * N2;
+            // Two unique reflections should never land on the same grid point;
+            // if they do the input list is redundant for this symmetry, and
+            // silently letting the second one win would corrupt both orbits.
+            if (claimed.has(gi)) { droppedDuplicate++; continue; }
+            claimed.set(gi, orbitStart.length);
+            idxFlat.push(p.conj ? (gi | 0x80000000) >>> 0 : gi >>> 0);
+            phaseFlat.push(p.cr, p.ci);
+            count++;
+            cursor++;
+        }
+        if (count === 0) continue;
+
+        // Rescale again if collisions cost us members.
+        const scaled = r.targetI * (count / r.members.length);
+        orbitStart.push(start);
+        orbitCount.push(count);
+        orbitTargetI.push(scaled);
+
+        const c = clusterOrbitStart.length - 1;
+        clusterNOrbits[c]++;
+        clusterObsI[c] += scaled;
+        usedUnique++;
+    }
+
+    const nOrbits = orbitStart.length;
+    if (nOrbits === 0) {
+        return { error: 'no-reflections', maxIndexSeen, minGridForAll: 2 * maxIndexSeen + 2,
+                 droppedZero, droppedRange };
+    }
+
+    // Drop clusters that ended up empty (every orbit lost to collisions).
+    const cOrbitStart = [], cNOrbits = [], cObsI = [];
+    for (let c = 0; c < clusterOrbitStart.length; c++) {
+        if (clusterNOrbits[c] > 0) {
+            cOrbitStart.push(clusterOrbitStart[c]);
+            cNOrbits.push(clusterNOrbits[c]);
+            cObsI.push(clusterObsI[c]);
+        }
+    }
+
+    // --- pass 4: systematic absences ---------------------------------------
+    const abs = findSystematicAbsences(N, symops, job.centering);
+    const absentList = [];
+    let absentButObserved = 0;
+    for (let i = 0; i < abs.absent.length; i++) {
+        const gi = abs.absent[i];
+        if (claimed.has(gi)) { absentButObserved++; continue; }
+        absentList.push(gi);
+    }
+
+    // orbitIdx carries the absent list as a tail block, so the shader gets it
+    // without a ninth storage binding.
+    const nMembers = idxFlat.length;
+    const orbitIdx = new Uint32Array(nMembers + absentList.length);
+    orbitIdx.set(Uint32Array.from(idxFlat), 0);
+    orbitIdx.set(Uint32Array.from(absentList), nMembers);
+
+    const model = {
+        nOrbits,
+        nClusters: cOrbitStart.length,
+        nMembers,
+        orbitStart: Uint32Array.from(orbitStart),
+        orbitCount: Uint32Array.from(orbitCount),
+        orbitTargetI: Float32Array.from(orbitTargetI),
+        orbitIdx,
+        phase: Float32Array.from(phaseFlat),
+        clusterOrbitStart: Uint32Array.from(cOrbitStart),
+        clusterNOrbits: Uint32Array.from(cNOrbits),
+        clusterObsI: Float32Array.from(cObsI),
+        absentStart: nMembers,
+        absentCount: absentList.length,
+        absentButObserved,
+        symmetrySource: built.source,
+        laueClass: built.laue,
+        nSymops: symops ? symops.length : hklOps.length,
+        haveTranslations: !!symops,
+        usedUnique, droppedZero, droppedRange, droppedDuplicate,
+        maxIndexSeen,
+        minGridForAll: 2 * maxIndexSeen + 2,
+        sumFobs: cObsI.reduce((s, v) => s + Math.sqrt(Math.max(0, v)), 0)
+    };
+    return model;
+}
+
+// Interleaved-complex packing helpers shared by both backends.
+function modelInitialGrid(model, N, seed) {
+    const init = new Float32Array(2 * N * N * N);
+    const rand = mulberry32(seed);
+    for (let g = 0; g < model.nOrbits; g++) {
+        const start = model.orbitStart[g], count = model.orbitCount[g];
+        const amp = Math.sqrt(Math.max(0, model.orbitTargetI[g]) / count);
+        // One random phase per ORBIT, propagated through the operator phase
+        // factors, so the starting point already obeys the space group.
+        const ang = 2 * Math.PI * rand();
+        const f0r = amp * Math.cos(ang), f0i = amp * Math.sin(ang);
+        for (let i = 0; i < count; i++) {
+            const p = start + i;
+            const word = model.orbitIdx[p];
+            const idx = word & 0x7fffffff;
+            const cr = model.phase[2 * p], ci = model.phase[2 * p + 1];
+            let a = f0r * cr + f0i * ci;
+            let b = f0i * cr - f0r * ci;
+            if (word & 0x80000000) b = -b;
+            init[2 * idx] = a;
+            init[2 * idx + 1] = b;
+        }
+    }
+    return init;
+}
+
+// ---------------------------------------------------------------------------
+//  Peak search on the final map.
+// ---------------------------------------------------------------------------
+function findPeaks(rho, N, cell, opts) {
+    const N2 = N * N;
+    const minSeparation = opts.minSeparation;
+    const maxPeaks = opts.maxPeaks;
+    const G = metricTensor(cell);
+
+    let max = -Infinity;
+    for (let i = 0; i < rho.length; i++) if (rho[i] > max) max = rho[i];
+    if (!(max > 0)) return [];
+
+    const cutoff = max * opts.heightCutoff;
+    const wrap = (v) => ((v % N) + N) % N;
+    const candidates = [];
+
+    for (let l = 0; l < N; l++) {
+        for (let k = 0; k < N; k++) {
+            for (let h = 0; h < N; h++) {
+                const v = rho[h + k * N + l * N2];
+                if (v < cutoff) continue;
+                let isMax = true;
+                for (let dl = -1; dl <= 1 && isMax; dl++) {
+                    for (let dk = -1; dk <= 1 && isMax; dk++) {
+                        for (let dh = -1; dh <= 1; dh++) {
+                            if (dh === 0 && dk === 0 && dl === 0) continue;
+                            const n = wrap(h + dh) + wrap(k + dk) * N + wrap(l + dl) * N2;
+                            if (rho[n] > v) { isMax = false; break; }
+                        }
+                    }
+                }
+                if (!isMax) continue;
+
+                const interp = (m, p) => {
+                    const den = (m - 2 * v + p);
+                    if (Math.abs(den) < 1e-12) return 0;
+                    const d = 0.5 * (m - p) / den;
+                    return (d > 0.5 || d < -0.5) ? 0 : d;
+                };
+                const dh = interp(rho[wrap(h - 1) + k * N + l * N2], rho[wrap(h + 1) + k * N + l * N2]);
+                const dk = interp(rho[h + wrap(k - 1) * N + l * N2], rho[h + wrap(k + 1) * N + l * N2]);
+                const dl = interp(rho[h + k * N + wrap(l - 1) * N2], rho[h + k * N + wrap(l + 1) * N2]);
+
+                candidates.push({
+                    x: ((h + dh) / N + 1) % 1,
+                    y: ((k + dk) / N + 1) % 1,
+                    z: ((l + dl) / N + 1) % 1,
+                    height: v
+                });
+            }
+        }
+    }
+
+    candidates.sort((p, q) => q.height - p.height);
+
+    const kept = [];
+    for (const c of candidates) {
+        let tooClose = false;
+        for (const p of kept) {
+            if (fracDistance(G, c.x - p.x, c.y - p.y, c.z - p.z) < minSeparation) { tooClose = true; break; }
+        }
+        if (tooClose) continue;
+        kept.push(c);
+        if (kept.length >= maxPeaks) break;
+    }
+
+    const top = kept.length ? kept[0].height : 1;
+    return kept.map((p, i) => ({
+        rank: i + 1,
+        x: p.x, y: p.y, z: p.z,
+        height: p.height,
+        relative: p.height / top
+    }));
+}
+
+// ---------------------------------------------------------------------------
+//  Shared reporting block, so the GPU and CPU results are interchangeable.
+// ---------------------------------------------------------------------------
+function modelReport(model) {
+    return {
+        unique: model.usedUnique,
+        gridPoints: model.nMembers,
+        orbits: model.nOrbits,
+        clusters: model.nClusters,
+        overlapped: model.nOrbits - model.nClusters,
+        absencesZeroed: model.absentCount,
+        absentButObserved: model.absentButObserved,
+        symmetrySource: model.symmetrySource,
+        laueClass: model.laueClass,
+        nSymops: model.nSymops,
+        droppedOutOfRange: model.droppedRange,
+        droppedZeroIntensity: model.droppedZero,
+        droppedDuplicate: model.droppedDuplicate,
+        maxIndex: model.maxIndexSeen,
+        minGridForAll: model.minGridForAll
+    };
+}
+
+// ===========================================================================
+//  CPU PATH
+//
+//  Mirrors the GPU kernels one for one and in the same order, so a run with
+//  backend: 'cpu' can be compared against the GPU result directly. It is the
+//  reference implementation, not a simplified stand-in.
+// ===========================================================================
+function runChargeFlippingCPU(job) {
+    const N = job.gridSize;
+    const N3 = N * N * N;
+    const maxIter = job.maxIterations;
+    const deltaSigma = job.thresholdSigma;
+    const cell = job.cell;
+    const lambda = Math.min(1, Math.max(0, Number(job.symLambda) || 0));
+
+    if (!Number.isInteger(N) || N < 8 || (N & (N - 1)) !== 0) {
+        return { error: `Grid size must be a power of two (the FFT is radix-2); got ${N}.` };
+    }
+
+    const model = buildReflectionModel(job, N);
+    if (model.error) {
+        return { error: `No reflection fits a ${N}x${N}x${N} grid. The largest index in the fit is ${model.maxIndexSeen}, which needs a grid of at least ${model.minGridForAll}.` };
+    }
+
+    const rand = mulberry32(job.seed ^ 0x9e3779b9);
+    const init = modelInitialGrid(model, N, job.seed);
+
+    const re = new Float64Array(N3);
+    const im = new Float64Array(N3);
+    for (let i = 0; i < N3; i++) { re[i] = init[2 * i]; im[i] = init[2 * i + 1]; }
+    re[0] = 0; im[0] = 0;
+
+    const target = Float64Array.from(model.orbitTargetI);
+    const rHistory = new Float32Array(maxIter);
+    const bestFre = new Float64Array(N3);
+    const bestFim = new Float64Array(N3);
+    let haveBest = false, bestR = Infinity, bestIter = 0, lastReport = -1;
+
+    const idx = model.orbitIdx, ph = model.phase;
+    const oStart = model.orbitStart, oCount = model.orbitCount;
+    const cStart = model.clusterOrbitStart, cN = model.clusterNOrbits, cObs = model.clusterObsI;
+
+    for (let iter = 0; iter < maxIter; iter++) {
+        // --- reciprocal -> real ---
+        fft3d(re, im, N, true);
+
+        // --- flip threshold in units of the map's own sigma ---
+        let mean = 0;
+        for (let i = 0; i < N3; i++) mean += re[i];
+        mean /= N3;
+        let varSum = 0;
+        for (let i = 0; i < N3; i++) { const d = re[i] - mean; varSum += d * d; }
+        const delta = deltaSigma * Math.sqrt(varSum / N3);
+
+        for (let i = 0; i < N3; i++) {
+            if (re[i] < delta) re[i] = -re[i];
+            im[i] = 0;
+        }
+
+        // --- real -> reciprocal ---
+        fft3d(re, im, N, false);
+
+        // --- R factor on the OBSERVABLE quantity: cluster totals ---
+        let sumDiff = 0;
+        for (let c = 0; c < model.nClusters; c++) {
+            let total = 0;
+            for (let o = 0; o < cN[c]; o++) {
+                const g = cStart[c] + o;
+                for (let i = 0; i < oCount[g]; i++) {
+                    const j = idx[oStart[g] + i] & 0x7fffffff;
+                    total += re[j] * re[j] + im[j] * im[j];
+                }
+            }
+            sumDiff += Math.abs(Math.sqrt(Math.max(0, total)) - Math.sqrt(Math.max(0, cObs[c])));
+        }
+        const R = model.sumFobs > 0 ? sumDiff / model.sumFobs : NaN;
+        rHistory[iter] = R;
+
+        // --- repartition the observed intensity inside each 2-theta cluster ---
+        for (let c = 0; c < model.nClusters; c++) {
+            let total = 0;
+            for (let o = 0; o < cN[c]; o++) {
+                const g = cStart[c] + o;
+                let s = 0;
+                for (let i = 0; i < oCount[g]; i++) {
+                    const j = idx[oStart[g] + i] & 0x7fffffff;
+                    s += re[j] * re[j] + im[j] * im[j];
+                }
+                target[g] = s;
+                total += s;
+            }
+            if (total > 1e-20) {
+                const k = cObs[c] / total;
+                for (let o = 0; o < cN[c]; o++) target[cStart[c] + o] *= k;
+            } else {
+                let wsum = 0;
+                for (let o = 0; o < cN[c]; o++) wsum += oCount[cStart[c] + o];
+                if (wsum > 0) {
+                    for (let o = 0; o < cN[c]; o++) {
+                        target[cStart[c] + o] = cObs[c] * oCount[cStart[c] + o] / wsum;
+                    }
+                }
+            }
+        }
+
+        // --- impose the space group on the structure factors ---
+        if (lambda > 0) {
+            for (let g = 0; g < model.nOrbits; g++) {
+                const count = oCount[g];
+                if (count < 2) continue;
+                const start = oStart[g];
+                let sr = 0, si = 0;
+                for (let i = 0; i < count; i++) {
+                    const p = start + i;
+                    const word = idx[p];
+                    const j = word & 0x7fffffff;
+                    let a = re[j], b = im[j];
+                    if (word & 0x80000000) b = -b;
+                    const cr = ph[2 * p], ci = ph[2 * p + 1];
+                    sr += a * cr - b * ci;
+                    si += a * ci + b * cr;
+                }
+                sr /= count; si /= count;
+                for (let i = 0; i < count; i++) {
+                    const p = start + i;
+                    const word = idx[p];
+                    const j = word & 0x7fffffff;
+                    const cr = ph[2 * p], ci = ph[2 * p + 1];
+                    let a = sr * cr + si * ci;
+                    let b = si * cr - sr * ci;
+                    if (word & 0x80000000) b = -b;
+                    re[j] += lambda * (a - re[j]);
+                    im[j] += lambda * (b - im[j]);
+                }
+            }
+        }
+
+        // --- equal amplitudes across each symmetry orbit ---
+        for (let g = 0; g < model.nOrbits; g++) {
+            const start = oStart[g], count = oCount[g];
+            if (count === 0) continue;
+            const amp = Math.sqrt(Math.max(0, target[g]) / count);
+            for (let i = 0; i < count; i++) {
+                const j = idx[start + i] & 0x7fffffff;
+                const m = Math.hypot(re[j], im[j]);
+                if (m > 1e-20) {
+                    const s = amp / m;
+                    re[j] *= s; im[j] *= s;
+                } else {
+                    const a = 2 * Math.PI * rand();
+                    re[j] = amp * Math.cos(a);
+                    im[j] = amp * Math.sin(a);
+                }
+            }
+        }
+
+        // --- systematic absences and F(000) ---
+        for (let i = 0; i < model.absentCount; i++) {
+            const j = idx[model.absentStart + i] & 0x7fffffff;
+            re[j] = 0; im[j] = 0;
+        }
+        re[0] = 0; im[0] = 0;
+
+        if (Number.isFinite(R) && R < bestR) {
+            bestR = R; bestIter = iter + 1;
+            bestFre.set(re); bestFim.set(im);
+            haveBest = true;
+        }
+
+        const pct = Math.floor(((iter + 1) / maxIter) * 100);
+        if (pct !== lastReport || iter === maxIter - 1) {
+            lastReport = pct;
+            postMessage({ type: 'cf-progress', iter: iter + 1, total: maxIter, R, bestR });
+        }
+    }
+
+    if (haveBest) { re.set(bestFre); im.set(bestFim); }
+    fft3d(re, im, N, true);
+    const bestRho = Float32Array.from(re);
+
+    let peak = 0;
+    for (let i = 0; i < N3; i++) if (bestRho[i] > peak) peak = bestRho[i];
+    if (peak > 0) for (let i = 0; i < N3; i++) bestRho[i] /= peak;
+
+    const peaks = findPeaks(bestRho, N, cell, {
+        minSeparation: job.minPeakSeparation,
+        maxPeaks: job.maxPeaks,
+        heightCutoff: job.peakHeightCutoff
+    });
+
+    return {
+        map: bestRho, gridSize: N, peaks, rHistory, bestR, bestIter,
+        finalR: rHistory[maxIter - 1], seed: job.seed, cell,
+        volume: cellVolume(cell), backend: 'cpu', symLambda: lambda,
+        reflections: modelReport(model)
+    };
+}
+
+// ===========================================================================
+//  DISPATCH
+// ===========================================================================
+async function runChargeFlipping(job) {
+    const wantGPU = job.backend !== 'cpu';
+    if (wantGPU && typeof runChargeFlippingGPU === 'function') {
+        try {
+            const out = await runChargeFlippingGPU(job);
+            if (out && out.__noGPU) {
+                postMessage({ type: 'cf-info', message: 'WebGPU unavailable; using CPU.' });
+            } else {
+                return out;
+            }
+        } catch (gpuErr) {
+            console.warn('GPU charge flipping failed, falling back to CPU:', gpuErr);
+            postMessage({ type: 'cf-info', message: 'GPU path failed; using CPU. (' + ((gpuErr && gpuErr.message) || gpuErr) + ')' });
+        }
+    }
+    return runChargeFlippingCPU(job);
+}
+
+globalThis.onmessage = async function (e) {
+    const job = e.data || {};
+    try {
+        if (job.type === 'run-charge-flipping') {
+            const out = await runChargeFlipping(job);
+            if (out.error) { postMessage({ type: 'cf-error', message: out.error }); return; }
+            postMessage({ type: 'cf-result', results: out }, [out.map.buffer, out.rHistory.buffer]);
+            return;
+        }
+        if (job.type === 'build-structure') {
+            const out = buildStructure(job);
+            if (out.error) { postMessage({ type: 'cf-error', message: out.error }); return; }
+            postMessage({ type: 'cf-structure', results: out }, [out.map.buffer]);
+            return;
+        }
+    } catch (err) {
+        postMessage({ type: 'cf-error', message: (err && err.message) || String(err) });
+    }
+};
+
+// ===========================================================================
+//  GPU PATH
+// ===========================================================================
+
+let _gpuDevicePromise = null;
+async function cfAcquireGPU() {
+    if (_gpuDevicePromise) return _gpuDevicePromise;
+    _gpuDevicePromise = (async () => {
+        if (typeof navigator === 'undefined' || !navigator.gpu) return null;
+        try {
+            const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+            if (!adapter) return null;
+            const device = await adapter.requestDevice();
+            device.lost.then(() => { _gpuDevicePromise = null; });
+            return device;
+        } catch (e) {
+            console.warn('WebGPU unavailable:', e);
+            return null;
+        }
+    })();
+    return _gpuDevicePromise;
+}
+
+let _cfShaderSrc = null;
+async function cfLoadShader() {
+    if (_cfShaderSrc) return _cfShaderSrc;
+    const resp = await fetch('charge_flipping.wgsl');
+    if (!resp.ok) throw new Error('charge_flipping.wgsl failed to load (HTTP ' + resp.status + ')');
+    _cfShaderSrc = await resp.text();
+    return _cfShaderSrc;
+}
+
+// Two bind-group layouts. Splitting them keeps every pipeline inside the
+// default limit of 8 storage buffers per shader stage: the FFT pipelines see
+// three, the symmetry pipelines see eight.
+async function cfGetPipelines(device) {
+    if (device.__cfPipelines) return device.__cfPipelines;
+    const code = await cfLoadShader();
+    const module = device.createShaderModule({ code });
+
+    const layout0 = device.createBindGroupLayout({
+        entries: [
+            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }
+        ]
+    });
+    const layout1 = device.createBindGroupLayout({
+        entries: [
+            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+            { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } }
+        ]
+    });
+
+    const plGrid = device.createPipelineLayout({ bindGroupLayouts: [layout0] });
+    const plSym  = device.createPipelineLayout({ bindGroupLayouts: [layout0, layout1] });
+
+    const mk = (entryPoint, pipelineLayout) => device.createComputePipeline({
+        layout: pipelineLayout, compute: { module, entryPoint }
+    });
+
+    const pipelines = {
+        layout0, layout1,
+        fft_stage:        mk('fft_stage', plGrid),
+        copy_buf:         mk('copy_buf', plGrid),
+        scale_inverse:    mk('scale_inverse', plGrid),
+        reduce_moments:   mk('reduce_moments', plGrid),
+        finalize_moments: mk('finalize_moments', plGrid),
+        flip:             mk('flip', plGrid),
+        zero_dc:          mk('zero_dc', plGrid),
+        finalize_rfactor: mk('finalize_rfactor', plGrid),
+        reduce_rfactor:   mk('reduce_rfactor', plSym),
+        repartition:      mk('repartition', plSym),
+        symmetrize:       mk('symmetrize', plSym),
+        constrain:        mk('constrain', plSym),
+        zero_absent:      mk('zero_absent', plSym)
+    };
+
+    device.__cfPipelines = pipelines;
+    return pipelines;
+}
+
+const CF_WG = 64;
+const CF_COPY_PER_THREAD = 4;   // must match COPY_PER_THREAD in the WGSL
+function cfCeilGroups(threads) { return Math.max(1, Math.ceil(threads / CF_WG)); }
+function cfCopyGroups(N) { return cfCeilGroups((2 * N * N * N) / CF_COPY_PER_THREAD); }
+
+// One 3D transform. Stages ping-pong between bufA and bufB through the two
+// pre-baked bind-group variants; the single trailing copy runs only when the
+// stage count is odd, instead of v137's copy after every stage.
+function cfEncodeFFT(enc, pl, res, N, inverse) {
+    const stageGroups = cfCeilGroups((N >> 1) * N * N);
+    const copyGroups = cfCopyGroups(N);
+    const bgs = inverse ? res.fftBindGroups.inverse : res.fftBindGroups.forward;
+
+    let stage = 0;
+    for (let axis = 0; axis < 3; axis++) {
+        for (let L = 1; L < N; L <<= 1) {
+            const pass = enc.beginComputePass();
+            pass.setPipeline(pl.fft_stage);
+            pass.setBindGroup(0, bgs[stage]);
+            pass.dispatchWorkgroups(stageGroups);
+            pass.end();
+            stage++;
+        }
+    }
+
+    // Odd number of stages leaves the answer in bufB; bring it home.
+    if (stage & 1) {
+        const pass = enc.beginComputePass();
+        pass.setPipeline(pl.copy_buf);
+        pass.setBindGroup(0, res.bgSwapped);
+        pass.dispatchWorkgroups(copyGroups);
+        pass.end();
+    }
+
+    if (inverse) {
+        const pass = enc.beginComputePass();
+        pass.setPipeline(pl.scale_inverse);
+        pass.setBindGroup(0, res.bgMain);
+        pass.dispatchWorkgroups(cfCeilGroups(N * N * N));
+        pass.end();
+    }
+}
+
+async function runChargeFlippingGPU(job) {
+    const N = job.gridSize;
+    const N3 = N * N * N;
+    const maxIter = job.maxIterations;
+    const cell = job.cell;
+    const lambda = Math.min(1, Math.max(0, Number(job.symLambda) || 0));
+
+    if (!Number.isInteger(N) || N < 8 || (N & (N - 1)) !== 0) {
+        return { error: `Grid size must be a power of two; got ${N}.` };
+    }
+
+    const device = await cfAcquireGPU();
+    if (!device) return { __noGPU: true };
+
+    const model = buildReflectionModel(job, N);
+    if (model.error) {
+        return { error: `No reflection fits a ${N}x${N}x${N} grid. Largest index ${model.maxIndexSeen} needs at least ${model.minGridForAll}.` };
+    }
+
+    const pl = await cfGetPipelines(device);
+
+    // --- buffers -----------------------------------------------------------
+    const cplxBytes = 2 * N3 * 4;
+    const mkStorage = (bytes, extra = 0) => device.createBuffer({
+        size: Math.max(4, bytes),
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC | extra
+    });
+
+    const bufA = mkStorage(cplxBytes);
+    const bufB = mkStorage(cplxBytes);
+    const bestBuf = device.createBuffer({
+        size: cplxBytes,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
+    });
+    device.queue.writeBuffer(bufA, 0, modelInitialGrid(model, N, job.seed));
+
+    const wgFull = cfCeilGroups(N3);
+    const wgCluster = cfCeilGroups(model.nClusters);
+    const partialsLen = 4 + 2 * Math.max(wgFull, wgCluster);
+    const partialsBuf = mkStorage(partialsLen * 4);
+    const headerRead = device.createBuffer({
+        size: 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    // Orbit / Cluster structs are 12 bytes each: three 4-byte scalars, and
+    // WGSL gives the struct an alignment of 4, so the array stride is 12.
+    const orbitsData = new ArrayBuffer(Math.max(1, model.nOrbits) * 12);
+    const ov = new DataView(orbitsData);
+    for (let g = 0; g < model.nOrbits; g++) {
+        ov.setUint32(g * 12 + 0, model.orbitStart[g], true);
+        ov.setUint32(g * 12 + 4, model.orbitCount[g], true);
+        ov.setFloat32(g * 12 + 8, model.orbitTargetI[g], true);
+    }
+    const clustersData = new ArrayBuffer(Math.max(1, model.nClusters) * 12);
+    const cv = new DataView(clustersData);
+    for (let c = 0; c < model.nClusters; c++) {
+        cv.setUint32(c * 12 + 0, model.clusterOrbitStart[c], true);
+        cv.setUint32(c * 12 + 4, model.clusterNOrbits[c], true);
+        cv.setFloat32(c * 12 + 8, model.clusterObsI[c], true);
+    }
+
+    const orbitsBuf   = mkStorage(orbitsData.byteLength);
+    const orbitIdxBuf = mkStorage(Math.max(1, model.orbitIdx.length) * 4);
+    const phaseBuf    = mkStorage(Math.max(1, model.phase.length) * 4);
+    const clustersBuf = mkStorage(clustersData.byteLength);
+    const targetBuf   = mkStorage(Math.max(1, model.nOrbits) * 4);
+
+    device.queue.writeBuffer(orbitsBuf, 0, orbitsData);
+    device.queue.writeBuffer(orbitIdxBuf, 0, model.orbitIdx);
+    device.queue.writeBuffer(phaseBuf, 0, model.phase.length ? model.phase : new Float32Array(1));
+    device.queue.writeBuffer(clustersBuf, 0, clustersData);
+    device.queue.writeBuffer(targetBuf, 0, model.orbitTargetI);
+
+    // --- uniform blocks ----------------------------------------------------
+    // Every field is static for the whole trial, so nothing is written to the
+    // uniform buffer inside the loop. Only axis / stage_len / inverse differ
+    // between blocks, and those are pre-baked, one block per FFT stage.
+    const align = 256;
+    const stagesPerFFT = 3 * Math.log2(N);
+    const totalBlocks = 1 + stagesPerFFT * 2;
+    const paramData = new ArrayBuffer(totalBlocks * align);
+    const pv = new DataView(paramData);
+
+    const writeP = (blk, axis, stageLen, inverse) => {
+        const o = blk * align;
+        pv.setUint32(o + 0, N, true);
+        pv.setUint32(o + 4, axis, true);
+        pv.setUint32(o + 8, stageLen, true);
+        pv.setUint32(o + 12, inverse, true);
+        pv.setFloat32(o + 16, job.thresholdSigma, true);
+        pv.setUint32(o + 20, model.nOrbits, true);
+        pv.setUint32(o + 24, model.nClusters, true);
+        pv.setUint32(o + 28, model.absentStart, true);
+        pv.setUint32(o + 32, model.absentCount, true);
+        pv.setFloat32(o + 36, lambda, true);
+        pv.setUint32(o + 40, job.seed >>> 0, true);
+        pv.setUint32(o + 44, wgFull, true);
+        pv.setUint32(o + 48, wgCluster, true);
+        pv.setUint32(o + 52, 0, true);
+        pv.setUint32(o + 56, 0, true);
+        pv.setUint32(o + 60, 0, true);
+    };
+    writeP(0, 0, 1, 0);
+
+    const paramBuf = device.createBuffer({
+        size: totalBlocks * align,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    const mkBg0 = (blk, swapped) => device.createBindGroup({
+        layout: pl.layout0,
+        entries: [
+            { binding: 0, resource: { buffer: paramBuf, offset: blk * align, size: 64 } },
+            { binding: 1, resource: { buffer: swapped ? bufB : bufA } },
+            { binding: 2, resource: { buffer: swapped ? bufA : bufB } },
+            { binding: 3, resource: { buffer: partialsBuf } }
+        ]
+    });
+
+    const fftBindGroups = { forward: [], inverse: [] };
+    let blk = 1;
+    for (const inv of [0, 1]) {
+        const arr = inv ? fftBindGroups.inverse : fftBindGroups.forward;
+        let stage = 0;
+        for (let axis = 0; axis < 3; axis++) {
+            for (let L = 1; L < N; L <<= 1) {
+                writeP(blk, axis, L, inv);
+                arr.push(mkBg0(blk, (stage & 1) === 1));   // stage n reads A when n even
+                blk++; stage++;
+            }
+        }
+    }
+    device.queue.writeBuffer(paramBuf, 0, paramData);
+
+    const bgMain = mkBg0(0, false);
+    const bgSwapped = mkBg0(0, true);
+    const bg1 = device.createBindGroup({
+        layout: pl.layout1,
+        entries: [
+            { binding: 0, resource: { buffer: orbitsBuf } },
+            { binding: 1, resource: { buffer: orbitIdxBuf } },
+            { binding: 2, resource: { buffer: phaseBuf } },
+            { binding: 3, resource: { buffer: clustersBuf } },
+            { binding: 4, resource: { buffer: targetBuf } }
+        ]
+    });
+
+    const res = { bufA, bufB, bgMain, bgSwapped, fftBindGroups };
+
+    const pass1 = (enc, pipeline, groups, withSym) => {
+        const p = enc.beginComputePass();
+        p.setPipeline(pipeline);
+        p.setBindGroup(0, bgMain);
+        if (withSym) p.setBindGroup(1, bg1);
+        p.dispatchWorkgroups(groups);
+        p.end();
+    };
+
+    const wgOrbits = cfCeilGroups(model.nOrbits);
+    const wgAbsent = cfCeilGroups(Math.max(1, model.absentCount));
+
+    // Check every dispatch against the device limit BEFORE encoding anything.
+    // WebGPU reports an oversized dispatch as an asynchronous validation
+    // error: the command buffer is silently discarded, the grid is never
+    // written, and the run completes in seconds with R = infinity instead of
+    // failing. Throwing here instead sends the job to the CPU path with a
+    // message that says which dispatch was too large.
+    const maxWG = (device.limits && device.limits.maxComputeWorkgroupsPerDimension) || 65535;
+    const dispatches = [
+        ['FFT stage', cfCeilGroups((N >> 1) * N * N)],
+        ['grid copy', cfCopyGroups(N)],
+        ['full-grid pass', wgFull],
+        ['cluster pass', wgCluster],
+        ['orbit pass', wgOrbits],
+        ['absence pass', wgAbsent]
+    ];
+    for (const [what, groups] of dispatches) {
+        if (groups > maxWG) {
+            throw new Error(
+                `The ${what} would need ${groups} workgroups, but this device allows ` +
+                `${maxWG} per dimension. Use a smaller grid.`);
+        }
+    }
+
+    const rHistory = new Float32Array(maxIter);
+    let bestR = Infinity, bestIter = 0, haveBest = false, lastReport = -1;
+
+    // Everything from here on can throw and hand the job to the CPU path, so
+    // the GPU allocations are released in a finally block rather than on the
+    // success path alone. A 128^3 trial holds about 50 MB of device memory;
+    // leaking that on every failed attempt would eventually take the adapter
+    // down with it.
+    const gpuBuffers = [bufA, bufB, bestBuf, partialsBuf, headerRead, orbitsBuf,
+                        orbitIdxBuf, phaseBuf, clustersBuf, targetBuf, paramBuf];
+    try {
+
+    for (let iter = 0; iter < maxIter; iter++) {
+        // The first pass runs inside an error scope. Anything the driver
+        // rejects -- an oversized dispatch, a buffer that is too big for this
+        // adapter, a shader that failed to compile -- surfaces here as a
+        // thrown error and sends the whole job to the CPU, rather than leaving
+        // the loop to grind through maxIter cycles on a grid nothing ever
+        // wrote to.
+        if (iter === 0) device.pushErrorScope('validation');
+
+        const enc = device.createCommandEncoder();
+
+        cfEncodeFFT(enc, pl, res, N, true);              // F -> rho, in bufA
+        pass1(enc, pl.reduce_moments, wgFull, false);
+        pass1(enc, pl.finalize_moments, 1, false);       // writes partials[0] = delta
+        pass1(enc, pl.flip, wgFull, false);
+        cfEncodeFFT(enc, pl, res, N, false);             // rho -> F, in bufA
+
+        pass1(enc, pl.reduce_rfactor, wgCluster, true);
+        pass1(enc, pl.finalize_rfactor, 1, false);
+        pass1(enc, pl.repartition, cfCeilGroups(model.nClusters), true);
+        if (lambda > 0) pass1(enc, pl.symmetrize, wgOrbits, true);
+        pass1(enc, pl.constrain, wgOrbits, true);
+        if (model.absentCount > 0) pass1(enc, pl.zero_absent, wgAbsent, true);
+        pass1(enc, pl.zero_dc, 1, false);
+
+        enc.copyBufferToBuffer(partialsBuf, 0, headerRead, 0, 16);
+        device.queue.submit([enc.finish()]);
+
+        if (iter === 0) {
+            const gpuErr = await device.popErrorScope();
+            if (gpuErr) throw new Error('WebGPU rejected the charge-flipping pass: ' + gpuErr.message);
+        }
+
+        await headerRead.mapAsync(GPUMapMode.READ, 0, 16);
+        const hdr = new Float32Array(headerRead.getMappedRange(0, 16)).slice();
+        headerRead.unmap();
+
+        const R = hdr[2] > 0 ? hdr[1] / hdr[2] : NaN;
+        rHistory[iter] = R;
+
+        // A non-finite R on the very first cycle means the GPU produced
+        // nothing usable, whatever the driver did or did not report.
+        if (iter === 0 && !Number.isFinite(R)) {
+            throw new Error('The first GPU cycle returned no usable R factor; the grid was not computed.');
+        }
+
+        if (Number.isFinite(R) && R < bestR) {
+            bestR = R; bestIter = iter + 1; haveBest = true;
+            // GPU-side copy: v137 mapped the whole 2*N^3 complex grid back to
+            // the host on every improvement, which cost more than the FFT.
+            const c = device.createCommandEncoder();
+            c.copyBufferToBuffer(bufA, 0, bestBuf, 0, cplxBytes);
+            device.queue.submit([c.finish()]);
+        }
+
+        const pct = Math.floor(((iter + 1) / maxIter) * 100);
+        if (pct !== lastReport || iter === maxIter - 1) {
+            lastReport = pct;
+            postMessage({ type: 'cf-progress', iter: iter + 1, total: maxIter, R, bestR });
+        }
+    }
+
+    // --- read the best iterate back exactly once ---------------------------
+    const readbackBuf = device.createBuffer({
+        size: cplxBytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+    gpuBuffers.push(readbackBuf);
+    {
+        const enc = device.createCommandEncoder();
+        enc.copyBufferToBuffer(haveBest ? bestBuf : bufA, 0, readbackBuf, 0, cplxBytes);
+        device.queue.submit([enc.finish()]);
+    }
+    await readbackBuf.mapAsync(GPUMapMode.READ);
+    const factors = new Float32Array(readbackBuf.getMappedRange()).slice();
+    readbackBuf.unmap();
+
+    const re = new Float64Array(N3), im = new Float64Array(N3);
+    for (let i = 0; i < N3; i++) { re[i] = factors[2 * i]; im[i] = factors[2 * i + 1]; }
+    fft3d(re, im, N, true);
+    const bestRho = Float32Array.from(re);
+
+    let peak = 0;
+    for (let i = 0; i < N3; i++) if (bestRho[i] > peak) peak = bestRho[i];
+    if (peak > 0) for (let i = 0; i < N3; i++) bestRho[i] /= peak;
+
+    const peaks = findPeaks(bestRho, N, cell, {
+        minSeparation: job.minPeakSeparation,
+        maxPeaks: job.maxPeaks,
+        heightCutoff: job.peakHeightCutoff
+    });
+
+    return {
+        map: bestRho, gridSize: N, peaks, rHistory, bestR, bestIter,
+        finalR: rHistory[maxIter - 1], seed: job.seed, cell,
+        volume: cellVolume(cell), backend: 'gpu', symLambda: lambda,
+        reflections: modelReport(model)
+    };
+
+    } finally {
+        gpuBuffers.forEach(b => { try { b.destroy(); } catch (e) { /* already gone */ } });
+    }
+}
+
+// Exposed for the node-side unit test; harmless in a browser worker.
+if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+        fft1d, fft3d, buildReflectionModel, findSystematicAbsences,
+        lorentzPolarization, normalizeSymops, findPeaks,
+        runChargeFlipping: runChargeFlippingCPU, runChargeFlippingCPU,
+        metricTensor, fracDistance, buildStructure, findOriginShift,
+        symmetryAverage, reduceToAsymmetricUnit, applyOp, LAUE_OPS
+    };
+}
+
+// ===========================================================================
+//  STRUCTURE BUILDING
+//
+//  With symLambda > 0 the map already obeys the space group and sits on a
+//  standard origin, so the origin search below is a verification step rather
+//  than a necessity. With symLambda = 0 it is doing the real work, exactly as
+//  before. Either way:
+//
+//    1. find the origin shift that makes the map obey the symmetry operators
+//    2. average the density over those operators
+//    3. reduce the peaks to one representative per orbit, with multiplicity
+//
+//  Step 1 has a closed form. For x' = xR + t, a correctly positioned
+//  structure satisfies
+//
+//        F(hR) = F(h) . exp(-2*pi*i * h.t)
+//
+//  Our map is displaced by an unknown s, so its phases carry an extra
+//  -2*pi*h.s. Writing psi_g(h) = phi(hR) - phi(h) + 2*pi*h.t and
+//  k_g(h) = hR - h (an integer vector), the agreement for a trial shift s is
+//
+//        A(s) = sum_h w(h) cos( psi_g(h) - 2*pi*k_g(h).s )
+//             = Re{ sum_k C[k] exp(-2*pi*i*k.s) }     with C[k] = sum w e^{i psi}
+//
+//  which is a single forward FFT of C. One transform therefore scores EVERY
+//  origin on the grid at once.
+// ===========================================================================
+
+function signedIndex(m, N) { return m > N / 2 ? m - N : m; }
+
+function findOriginShift(re, im, N, symops, opts) {
+    const N2 = N * N, N3 = N2 * N;
+    const wrap = v => ((v % N) + N) % N;
+
+    let maxF = 0;
+    for (let i = 0; i < N3; i++) {
+        const m = Math.hypot(re[i], im[i]);
+        if (m > maxF) maxF = m;
+    }
+    const cut = maxF * (opts.amplitudeCutoff ?? 0.05);
+
+    const cRe = new Float64Array(N3);
+    const cIm = new Float64Array(N3);
+    let contributions = 0;
+    let sumW = 0;
+
+    for (const op of symops) {
+        const r = op.r, t = op.t;
+        if (r[0] === 1 && r[4] === 1 && r[8] === 1 &&
+            r[1] === 0 && r[2] === 0 && r[3] === 0 &&
+            r[5] === 0 && r[6] === 0 && r[7] === 0 &&
+            Math.abs(t[0]) < 1e-9 && Math.abs(t[1]) < 1e-9 && Math.abs(t[2]) < 1e-9) continue;
+
+        for (let ml = 0; ml < N; ml++) {
+            const hl = signedIndex(ml, N);
+            for (let mk = 0; mk < N; mk++) {
+                const hk = signedIndex(mk, N);
+                for (let mh = 0; mh < N; mh++) {
+                    const hh = signedIndex(mh, N);
+                    if (!hh && !hk && !hl) continue;
+
+                    const idx = mh + mk * N + ml * N2;
+                    const a = re[idx], b = im[idx];
+                    const mag = Math.hypot(a, b);
+                    if (mag < cut) continue;
+
+                    const hp = applyRowVector([hh, hk, hl], r);
+                    if (Math.abs(hp[0]) * 2 >= N || Math.abs(hp[1]) * 2 >= N || Math.abs(hp[2]) * 2 >= N) continue;
+
+                    const jdx = wrap(hp[0]) + wrap(hp[1]) * N + wrap(hp[2]) * N2;
+                    const c = re[jdx], d = im[jdx];
+                    const mag2 = Math.hypot(c, d);
+                    if (mag2 < cut) continue;
+
+                    const phi1 = Math.atan2(b, a);
+                    const phi2 = Math.atan2(d, c);
+                    const psi = phi2 - phi1 + 2 * Math.PI * (hh * t[0] + hk * t[1] + hl * t[2]);
+
+                    const w = mag * mag2;
+                    sumW += w;
+                    const kIdx = wrap(hp[0] - hh) + wrap(hp[1] - hk) * N + wrap(hp[2] - hl) * N2;
+                    cRe[kIdx] += w * Math.cos(psi);
+                    cIm[kIdx] += w * Math.sin(psi);
+                    contributions++;
+                }
+            }
+        }
+    }
+
+    if (contributions === 0) return { candidates: [], sumW: 0, contributions: 0 };
+
+    fft3d(cRe, cIm, N, false);
+
+    // Rank the grid points and keep the strongest few as CANDIDATES rather
+    // than trusting the single maximum: the maximum is genuinely degenerate
+    // for groups whose rotations are all diagonal, and A(s) is maximised at
+    // the NEGATIVE of the shift that symmetryAverage() needs.
+    const order = [];
+    for (let i = 0; i < N3; i++) order.push(i);
+    order.sort((a, b) => cRe[b] - cRe[a]);
+
+    const candidates = [];
+    const keep = Math.max(1, opts.originCandidates ?? 12);
+    for (const i of order) {
+        const mh = i % N, mk = Math.floor(i / N) % N, ml = Math.floor(i / N2);
+        candidates.push({
+            shift: [((N - mh) % N) / N, ((N - mk) % N) / N, ((N - ml) % N) / N],
+            score: sumW > 0 ? cRe[i] / sumW : 0
+        });
+        if (candidates.length >= keep) break;
+    }
+
+    return { candidates, sumW, contributions };
+}
+
+function sampleGrid(map, N, x, y, z) {
+    const N2 = N * N;
+    const wrap = v => ((v % N) + N) % N;
+    const fx = x * N, fy = y * N, fz = z * N;
+    const ix = Math.floor(fx), iy = Math.floor(fy), iz = Math.floor(fz);
+    const tx = fx - ix, ty = fy - iy, tz = fz - iz;
+    let acc = 0;
+    for (let dz = 0; dz < 2; dz++) {
+        const wz = dz ? tz : 1 - tz, jz = wrap(iz + dz);
+        for (let dy = 0; dy < 2; dy++) {
+            const wy = dy ? ty : 1 - ty, jy = wrap(iy + dy);
+            for (let dx = 0; dx < 2; dx++) {
+                const wx = dx ? tx : 1 - tx, jx = wrap(ix + dx);
+                acc += wx * wy * wz * map[jx + jy * N + jz * N2];
+            }
+        }
+    }
+    return acc;
+}
+
+function symmetryAverage(map, N, symops, shift) {
+    const N2 = N * N, N3 = N2 * N;
+    const out = new Float32Array(N3);
+    for (let l = 0; l < N; l++) {
+        for (let k = 0; k < N; k++) {
+            for (let hh = 0; hh < N; hh++) {
+                const x = hh / N, y = k / N, z = l / N;
+                let acc = 0;
+                for (const op of symops) {
+                    const r = op.r, t = op.t;
+                    const px = r[0] * x + r[1] * y + r[2] * z + t[0];
+                    const py = r[3] * x + r[4] * y + r[5] * z + t[1];
+                    const pz = r[6] * x + r[7] * y + r[8] * z + t[2];
+                    acc += sampleGrid(map, N, px + shift[0], py + shift[1], pz + shift[2]);
+                }
+                out[hh + k * N + l * N2] = acc / symops.length;
+            }
+        }
+    }
+    return out;
+}
+
+function symmetryCorrelation(map, sym, N, shift) {
+    const N2 = N * N, N3 = N2 * N;
+    let sa = 0, sb = 0;
+    const a = new Float64Array(N3);
+    for (let l = 0; l < N; l++) for (let k = 0; k < N; k++) for (let hh = 0; hh < N; hh++) {
+        const i = hh + k * N + l * N2;
+        a[i] = sampleGrid(map, N, hh / N + shift[0], k / N + shift[1], l / N + shift[2]);
+        sa += a[i]; sb += sym[i];
+    }
+    sa /= N3; sb /= N3;
+    let num = 0, da = 0, db = 0;
+    for (let i = 0; i < N3; i++) {
+        const u = a[i] - sa, v = sym[i] - sb;
+        num += u * v; da += u * u; db += v * v;
+    }
+    return (da > 0 && db > 0) ? num / Math.sqrt(da * db) : 0;
+}
+
+function applyOp(op, p) {
+    const r = op.r, t = op.t;
+    return [
+        r[0] * p[0] + r[1] * p[1] + r[2] * p[2] + t[0],
+        r[3] * p[0] + r[4] * p[1] + r[5] * p[2] + t[1],
+        r[6] * p[0] + r[7] * p[1] + r[8] * p[2] + t[2]
+    ];
+}
+
+function reduceToAsymmetricUnit(peaks, symops, cell, tolAngstrom) {
+    const G = metricTensor(cell);
+    const used = new Array(peaks.length).fill(false);
+    const unique = [];
+
+    for (let i = 0; i < peaks.length; i++) {
+        if (used[i]) continue;
+        const p = peaks[i];
+        used[i] = true;
+
+        const images = [];
+        for (const op of symops) {
+            const q = applyOp(op, [p.x, p.y, p.z]).map(v => ((v % 1) + 1) % 1);
+            if (!images.some(im => fracDistance(G, im[0] - q[0], im[1] - q[1], im[2] - q[2]) < tolAngstrom)) {
+                images.push(q);
+            }
+        }
+
+        let heightSum = p.height, heightN = 1;
+        for (let j = i + 1; j < peaks.length; j++) {
+            if (used[j]) continue;
+            const q = peaks[j];
+            if (images.some(im => fracDistance(G, im[0] - q.x, im[1] - q.y, im[2] - q.z) < tolAngstrom)) {
+                used[j] = true;
+                heightSum += q.height; heightN++;
+            }
+        }
+
+        unique.push({
+            x: p.x, y: p.y, z: p.z,
+            height: heightSum / heightN,
+            multiplicity: images.length,
+            observedImages: heightN,
+            special: images.length < symops.length
+        });
+    }
+
+    unique.sort((a, b) => b.height - a.height);
+    const top = unique.length ? unique[0].height : 1;
+    return unique.map((u, i) => ({ ...u, rank: i + 1, relative: u.height / top }));
+}
+
+function buildStructure(job) {
+    const N = job.gridSize;
+    const N3 = N * N * N;
+    const symops = normalizeSymops(job.symops);
+    const cell = job.cell;
+
+    if (!symops) {
+        return { error: 'No usable symmetry operators were supplied. The space-group JSON needs the "symops" field added by the v7 generator script.' };
+    }
+
+    const re = new Float64Array(N3);
+    const im = new Float64Array(N3);
+    for (let i = 0; i < N3; i++) re[i] = job.map[i];
+    fft3d(re, im, N, false);
+
+    const invertMap = (m) => {
+        const wrap = v => ((v % N) + N) % N;
+        const N2 = N * N;
+        const inv = new Float32Array(N3);
+        for (let l = 0; l < N; l++) for (let k = 0; k < N; k++) for (let hh = 0; hh < N; hh++) {
+            inv[hh + k * N + l * N2] = m[wrap(-hh) + wrap(-k) * N + wrap(-l) * N2];
+        }
+        return inv;
+    };
+
+    // Charge flipping cannot distinguish rho(x) from rho(-x), so both hands
+    // are searched. For each hand the origin search returns several candidate
+    // shifts; every one is then symmetrised AND SCORED. The Fourier agreement
+    // A(s) only says the phases are consistent -- the correlation between the
+    // map and its symmetrised self is what actually decides.
+    let chosen = null;
+    const tried = [];
+    for (const hand of [1, -1]) {
+        const workMap = hand === 1 ? job.map : invertMap(job.map);
+        const r2 = Float64Array.from(re);
+        const i2 = new Float64Array(N3);
+        for (let i = 0; i < N3; i++) i2[i] = hand * im[i];
+        const found = findOriginShift(r2, i2, N, symops, job);
+
+        for (const cand of found.candidates) {
+            const sym = symmetryAverage(workMap, N, symops, cand.shift);
+            const corr = symmetryCorrelation(workMap, sym, N, cand.shift);
+            tried.push({ hand, shift: cand.shift, score: cand.score, correlation: corr });
+            if (!chosen || corr > chosen.correlation) {
+                chosen = { hand, shift: cand.shift, score: cand.score, correlation: corr, sym, workMap };
+            }
+        }
+    }
+
+    if (!chosen) {
+        return { error: 'The origin search found nothing to work with. The map may be empty, or the amplitude cutoff too high.' };
+    }
+
+    tried.sort((a, b) => b.correlation - a.correlation);
+    const sym = chosen.sym;
+    const correlation = chosen.correlation;
+
+    let peak = 0;
+    for (let i = 0; i < N3; i++) if (sym[i] > peak) peak = sym[i];
+    if (peak > 0) for (let i = 0; i < N3; i++) sym[i] /= peak;
+
+    const rawPeaks = findPeaks(sym, N, cell, {
+        minSeparation: job.minPeakSeparation,
+        maxPeaks: job.maxPeaks ?? 60,
+        heightCutoff: job.peakHeightCutoff ?? 0.04
+    });
+
+    const sites = reduceToAsymmetricUnit(rawPeaks, symops, cell, job.minPeakSeparation * 0.6);
+
+    return {
+        map: sym,
+        gridSize: N,
+        originShift: chosen.shift,
+        hand: chosen.hand,
+        originScore: chosen.score,
+        runnerUpCorrelation: tried.length > 1 ? tried[1].correlation : null,
+        symmetryCorrelation: correlation,
+        sites,
+        rawPeakCount: rawPeaks.length,
+        nOps: symops.length,
+        symops: symops.map(o => o.xyz).filter(Boolean),
+        cell
+    };
+}
