@@ -40,7 +40,10 @@
 //  5. No Lorentz-polarisation correction. A Pawley intensity is a peak AREA,
 //     which is proportional to m * LP * |F|^2. Without dividing by LP the
 //     low-angle reflections are weighted several times too heavily and the
-//     map is dominated by the first few peaks.
+//     map is dominated by the first few peaks. The polarisation half of LP
+//     is now whatever the host declares (none / lab / synchrotron), taken
+//     per reflection from peak.lp when the host supplies it, so the map and
+//     the refinement report cannot disagree about it.
 //
 //  6. Symmetry was applied only afterwards, by findOriginShift +
 //     symmetryAverage. That is the orthodox choice and it is still available
@@ -390,27 +393,85 @@ function findSystematicAbsences(N, symops, centring) {
 }
 
 // ---------------------------------------------------------------------------
-//  Lorentz-polarisation for a Bragg-Brentano powder scan.
+//  Lorentz-polarisation for a powder scan.
 //
 //  A Pawley intensity is the peak AREA, which carries m * LP * |F|^2. The
 //  multiplicity m is absorbed by spreading the intensity over the m grid
 //  points of the orbit, but LP has to be divided out explicitly or the
 //  low-angle reflections dominate the map.
+//
+//  This used to hard-wire the unpolarised Bragg-Brentano case (with an
+//  optional monochromator angle the host never actually sent), which meant a
+//  synchrotron dataset was silently corrected as if it came off a sealed
+//  tube. The host now chooses the model; this function speaks the same
+//  parameterisation it does:
+//
+//      L(2th) = 1 / ( sin^2(th) . cos(th) )
+//      P(2th) = ( 1 + K . cos^2(2th) ) / ( 1 + K )     P(0) = 1 for every K
+//
+//        K = 0                 no polarisation term (neutrons, or a beam
+//                              polarised perpendicular to a vertical
+//                              scattering plane)
+//        K = 1                 unpolarised lab source
+//        K = cos^2(2th_M)      lab source behind a monochromator
+//        K = (1-f)/f           synchrotron, f = perpendicular-polarised
+//                              fraction
+//
+//  `pol` may be:
+//    * a descriptor { K } (or { mode, monoTth, polFrac }) from the host,
+//    * a bare number, read as a monochromator 2-theta for backward
+//      compatibility with the old two-argument call,
+//    * absent, which reproduces the historical unpolarised behaviour.
 // ---------------------------------------------------------------------------
-function lorentzPolarization(tthDeg, monoTthDeg) {
+function polarizationK(pol) {
+    // Bare number: the legacy monochromatorTth argument.
+    if (typeof pol === 'number') {
+        return (Number.isFinite(pol) && pol > 0 && pol < 180)
+            ? Math.cos(pol * Math.PI / 180) ** 2 : 1;
+    }
+    if (pol && typeof pol === 'object') {
+        if (Number.isFinite(pol.K) && pol.K >= 0) return pol.K;
+        const mode = String(pol.mode || 'lab').toLowerCase();
+        if (mode === 'none') return 0;
+        if (mode === 'synchrotron') {
+            const f = Number(pol.polFrac);
+            if (!Number.isFinite(f) || f >= 1) return 0;
+            return f <= 1e-6 ? 1e6 : (1 - f) / f;
+        }
+        const m = Number(pol.monoTth);
+        return (Number.isFinite(m) && m > 0 && m < 180)
+            ? Math.cos(m * Math.PI / 180) ** 2 : 1;
+    }
+    return 1;                                   // unpolarised: the old default
+}
+
+function lorentzPolarization(tthDeg, pol) {
     if (!Number.isFinite(tthDeg) || tthDeg <= 0 || tthDeg >= 180) return 1;
     const d2r = Math.PI / 180;
     const th = 0.5 * tthDeg * d2r;
     const s = Math.sin(th), c = Math.cos(th);
     if (s < 1e-6 || c < 1e-6) return 1;
-    let pol;
-    if (Number.isFinite(monoTthDeg) && monoTthDeg > 0) {
-        const cm2 = Math.cos(monoTthDeg * d2r) ** 2;
-        pol = (1 + cm2 * Math.cos(tthDeg * d2r) ** 2) / (1 + cm2);
-    } else {
-        pol = 0.5 * (1 + Math.cos(tthDeg * d2r) ** 2);
+    const K = polarizationK(pol);
+    const P = (1 + K * Math.cos(tthDeg * d2r) ** 2) / (1 + K);
+    return P / (s * s * c);
+}
+
+function describePolarization(pol) {
+    const K = polarizationK(pol);
+    const mode = (pol && typeof pol === 'object' && pol.mode) ? String(pol.mode) : 'lab';
+    // Mode first, K second. A fully perpendicular-polarised synchrotron beam
+    // also gives K = 0, and calling that "none" would misreport the geometry
+    // even though the arithmetic is the same.
+    if (mode === 'none') return 'none (Lorentz factor only)';
+    if (mode === 'synchrotron') {
+        const f = Number(pol.polFrac);
+        return `synchrotron, f = ${Number.isFinite(f) ? f.toFixed(3) : '?'} (K = ${K.toFixed(4)})`;
     }
-    return pol / (s * s * c);
+    if (K === 0) return 'none (Lorentz factor only)';
+    const m = (pol && typeof pol === 'object') ? Number(pol.monoTth) : NaN;
+    return (Number.isFinite(m) && m > 0)
+        ? `lab tube, monochromator 2th_M = ${m.toFixed(2)} deg (K = ${K.toFixed(4)})`
+        : `lab tube, unpolarised (K = ${K.toFixed(4)})`;
 }
 
 // ===========================================================================
@@ -436,6 +497,11 @@ function buildReflectionModel(job, N) {
     const hklOps = built.ops;
 
     const applyLP = job.applyLP !== false;
+    // The host may send a full polarisation descriptor; `monochromatorTth`
+    // stays supported so an older caller keeps working unchanged.
+    const polModel = (job.polarization !== undefined && job.polarization !== null)
+        ? job.polarization : job.monochromatorTth;
+    let lpFromHost = 0, lpFromModel = 0;
     const tolTth = Number.isFinite(job.overlapTolTth) ? job.overlapTolTth : 0.05;
 
     let droppedZero = 0, droppedRange = 0, droppedDuplicate = 0;
@@ -484,7 +550,17 @@ function buildReflectionModel(job, N) {
         if (outOfRange) droppedRange++;
         if (members.length === 0) continue;
 
-        const lp = applyLP ? lorentzPolarization(peak.tth, job.monochromatorTth) : 1;
+        // Prefer the Lp the host already computed for this reflection. It was
+        // evaluated at the corrected 2-theta with the user's chosen model and
+        // is the same number that appears in the refinement report, so taking
+        // it verbatim is the only way the map, the report and the
+        // French-Wilson prior can be guaranteed to agree. Recomputing here is
+        // the fallback for callers that do not send it.
+        let lp = 1;
+        if (applyLP) {
+            if (Number.isFinite(peak.lp) && peak.lp > 0) { lp = peak.lp; lpFromHost++; }
+            else { lp = lorentzPolarization(peak.tth, polModel); lpFromModel++; }
+        }
         // Truncated orbits keep only their share of the intensity; v137 spread
         // the whole of it over the survivors and inflated their amplitudes.
         const targetI = (I / lp) * (members.length / mTrue);
@@ -621,6 +697,9 @@ function buildReflectionModel(job, N) {
         nSymops: symops ? symops.length : hklOps.length,
         haveTranslations: !!symops,
         usedUnique, droppedZero, droppedRange, droppedDuplicate,
+        lpApplied: applyLP,
+        lpModel: applyLP ? describePolarization(polModel) : 'not applied',
+        lpFromHost, lpFromModel,
         maxIndexSeen,
         minGridForAll: 2 * maxIndexSeen + 2,
         sumFobs: cObsI.reduce((s, v) => s + Math.sqrt(Math.max(0, v)), 0)
@@ -748,6 +827,10 @@ function modelReport(model) {
         droppedOutOfRange: model.droppedRange,
         droppedZeroIntensity: model.droppedZero,
         droppedDuplicate: model.droppedDuplicate,
+        lpApplied: model.lpApplied,
+        lpModel: model.lpModel,
+        lpFromHost: model.lpFromHost,
+        lpFromModel: model.lpFromModel,
         maxIndex: model.maxIndexSeen,
         minGridForAll: model.minGridForAll
     };
@@ -1424,7 +1507,8 @@ async function runChargeFlippingGPU(job) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         fft1d, fft3d, buildReflectionModel, findSystematicAbsences,
-        lorentzPolarization, normalizeSymops, findPeaks,
+        lorentzPolarization, polarizationK, describePolarization,
+        normalizeSymops, findPeaks,
         runChargeFlipping: runChargeFlippingCPU, runChargeFlippingCPU,
         metricTensor, fracDistance, buildStructure, findOriginShift,
         symmetryAverage, reduceToAsymmetricUnit, applyOp, LAUE_OPS

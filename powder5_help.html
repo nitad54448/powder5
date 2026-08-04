@@ -433,6 +433,7 @@ blockquote {
             <li><a href="#parameters-crystal" class="sub-link">Crystal & Space Group</a></li>
             <li><a href="#parameters-reflections" class="sub-link">Reflections & Multiplicities</a></li>
             <li><a href="#parameters-instrumental" class="sub-link">Instrumental</a></li>
+            <li><a href="#parameters-lp" class="sub-link">Lorentz&ndash;Polarisation (Lp)</a></li>
             <li><a href="#parameters-background" class="sub-link">Background (Spline)</a></li> <li><a href="#parameters-profile4" class="sub-link">Simple pVoigt</a></li>
             <li><a href="#parameters-profile3" class="sub-link">TCH (Anisotropic)</a></li>
             <li><a href="#parameters-profile-split" class="sub-link">Split pVoigt (Asymmetric)</a></li>
@@ -792,9 +793,217 @@ blockquote {
             </p>
             <ul>
                 <li><code>Radiation 1/2 (Å) & Ratio</code>: Defines the X-ray source. For divergent-beam laboratory instruments, a Kα1/Kα2 doublet is typically used. For synchrotron radiation, the Ratio is set to 0.</li>
+                <li><code>Polarisation</code>: Selects the polarisation model used in the Lorentz&ndash;polarisation factor &mdash; <em>Lab</em> (default), <em>Synchrotron</em>, or <em>None</em>. A second field appears beside it: the monochromator angle $2\theta_M$ for a laboratory source, or the polarised fraction $f$ for a synchrotron. This setting does <strong>not</strong> affect the fit; it governs how an extracted intensity is converted into $|F|$. See <a href="#parameters-lp">Lorentz&ndash;Polarisation Factor</a>.</li>
                 <li><code>Zero</code>: A refinable parameter that corrects for instrumental zero-point error in the $2\theta$ axis. It is highly correlated with lattice parameters and must be refined with caution.</li>
                 <li><code>2θ Min / Max</code>: These sliders define the refinement range. It is standard practice to exclude regions of low signal-to-noise or known artifacts from the calculation.</li>
             </ul>
+
+
+            <h3 id="parameters-lp">Lorentz&ndash;Polarisation Factor (Lp)</h3>
+            <p>
+                The integrated intensity of a powder reflection is not $|F|^2$ alone. It carries two
+                geometric weights &mdash; the multiplicity $m$ of the reflection and the
+                Lorentz&ndash;polarisation factor $Lp$ &mdash; on top of an arbitrary overall scale $s$:
+            </p>
+            $$I(hkl) \;=\; s \cdot m \cdot Lp(2\theta) \cdot |F(hkl)|^2$$
+            <p>
+                $Lp$ is therefore the last thing standing between an extracted Le&nbsp;Bail or Pawley
+                intensity and a structure factor, and it is the reason the reflection table in the
+                report prints $m$, $Lp$ and $|F_o|$ next to the intensity rather than the intensity
+                on its own.
+            </p>
+
+            <div class="note">
+                <h4>Lp does not affect the refinement</h4>
+                <p>
+                    In both Le&nbsp;Bail and Pawley the intensity of every peak is a free quantity:
+                    it is re-partitioned from the observation each cycle, or refined as a
+                    least-squares parameter. Either way it absorbs $Lp$ completely. Changing the
+                    polarisation model therefore cannot move a lattice parameter, a profile
+                    coefficient, $R_{wp}$ or $\chi^2$ by so much as a digit &mdash; and if it appears
+                    to, something else changed at the same time. What it changes is the
+                    <em>meaning</em> of the refined intensities: $|F_o|$, the input to charge
+                    flipping, the Wilson prior behind the French&ndash;Wilson correction, and the
+                    space-group probability test. Because nothing needs re-refining, Powder&nbsp;5
+                    applies a change of model retroactively to the live fit and to every run in the
+                    history, so re-exporting an old run uses the model currently on screen.
+                </p>
+            </div>
+
+            <h4>The Lorentz factor</h4>
+            <p>
+                For a conventional $\theta$&ndash;$2\theta$ powder scan, Powder&nbsp;5 uses
+            </p>
+            $$L(2\theta) \;=\; \frac{1}{\sin^2\theta \, \cos\theta}$$
+            <p>
+                This lumps together the rate at which a crystallite passes through the reflecting
+                condition and the fraction of the Debye&ndash;Scherrer ring intercepted by the
+                detector. It is often written $1/(4\sin^2\theta\cos\theta)$; the factor of 4 is a
+                constant and is swallowed by $s$, so it makes no difference to anything reported
+                here. $L$ has no adjustable parameters and is applied for every polarisation
+                setting, including <em>None</em>.
+            </p>
+
+            <h4>The polarisation factor</h4>
+            <p>
+                All three models are the same expression with one constant $K$, normalised so that
+                $P(0) = 1$ in every case:
+            </p>
+            $$P(2\theta) \;=\; \frac{1 + K\cos^2 2\theta}{1 + K}
+              \qquad\qquad Lp = L \cdot P$$
+            <table class="param-table">
+                <thead><tr><th>Setting</th><th>$K$</th><th>Use it when</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Lab</strong> (default)</td>
+                        <td>$\cos^2 2\theta_M$, or $1$ if $2\theta_M = 0$</td>
+                        <td>Any sealed-tube or rotating-anode instrument. Leave $2\theta_M$ at 0 for a
+                            plain unpolarised source; enter the monochromator angle if there is one.</td></tr>
+                    <tr><td><strong>Synchrotron</strong></td>
+                        <td>$(1-f)/f$</td>
+                        <td>A polarised source. $f$ is the fraction of the beam polarised
+                            <em>perpendicular</em> to the diffraction plane.</td></tr>
+                    <tr><td><strong>None</strong></td>
+                        <td>$0$, so $P \equiv 1$</td>
+                        <td>Neutron data, intensities that have already been corrected elsewhere, or
+                            a deliberate test of how much the correction is worth.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                With $2\theta_M = 0$ the Lab setting reduces to $P = \tfrac12(1 + \cos^2 2\theta)$,
+                the classical unpolarised expression, and this is what Powder&nbsp;5 uses by default. Note that a fully perpendicular-polarised synchrotron beam ($f = 1$)
+                gives $K = 0$ and therefore exactly the same arithmetic as <em>None</em>; the two
+                settings are kept distinct because they describe different geometry and are labelled
+                differently in the report.
+            </p>
+
+            <h4>Choosing $2\theta_M$ for a laboratory monochromator</h4>
+            <p>
+                $2\theta_M$ is the take-off angle of the monochromator crystal at the wavelength in
+                use, not a free parameter. Common values for Cu&nbsp;K$\alpha$:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Monochromator</th><th>$2\theta_M$ (&deg;)</th><th>Resulting $K$</th></tr></thead>
+                <tbody>
+                    <tr><td>Graphite (002), the usual diffracted-beam crystal</td><td>26.6</td><td>0.800</td></tr>
+                    <tr><td>Ge (111)</td><td>27.3</td><td>0.790</td></tr>
+                    <tr><td>Si (111)</td><td>28.4</td><td>0.773</td></tr>
+                    <tr><td>Quartz (10$\bar{1}$1)</td><td>26.6</td><td>0.800</td></tr>
+                    <tr><td>None &mdash; Ni filter, or no filter at all</td><td>0</td><td>1.000</td></tr>
+                </tbody>
+            </table>
+            <div class="warning-note">
+                <p>
+                    <strong>Mosaic versus perfect crystals.</strong> $K = \cos^2 2\theta_M$ is the
+                    <em>ideally mosaic</em> result, which is the right one for graphite and for
+                    ordinary pyrolytic monochromators. A genuinely perfect crystal diffracts in the
+                    dynamical regime and the correct constant is $K = |\cos 2\theta_M|$ instead
+                    &mdash; 0.894 rather than 0.800 for graphite geometry. Powder&nbsp;5 implements
+                    the mosaic convention. If you need the perfect-crystal value, enter the
+                    equivalent angle $2\theta_{M}^{\,\mathrm{eff}} = \arccos\sqrt{K}$ (for
+                    $K = 0.894$, that is 19.1&deg;). In practice the two differ by well under 2% in
+                    $P$ at any angle, which is smaller than most other systematic errors in a
+                    laboratory pattern.
+                </p>
+            </div>
+
+            <h4>Choosing $f$ for a synchrotron</h4>
+            <p>
+                Bending-magnet and undulator radiation is polarised in the <em>horizontal</em> plane,
+                with $f$ typically between 0.90 and 0.98 in the plane of the orbit. What matters is
+                the orientation of the diffractometer relative to that:
+            </p>
+            <ul>
+                <li><strong>Vertical scattering plane</strong> (the usual arrangement for
+                    high-resolution powder diffraction): the electric field is perpendicular to the
+                    scattering plane, so $f \approx 0.95$&ndash;$1.0$ and $P$ is nearly flat. The
+                    correction is almost pure Lorentz, and this is precisely why the geometry is
+                    chosen.</li>
+                <li><strong>Horizontal scattering plane</strong>: the field lies <em>in</em> the
+                    scattering plane. Enter $f \approx 0.05$&ndash;$0.1$, which gives
+                    $P \to \cos^2 2\theta$ &mdash; a severe correction that goes to zero at
+                    $2\theta = 90^\circ$. Getting this backwards is a much worse error than
+                    misjudging $f$ by a few per cent.</li>
+            </ul>
+
+            <h4>How large is the effect?</h4>
+            <p>
+                $Lp$ falls steeply with angle whatever the model, and the polarisation term adds a
+                further factor of two by $2\theta = 90^\circ$ for an unpolarised source. Values for
+                Cu&nbsp;K$\alpha$:
+            </p>
+            <table class="param-table">
+                <thead><tr>
+                    <th>$2\theta$ (&deg;)</th><th>$L$</th>
+                    <th>$Lp$, Lab (no mono)</th><th>$Lp$, graphite</th>
+                    <th>$Lp$, synchrotron $f=0.95$</th><th>$Lp$, None</th>
+                </tr></thead>
+                <tbody>
+                    <tr><td>10</td><td>132.15</td><td>130.16</td><td>130.38</td><td>131.95</td><td>132.15</td></tr>
+                    <tr><td>20</td><td>33.68</td><td>31.71</td><td>31.93</td><td>33.48</td><td>33.68</td></tr>
+                    <tr><td>30</td><td>15.46</td><td>13.52</td><td>13.74</td><td>15.26</td><td>15.46</td></tr>
+                    <tr><td>45</td><td>7.39</td><td>5.54</td><td>5.75</td><td>7.21</td><td>7.39</td></tr>
+                    <tr><td>60</td><td>4.62</td><td>2.89</td><td>3.08</td><td>4.45</td><td>4.62</td></tr>
+                    <tr><td>90</td><td>2.83</td><td>1.41</td><td>1.57</td><td>2.69</td><td>2.83</td></tr>
+                    <tr><td>120</td><td>2.67</td><td>1.67</td><td>1.78</td><td>2.57</td><td>2.67</td></tr>
+                    <tr><td>150</td><td>4.14</td><td>3.62</td><td>3.68</td><td>4.09</td><td>4.14</td></tr>
+                </tbody>
+            </table>
+            <p>
+                $Lp$ spans a factor of about 90 between $2\theta = 10^\circ$ and $90^\circ$. Omitting
+                it does not perturb a structure-solution calculation slightly &mdash; it weights the
+                first few peaks roughly two orders of magnitude too heavily, and a charge-flipping map
+                built on uncorrected intensities is dominated by them. The choice <em>between</em>
+                models is a much smaller effect: at most a factor of two, and concentrated near
+                $2\theta = 90^\circ$. Getting the correction on at all matters more than getting the
+                model exactly right, but the models are cheap to select correctly.
+            </p>
+
+            <h4>Where it is applied</h4>
+            <table class="param-table">
+                <thead><tr><th>Consumer</th><th>What $Lp$ does there</th></tr></thead>
+                <tbody>
+                    <tr><td>Reflection table in the report</td>
+                        <td>Printed as its own column, and used for
+                            $|F_o| = \sqrt{I_{hkl} / (m \cdot Lp \cdot (1 + I_2/I_1))}$.</td></tr>
+                    <tr><td>Charge flipping</td>
+                        <td>Each observed intensity is divided by $Lp$ before it becomes a target
+                            amplitude. Without it the map is dominated by the low-angle peaks.</td></tr>
+                    <tr><td>French&ndash;Wilson correction</td>
+                        <td>The Wilson prior is estimated from $I/(m\,Lp)$, which is the quantity
+                            actually proportional to $|F|^2$, rather than from raw areas.</td></tr>
+                    <tr><td>Space-group probability test</td>
+                        <td>Intensities are normalised by $m \cdot Lp$ before the Wilson-like scale
+                            $\tau_j$ is estimated, so the extinction evidence is not confounded with
+                            the $Lp$ fall-off.</td></tr>
+                    <tr><td>Theoretical (data-free) export</td>
+                        <td>$Lp$ and $m \cdot Lp$ are tabulated per reflection. With no structure
+                            factors available, $m \cdot Lp$ <em>is</em> the whole of the predicted
+                            relative intensity.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                All of these read one shared calculation, evaluated at the <em>corrected</em>
+                $2\theta$ &mdash; the same angle printed in the reflection table, including the zero
+                shift and any displacement or transparency term. The charge-flipping worker takes the
+                per-reflection value computed by the refinement rather than recomputing its own, so
+                the map, the report and the prior cannot disagree about it. The charge-flipping
+                summary panel reports the model the worker actually used, which is the check that
+                they have not.
+            </p>
+
+            <div class="note">
+                <h4>A note on $|F_o|$ and the K&alpha; doublet</h4>
+                <p>
+                    With a K$\alpha_1$/K$\alpha_2$ source the integrated area of a reflection is the
+                    sum over the pair, so it exceeds the single-wavelength intensity by
+                    $(1 + I_2/I_1)$. The $|F_o|$ column divides that back out, which makes the printed
+                    structure factors comparable with a monochromatic or synchrotron measurement
+                    instead of carrying a source-dependent constant. It is a single global factor and
+                    so has no effect on <em>relative</em> $|F_o|$; the report states the divisor it
+                    used. The overall scale remains arbitrary in any case: $|F_o|$ is on the scale of
+                    the observed pattern, not on an absolute electron scale.
+                </p>
+            </div>
 
             <h3 id="parameters-background">Background Modeling (Spline Interpolation)</h3>
             <p>
@@ -1505,6 +1714,7 @@ blockquote {
                     <tr><td><strong>Space group</strong></td><td>The group whose operators were used. This is the group the Pawley fit ran in, not necessarily the current selection.</td></tr>
                     <tr><td><strong>Expansion symmetry</strong></td><td>How the orbits were generated: the number of real symmetry operators and the Laue class, or &mdash; if the database lacks the <code>symops</code> field &mdash; a note that only the Laue-class fallback was available. In the fallback case screw and glide absences are <em>not</em> applied.</td></tr>
                     <tr><td><strong>Symmetry in loop</strong></td><td>The \(\lambda\) actually used. <em>none</em> means the map was solved in \(P1\) and its origin is arbitrary.</td></tr>
+                    <tr><td><strong>Lorentz-polarisation</strong></td><td>The $Lp$ model the worker actually divided by, reported back by the worker itself rather than restated from the control panel &mdash; so a mismatch between the two would be visible here instead of silent. Where the counts differ, it also says how many reflections took the value computed by the refinement and how many the worker had to recompute. See <a href="#parameters-lp">Lorentz&ndash;Polarisation Factor</a>.</td></tr>
                     <tr><td><strong>Absences forced to zero</strong></td><td>How many grid points were held at \(F = 0\) as systematically absent. Expect roughly half the grid for an \(I\) lattice and three quarters for \(F\); zero for a primitive group with no screws or glides.</td></tr>
                     <tr><td><strong>Overlapping reflections</strong></td><td>How many of the reflection orbits share a measured peak with at least one other, and how many distinct peaks they occupy. If this approaches the total, either the sample really is heavily overlapped or the overlap tolerance is set too wide.</td></tr>
                     <tr><td><strong>Symmetry correlation</strong></td><td>(From the automatic structure build.) The correlation between the map and its symmetrised copy in the chosen space group. This is the primary quality indicator: near 1 means the density genuinely obeys the symmetry; a low value means either non-convergence or a wrong space group.</td></tr>
@@ -1700,11 +1910,76 @@ blockquote {
             <ul>
                 <li><b>Save Report:</b> Behavior depends on whether experimental data is loaded.
                     <ul>
-                        <li><em>With data loaded, after a refinement:</em> generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), the Williamson-Hall analysis results (if applicable), the list of background spline points used, a list of reflections with calculated and observed integrated intensities (areas), and a point-by-point list of observed, calculated, background, and difference intensities across the fitted range.</li>
-                        <li><em>With no data loaded:</em> the button remains active and instead exports a theoretical reflection list for the current space group, lattice parameters, and wavelength(s) — <code>h k l</code>, $d$-spacing, and $2\theta$ for Kα1 (and Kα2 if the intensity ratio is greater than 0), together with the multiplicity of each reflection. No refinement is required for this mode; the chart itself also displays this theoretical stick pattern live as you change the space group or lattice, so you can preview expected peak positions before ever loading a scan.</li>
+                        <li><em>With data loaded, after a refinement:</em> generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), the Williamson-Hall analysis results (if applicable), the declared Lorentz&ndash;polarisation model, the list of background spline points used, the reflection table described below, and a point-by-point list of observed, calculated, background, and difference intensities across the fitted range.</li>
+                        <li><em>With no data loaded:</em> the button remains active and instead exports a theoretical reflection list for the current space group, lattice parameters, and wavelength(s) — <code>h k l</code>, $d$-spacing, and $2\theta$ for Kα1 (and Kα2 if the intensity ratio is greater than 0), together with the multiplicity, $Lp$ and $m \cdot Lp$ of each reflection. With no structure factors available, $m \cdot Lp$ is the whole of the predicted relative intensity. No refinement is required for this mode; the chart itself also displays this theoretical stick pattern live as you change the space group or lattice, so you can preview expected peak positions before ever loading a scan.</li>
                     </ul>
-                </li> <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters and statistics, suitable for archival or reporting. This requires a completed refinement.</li>
+                </li> <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters and statistics, suitable for archival or reporting. This requires a completed refinement. The PDF carries the same reflection table as the text report; rows too wide for the page are set in a smaller size rather than being clipped.</li>
             </ul>
+
+            <h4>The reflection table</h4>
+            <p>
+                Both the text and PDF reports list every reflection inside the fitted range with the
+                complete chain from peak to structure factor. Le&nbsp;Bail and Pawley share the same
+                columns; Pawley adds one.
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
+                <tbody>
+                    <tr><td><code>h,k,l</code></td>
+                        <td>Canonical member of the reflection orbit. One row per orbit, not per
+                            index triple.</td></tr>
+                    <tr><td><code>2th_corr</code></td>
+                        <td>Peak position after the zero shift and any displacement or transparency
+                            correction &mdash; where the peak actually sits, not the ideal Bragg
+                            angle.</td></tr>
+                    <tr><td><code>d</code></td><td>Interplanar spacing in &Aring;ngstr&ouml;m.</td></tr>
+                    <tr><td><code>m</code></td>
+                        <td>Powder multiplicity: the size of the orbit under the Laue group. See
+                            <a href="#parameters-reflections">Reflections &amp; Multiplicities</a>.</td></tr>
+                    <tr><td><code>Lp</code></td>
+                        <td>Lorentz&ndash;polarisation factor, evaluated at <code>2th_corr</code> with the
+                            declared model. See <a href="#parameters-lp">Lorentz&ndash;Polarisation
+                            Factor</a>.</td></tr>
+                    <tr><td><code>I_hkl</code></td>
+                        <td>Integrated intensity of the whole reflection &mdash; peak height times
+                            profile area, summed over the K&alpha;1/K&alpha;2 pair, with the scale
+                            factor applied. This is an <em>area</em>, not a height: a height
+                            underweights the high-angle reflections by the full profile broadening,
+                            which typically doubles across a scan.</td></tr>
+                    <tr><td><code>sigma(I)</code></td>
+                        <td>Standard uncertainty on the area. For Pawley it comes from the
+                            covariance matrix, converted from a height ESD; for Le&nbsp;Bail it is the
+                            counting statistics of the observed points propagated through the
+                            partition fractions.</td></tr>
+                    <tr><td><code>|Fo|</code></td>
+                        <td>$\sqrt{I_{hkl} / (m \cdot Lp \cdot (1 + I_2/I_1))}$, on an arbitrary
+                            scale. Blank for a non-positive intensity &mdash; see the note
+                            below.</td></tr>
+                    <tr><td><code>I_obs</code> <em>(Pawley only)</em></td>
+                        <td>The same reflection re-integrated from the observed pattern by
+                            partitioning the net counts over the calculated profile. A cross-check on
+                            the refined parameter, which is what <code>I_hkl</code> holds for a Pawley
+                            fit. Large disagreement points at an overlap the fit has resolved badly.
+                            For Le&nbsp;Bail the two are the same integral by construction, so the
+                            column is omitted.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                A legend above the table restates the polarisation model, the formulae and the value
+                of $K$ actually used, so every $|F_o|$ can be reproduced from the printed numbers
+                without knowing which convention the program follows.
+            </p>
+            <div class="note">
+                <h4>Negative intensities are printed, not hidden</h4>
+                <p>
+                    A least-squares or partitioned intensity can come out negative when the
+                    background runs above the data across a peak's window. That is a real
+                    measurement and <code>I_hkl</code> shows it; only $|F_o|$ is left blank, because
+                    there is no square root to take. Clipping such values at zero would bias every
+                    weak reflection upward, which is exactly what the French&ndash;Wilson correction
+                    used by the charge-flipping path exists to avoid.
+                </p>
+            </div>
         </section>
 
         <hr>
@@ -1734,6 +2009,22 @@ blockquote {
             <div class="reference-item">
                 <strong>Charge Flipping from powder data (intensity repartitioning):</strong><br>
                 Baerlocher, C., McCusker, L. B. &amp; Palatinus, L. (2007). "Charge flipping combined with histogram matching to solve complex crystal structures from powder diffraction data". <em>Zeitschrift für Kristallographie</em>, 222(2), 47-53.
+            </div>
+            <div class="reference-item">
+                <strong>Polarisation with a crystal monochromator:</strong><br>
+                Azaroff, L. V. (1955). "Polarization correction for crystal-monochromatized X-radiation". <em>Acta Crystallographica</em>, 8(11), 701-704.
+            </div>
+            <div class="reference-item">
+                <strong>Lorentz and polarisation factors for powders:</strong><br>
+                Klug, H. P. &amp; Alexander, L. E. (1974). <em>X-Ray Diffraction Procedures for Polycrystalline and Amorphous Materials</em>, 2nd ed. Wiley, New York.
+            </div>
+            <div class="reference-item">
+                <strong>Polarisation conventions in modern refinement software:</strong><br>
+                Toby, B. H. &amp; Von Dreele, R. B. (2013). "GSAS-II: the genesis of a modern open-source all purpose crystallography software package". <em>Journal of Applied Crystallography</em>, 46(2), 544-549. (Source of the single-parameter polarisation convention used here.)
+            </div>
+            <div class="reference-item">
+                <strong>Posterior intensities for weak and negative reflections:</strong><br>
+                French, S. &amp; Wilson, K. (1978). "On the treatment of negative intensity observations". <em>Acta Crystallographica Section A</em>, 34(4), 517-525.
             </div>
             <div class="reference-item">
                 <strong>GSAS Profile Functions:</strong><br>

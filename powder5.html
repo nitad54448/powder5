@@ -125,6 +125,33 @@
                         <label for="ratio21" class="control-label">Ratio (I₂/I₁)</label>
                         <input type="number" id="ratio21" value="0.497" step="0.01" class="control-input" min="0" max="1">
                     </div>
+
+                    <!--   Polarisation model for the Lorentz-polarisation factor.
+                           Lp never enters the Le Bail / Pawley profile (the
+                           intensities are free parameters and absorb it); it is
+                           what converts an extracted intensity into |F|, so it
+                           has to be declared, applied and REPORTED. -->
+                    <div class="form-row">
+                        <label for="polarization-mode" class="control-label">Polarisation</label>
+                        <select id="polarization-mode" class="control-select"
+                                title="Polarisation model used in the Lorentz-polarisation factor Lp">
+                            <option value="lab" selected>Lab (X-ray tube)</option>
+                            <option value="synchrotron">Synchrotron</option>
+                            <option value="none">None (Lorentz only)</option>
+                        </select>
+                    </div>
+                    <div class="form-row" id="pol-mono-row">
+                        <label for="mono-2theta" class="control-label">Mono. 2θM (°)</label>
+                        <input type="number" id="mono-2theta" value="0" step="0.01" min="0" max="179.9"
+                               class="control-input"
+                               title="Monochromator take-off angle 2-theta_M. 0 = no monochromator, see the help file">
+                    </div>
+                    <div class="form-row" id="pol-frac-row" style="display:none;">
+                        <label for="pol-fraction" class="control-label">Pol. fraction</label>
+                        <input type="number" id="pol-fraction" value="0.95" step="0.01" min="0" max="1"
+                               class="control-input"
+                               title="Fraction of the beam polarised perpendicular to the diffraction plane. 1 = fully polarised (vertical scattering plane, P = 1); 0.5 = unpolarised.">
+                    </div>
                 </div>
 
             </div> <div id="tab-panel-background" class="tab-content-panel">
@@ -695,7 +722,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 143, 3 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 145, 4 August 2026";
   
 
     //v5 of the py script includes the Harker section, 31 juillet 2026
@@ -943,13 +970,152 @@ function cfIsCentric(h, k, l, symops) {
     return false;
 }
 
-function cfLorentzPolarization(tthDeg) {
-    if (!Number.isFinite(tthDeg) || tthDeg <= 0 || tthDeg >= 180) return 1;
-    const d2r = Math.PI / 180;
-    const th = 0.5 * tthDeg * d2r;
+// ===========================================================================
+//  LORENTZ-POLARISATION
+//
+//  A powder intensity is
+//
+//        I(hkl) = s . m . Lp(2th) . |F(hkl)|^2
+//
+//  so Lp is the only thing standing between an extracted Le Bail / Pawley
+//  intensity and a structure factor. It never enters the profile itself --
+//  in both methods the intensity is a free parameter and silently swallows
+//  Lp -- which is exactly why it used to be applied in one place (charge
+//  flipping) with a hard-wired unpolarised formula and reported nowhere.
+//  Everything now goes through this one module.
+//
+//  Lorentz factor (Bragg-Brentano powder geometry, integrated over the
+//  Debye ring):
+//
+//        L(2th) = 1 / ( sin^2(th) . cos(th) )
+//
+//  Polarisation factor, written so that P(0) = 1 for every model:
+//
+//        P(2th) = ( 1 + K . cos^2(2th) ) / ( 1 + K )
+//
+//  A single constant K covers all three cases:
+//
+//    none          K = 0                 P == 1. Lorentz only -- use this for
+//                                        neutrons, or when the intensities
+//                                        have already been corrected.
+//    lab           K = 1                 no monochromator: the classical
+//                                        (1 + cos^2 2th)/2 for an unpolarised
+//                                        tube. With a monochromator at 2th_M,
+//                                        K = cos^2(2th_M) (Azaroff), e.g.
+//                                        graphite(002)/Cu Ka -> 2th_M = 26.6,
+//                                        K = 0.800.
+//    synchrotron   K = (1-f)/f           f is the fraction of the beam
+//                                        polarised PERPENDICULAR to the
+//                                        diffraction plane. f = 1 (vertical
+//                                        scattering plane at a bending magnet)
+//                                        gives P == 1; f = 0.5 recovers the
+//                                        unpolarised case. This is the
+//                                        GSAS-II "POLA" convention at
+//                                        azimuth 0.
+// ===========================================================================
+const LP_DEG2RAD = Math.PI / 180;
+
+const POLARIZATION_DEFAULTS = { mode: 'lab', monoTth: 0, polFrac: 0.95 };
+
+// Coerces anything into a valid, fully-specified polarisation descriptor and
+// pre-computes K. Never throws, never returns NaN: a malformed descriptor
+// falls back to the lab default rather than poisoning every |F| downstream.
+function normalizePolarization(pol) {
+    const p = (pol && typeof pol === 'object') ? pol : {};
+    let mode = String(p.mode == null ? POLARIZATION_DEFAULTS.mode : p.mode).toLowerCase();
+    if (mode !== 'none' && mode !== 'synchrotron') mode = 'lab';
+
+    let monoTth = Number(p.monoTth);
+    if (!isFinite(monoTth) || monoTth < 0 || monoTth >= 180) monoTth = 0;
+
+    let polFrac = Number(p.polFrac);
+    if (!isFinite(polFrac)) polFrac = POLARIZATION_DEFAULTS.polFrac;
+    polFrac = Math.min(1, Math.max(0, polFrac));
+
+    let K;
+    if (mode === 'none') {
+        K = 0;
+    } else if (mode === 'synchrotron') {
+        // f -> 0 is a beam polarised IN the diffraction plane; K diverges and
+        // P collapses to cos^2(2th). Cap it so nothing overflows.
+        K = (polFrac >= 1) ? 0 : (polFrac <= 1e-6 ? 1e6 : (1 - polFrac) / polFrac);
+    } else {
+        K = (monoTth > 0) ? Math.cos(monoTth * LP_DEG2RAD) ** 2 : 1;
+    }
+    return { mode, monoTth, polFrac, K };
+}
+
+/** Lorentz factor alone. NaN outside the physical range. */
+function lorentzFactor(tthDeg) {
+    if (!Number.isFinite(tthDeg) || tthDeg <= 0 || tthDeg >= 180) return NaN;
+    const th = 0.5 * tthDeg * LP_DEG2RAD;
     const s = Math.sin(th), c = Math.cos(th);
-    if (s < 1e-6 || c < 1e-6) return 1;
-    return 0.5 * (1 + Math.cos(tthDeg * d2r) ** 2) / (s * s * c);
+    if (s < 1e-6 || c < 1e-6) return NaN;
+    return 1 / (s * s * c);
+}
+
+/** Polarisation factor alone, normalised to P(0) = 1. */
+function polarizationFactor(tthDeg, pol) {
+    if (!Number.isFinite(tthDeg)) return NaN;
+    const P = normalizePolarization(pol);
+    const c2 = Math.cos(tthDeg * LP_DEG2RAD) ** 2;
+    return (1 + P.K * c2) / (1 + P.K);
+}
+
+/** The product. NaN where the geometry is degenerate -- callers decide. */
+function lorentzPolarization(tthDeg, pol) {
+    const L = lorentzFactor(tthDeg);
+    if (!Number.isFinite(L)) return NaN;
+    const P = polarizationFactor(tthDeg, pol);
+    return Number.isFinite(P) ? L * P : NaN;
+}
+
+/** Live UI state of the polarisation controls. */
+function getPolarizationSettings() {
+    const modeEl = document.getElementById('polarization-mode');
+    const monoEl = document.getElementById('mono-2theta');
+    const fracEl = document.getElementById('pol-fraction');
+    return normalizePolarization({
+        mode:    modeEl ? modeEl.value : POLARIZATION_DEFAULTS.mode,
+        monoTth: monoEl ? parseFloat(monoEl.value) : POLARIZATION_DEFAULTS.monoTth,
+        polFrac: fracEl ? parseFloat(fracEl.value) : POLARIZATION_DEFAULTS.polFrac
+    });
+}
+
+// A refinement SNAPSHOT carries the polarisation that was in force when it
+// ran, so re-exporting an old run from the history tab reports the model that
+// run actually used rather than whatever the panel says now. Runs saved
+// before this existed fall back to the live setting.
+function polarizationFromParams(params) {
+    if (params && params.polarization) return normalizePolarization(params.polarization);
+    return getPolarizationSettings();
+}
+
+function polarizationDescription(pol) {
+    const P = normalizePolarization(pol);
+    if (P.mode === 'none') return 'None (Lorentz factor only, P = 1)';
+    if (P.mode === 'synchrotron')
+        return `Synchrotron (perpendicular polarised fraction f = ${P.polFrac.toFixed(3)})`;
+    return P.monoTth > 0
+        ? `Lab X-ray tube with monochromator, 2th_M = ${P.monoTth.toFixed(2)} deg`
+        : 'Lab X-ray tube, no monochromator (unpolarised beam)';
+}
+
+function polarizationFormulaLines(pol) {
+    const P = normalizePolarization(pol);
+    return [
+        'Lp(2th) = L(2th) * P(2th)',
+        '  L(2th) = 1 / ( sin^2(th) * cos(th) )',
+        `  P(2th) = ( 1 + K * cos^2(2th) ) / ( 1 + K ),   K = ${P.K.toFixed(6)}`
+    ];
+}
+
+// Kept under its old name because the charge-flipping path calls it, but it
+// is now just the defensive wrapper: 1 instead of NaN so a degenerate 2theta
+// leaves an intensity untouched rather than destroying it.
+function cfLorentzPolarization(tthDeg, pol) {
+    const lp = lorentzPolarization(tthDeg, pol);
+    return (Number.isFinite(lp) && lp > 0) ? lp : 1;
 }
 
 // Applies the correction in place to a list of
@@ -958,14 +1124,17 @@ function cfLorentzPolarization(tthDeg) {
 // normalised quantity E = I/(m·LP) which is what is actually proportional to
 // |F|² -- estimating it from raw areas would fold the multiplicity spread
 // (6 to 48 in a cubic cell) into the prior.
-function frenchWilsonCorrect(list, symops) {
+function frenchWilsonCorrect(list, symops, pol) {
     const usable = list.filter(r => Number.isFinite(r.sigma) && r.sigma > 0);
     if (usable.length < 8) {
         return { applied: false, reason: 'no usable standard uncertainties', corrected: 0 };
     }
 
+    const polModel = normalizePolarization(pol);
     for (const r of list) {
-        const lp = cfLorentzPolarization(r.tth);
+        // Prefer the Lp already stored on the reflection, so the prior, the
+        // worker payload and the report can never disagree about it.
+        const lp = Number.isFinite(r.lp) && r.lp > 0 ? r.lp : cfLorentzPolarization(r.tth, polModel);
         const m = (Number.isFinite(r.multiplicity) && r.multiplicity > 0) ? r.multiplicity : 1;
         r._w = m * lp;
         r._E = r.area / r._w;
@@ -1188,7 +1357,7 @@ function updateChargeFlipEstimate() {
     }
 
     if (hasGPU) {
-        box.textContent = `WebGPU available — about ${fmt(cpuSeconds / 6)} ` +
+        box.textContent = `WebGPU available, estimated at ${fmt(cpuSeconds / 6)} ` +
                           `(CPU fallback ≈ ${fmt(cpuSeconds)})${resNote}.`;
     } else {
         box.textContent = `Estimated run time ≈ ${fmt(cpuSeconds)} (CPU; WebGPU not available)${resNote}.`;
@@ -1310,6 +1479,8 @@ async function runChargeFlipping() {
         console.warn('Could not propagate counting statistics for the CF intensities:', e);
     }
 
+    const cfPol = polarizationFromParams(p);
+
     const rawRefl = fitResults.hklList
         .filter(r => r && Number.isFinite(r.intensity))
         .map(r => {
@@ -1329,11 +1500,15 @@ async function runChargeFlipping() {
                 area, sigma,
                 multiplicity: r.multiplicity,
                 tth: Number.isFinite(r.tth) ? r.tth : null,
-                d: Number.isFinite(r.d) ? r.d : null
+                d: Number.isFinite(r.d) ? r.d : null,
+                // Lp evaluated once, here, with the user's polarisation model.
+                // Everything downstream (the French-Wilson prior, the worker,
+                // the report) reads this number instead of recomputing it.
+                lp: cfLorentzPolarization(Number.isFinite(r.tth) ? r.tth : NaN, cfPol)
             };
         });
 
-    const fw = frenchWilsonCorrect(rawRefl, cfSymops);
+    const fw = frenchWilsonCorrect(rawRefl, cfSymops, cfPol);
 
     // Anything still non-positive after the correction is passed through as a
     // measured ZERO rather than dropped. Dropping it would tell charge
@@ -1345,16 +1520,17 @@ async function runChargeFlipping() {
         if (!(I > 0)) { I = 0; clampedToZero++; }
         return { h_orig: r.h, k_orig: r.k, l_orig: r.l,
                  intensity: I, multiplicity: r.multiplicity,
-                 tth: r.tth, d: r.d };
+                 tth: r.tth, d: r.d, lp: r.lp };
     }).filter(r => Number.isFinite(r.intensity));
 
     if (hklList.length === 0) { showToast('The Pawley fit produced no usable intensities.', 'error'); return; }
 
+    const polNote = `Lp model: ${polarizationDescription(cfPol)}.`;
     const fwNote = fw.applied
         ? `French-Wilson correction applied to ${fw.corrected} weak reflection(s)` +
           (fw.negatives ? `, ${fw.negatives} of which were negative` : '') + '.'
         : `No French-Wilson correction (${fw.reason}); ${clampedToZero} non-positive intensity/intensities set to zero.`;
-    console.info('[charge flipping] ' + fwNote);
+    console.info('[charge flipping] ' + polNote + ' ' + fwNote);
 
 
     terminateChargeFlipWorker();
@@ -1386,6 +1562,10 @@ async function runChargeFlipping() {
             symLambda,
             overlapTolTth: overlapTol,
             applyLP: true,
+            // The worker should divide by hkl.lp when it is present, and only
+            // fall back to its own formula when it is not. `polarization`
+            // carries the model so the fallback matches too.
+            polarization: cfPol,
             seed: (Date.now() + trialIndex * 7919) >>> 0,
             minPeakSeparation: minSep,
             maxPeaks: 40,
@@ -1402,7 +1582,7 @@ async function runChargeFlipping() {
         document.getElementById('cf-structure-output').classList.add('hidden');
         // Append to the right-panel Charge Flipping history and show it there.
         rpSnapshotCF(best, { trials, thresholdS, maxIter, system, symLambda, overlapTol,
-                             intensityNote: fwNote,
+                             intensityNote: polNote + ' ' + fwNote,
                              spaceGroup: sgForCF ? (sgForCF.symbol || String(sgForCF.number)) : null });
         rpSwitchTab('cf');
         showToast(`Charge flipping finished — best R = ${best.bestR.toFixed(3)}`, 'success');
@@ -1481,6 +1661,15 @@ function renderChargeFlipResults(res, opts) {
             !res.symLambda ? 'none (solved in P1)'
                            : `λ = ${res.symLambda.toFixed(2)}`],
         ['Absences forced to zero', String(ref.absencesZeroed)],
+        // The Lp the worker actually divided by, reported back from the
+        // worker rather than restated from the panel, so a mismatch between
+        // the two would be visible here instead of silent.
+        ['Lorentz-polarisation',
+            ref.lpApplied === false ? 'not applied'
+                : `${ref.lpModel || 'unreported'}`
+                  + (ref.lpFromModel > 0 && ref.lpFromHost > 0
+                        ? ` · ${ref.lpFromHost} from the fit, ${ref.lpFromModel} recomputed`
+                        : '')],
         ['Overlapping reflections', `${ref.overlapped} of ${ref.orbits} in ${ref.clusters} peak(s)`],
         ['Weak intensities', opts.intensityNote || '—'],
         ['Compute', res.backend === 'gpu' ? 'WebGPU' : 'CPU']
@@ -2109,7 +2298,28 @@ function renderStructure(st, got) {
     cfHiddenSiteRanks.clear();
     st.sites.forEach(site => cfHiddenSiteRanks.add(site.rank));
 
+    // Reveal the Structure block. Its container ships with `hidden` in the
+    // markup and is re-hidden from three places -- the start of a run, the
+    // panel reset, and the history restore -- but NOTHING ever took the class
+    // off again, so the site table was permanently invisible. The status line
+    // sits OUTSIDE that container, which is why "N unique site(s), symmetry
+    // correlation ..." still appeared and made it look as though the sites had
+    // simply stopped being produced. They were there all along, in a hidden
+    // div.
+    const structureOut = document.getElementById('cf-structure-output');
+    if (structureOut) structureOut.classList.remove('hidden');
+
     cfRenderSiteLegend();
+    // The "Symmetry-averaged" entry in the 3D map selector ships disabled,
+    // because that map does not exist until the structure step has produced
+    // it. The only two calls to the enabler were in renderChargeFlipResults
+    // and in the panel reset -- both of which run with cfStructure still
+    // null, so both DISABLE it. Nothing re-enabled it once the map arrived,
+    // which left the option greyed out permanently even on a perfectly good
+    // solution. This is that missing call; the structure (and its map) is in
+    // hand by the time renderStructure runs, from a fresh build or from the
+    // history cache alike.
+    cfRefreshIsoSourceOptions();
     cfScheduleIsosurface(0);
 
     const sg = st.spaceGroup;
@@ -2508,6 +2718,15 @@ if (tooltipContainer && tooltipContent) {
         let calculatedBackground = new Float64Array();
 
         let fitResults = null;
+
+        // generateReportContent declares its own `const fitResults`, which
+        // shadows this one, so it cannot reach the live refinement by name and
+        // fell back to `globalThis.fitResults`. That property never exists --
+        // `let` does not create one on the global object -- so every caller
+        // that passed no explicit snapshot (Save Report, the PDF export) got
+        // "Fit results are incomplete or not available". This accessor closes
+        // over the real variable and gives them a way in.
+        const getLiveFitResults = () => fitResults;
         // Space group the last refinement actually ran in. The worker
         // resolves the SG itself and never echoes it back, and the user is
         // free to change the selection afterwards, so the space-group test
@@ -5834,7 +6053,12 @@ function calculateWilliamsonHall(params, hklList) {
                 lambda2: parseFloat(controls.wavelength2.value), 
                 ratio: parseFloat(controls.ratio21.value),       
                 zeroShift: parseFloat(controls.zeroShift.value),
-                profileType: profileType
+                profileType: profileType,
+                // Carried through the refinement so a snapshot reports the
+                // polarisation model that was actually in force when it ran.
+                // It plays no part in the profile: in Le Bail and Pawley the
+                // intensity is a free parameter and absorbs Lp entirely.
+                polarization: getPolarizationSettings()
             };
 
     //        console.log("getAllParams - Wavelength read:", params.lambda);
@@ -6233,24 +6457,34 @@ function debounce(func, wait) {
             L.push(`Zero shift  : ${z} deg`);
             L.push(`2-theta range: ${THEO_TTH_MIN} - ${THEO_TTH_MAX} deg`);
             L.push(`Reflections : ${list.length}`);
+            const theoPol = polarizationFromParams(p);
+            L.push(`Polarisation: ${polarizationDescription(theoPol)}`);
+            polarizationFormulaLines(theoPol).forEach(s => L.push('  ' + s));
+            L.push('  m*Lp is the geometric weight of the reflection: I(hkl) = s * m * Lp * |F|^2,');
+            L.push('  so with no structure factors this is the whole of the predicted intensity.');
             L.push('');
 
-            const w = doublet ? [4, 4, 4, 10, 11, 11, 6] : [4, 4, 4, 10, 11, 6];
+            const w = doublet ? [4, 4, 4, 10, 11, 11, 6, 12, 14] : [4, 4, 4, 10, 11, 6, 12, 14];
             const pad = (s, i) => String(s).padStart(w[i]);
-            const head = doublet ? ['h', 'k', 'l', 'd(A)', '2th_Ka1', '2th_Ka2', 'mult']
-                                 : ['h', 'k', 'l', 'd(A)', '2theta', 'mult'];
+            const head = doublet ? ['h', 'k', 'l', 'd(A)', '2th_Ka1', '2th_Ka2', 'mult', 'Lp', 'm*Lp']
+                                 : ['h', 'k', 'l', 'd(A)', '2theta', 'mult', 'Lp', 'm*Lp'];
             L.push(head.map(pad).join(' '));
             list.forEach(r => {
-                const t1 = (r.tth + z).toFixed(4);
+                const tthCorr = r.tth + z;
+                const t1 = tthCorr.toFixed(4);
                 const d  = (r.d != null) ? r.d.toFixed(4) : '-';
                 let t2 = '-';
                 if (doublet && r.d) {
                     const s2 = p.lambda2 / (2 * r.d);
                     if (s2 <= 1) t2 = (2 * Math.asin(s2) / deg2rad + z).toFixed(4);
                 }
+                const m = (Number.isFinite(r.multiplicity) && r.multiplicity > 0) ? r.multiplicity : 1;
+                const lpVal = lorentzPolarization(tthCorr, theoPol);
+                const lpStr = Number.isFinite(lpVal) ? lpVal.toFixed(4) : 'n/a';
+                const mlpStr = Number.isFinite(lpVal) ? (m * lpVal).toFixed(4) : 'n/a';
                 const cols = doublet
-                    ? [r.h_orig, r.k_orig, r.l_orig, d, t1, t2, r.multiplicity]
-                    : [r.h_orig, r.k_orig, r.l_orig, d, t1, r.multiplicity];
+                    ? [r.h_orig, r.k_orig, r.l_orig, d, t1, t2, m, lpStr, mlpStr]
+                    : [r.h_orig, r.k_orig, r.l_orig, d, t1, m, lpStr, mlpStr];
                 L.push(cols.map(pad).join(' '));
             });
             return L.join('\n');
@@ -6421,6 +6655,16 @@ function debounce(func, wait) {
                 // refined to (near) zero -- which are precisely the ones the
                 // test cares about, and for which the "area / height" route
                 // used by the report would collapse to 0.
+                // The test compares |F|^2 against a Wilson distribution, so the
+                // refined HEIGHT has to be turned into something proportional
+                // to |F|^2: multiply by the profile area, then divide by m
+                // AND by Lp. Dividing by m alone (the old behaviour) left the
+                // whole Lorentz-polarisation fall-off in the "structure
+                // factors", which at Cu Ka spans more than an order of
+                // magnitude across a normal scan -- the low-angle reflections
+                // then look systematically strong and the extinction test is
+                // biased against groups whose conditions kill them.
+                const sgtPol = polarizationFromParams(params);
                 const scaleOf = (hkl) => {
                     let w = 1;
                     try {
@@ -6435,7 +6679,8 @@ function debounce(func, wait) {
                         }
                     } catch { w = 1; }
                     if (!isFinite(w) || w <= 0) w = 1;
-                    return w / Math.max(1, hkl.multiplicity || 1);
+                    const lp = cfLorentzPolarization(hkl.tth, sgtPol);
+                    return w / (Math.max(1, hkl.multiplicity || 1) * lp);
                 };
 
                 const refl = [];
@@ -7705,7 +7950,7 @@ function rescalePlot(updateY = false) {
         function generateReportContent(format = 'summary', resultsArg = null) {
             // resultsArg lets the per-run history export a specific snapshot;
             // callers that pass nothing keep using the live global fitResults.
-            const fitResults = resultsArg || window.__activeReportResults || globalThis.fitResults;
+            const fitResults = resultsArg || window.__activeReportResults || getLiveFitResults();
             // Ensure fit results and necessary data are available
             if (!fitResults || !fitResults.params || !fitResults.stats || !fitResults.fitFlags || !fitResults.hklList) {
                 return "Error: Fit results are incomplete or not available.";
@@ -7781,6 +8026,22 @@ const spaceGroupName = selectedSg
                 `Refinement:   ${modeName}`,
                 `Profile:      ${profileName} (${profileType})`,
                 `Space Group:  ${spaceGroupName}`,
+                ''
+            ];
+
+            //   Lorentz-polarisation model.
+            // Declared explicitly, and with the K that was actually used, so a
+            // reader can reproduce every |Fo| in the reflection table below
+            // from the printed intensities without guessing the convention.
+            const reportPol = polarizationFromParams(finalParams);
+            const lpSection = [
+                '--- Lorentz-Polarisation ---',
+                `Model:        ${polarizationDescription(reportPol)}`,
+                ...polarizationFormulaLines(reportPol).map(s => '  ' + s),
+                '  I(hkl) = s * m * Lp * |F(hkl)|^2',
+                '(Lp does not enter the profile: in Le Bail and Pawley the intensity is a',
+                ' free parameter and absorbs it. It is applied when converting an extracted',
+                ' intensity into |F|, both in the table below and in the charge-flipping input.)',
                 ''
             ];
 
@@ -7929,6 +8190,7 @@ const spaceGroupName = selectedSg
             addParam(paramGroups['Structural & Instrumental'], 'Radiation 1 (Å)', finalParams.lambda, undefined, undefined);
             addParam(paramGroups['Structural & Instrumental'], 'Radiation 2 (Å)', finalParams.lambda2, undefined, undefined);
             addParam(paramGroups['Structural & Instrumental'], 'Ratio (I2/I1)', finalParams.ratio, undefined, undefined);
+            addParam(paramGroups['Structural & Instrumental'], 'Polarisation K', reportPol.K, undefined, undefined);
             addParam(paramGroups['Structural & Instrumental'], 'Zero Shift (°)', finalParams.zeroShift, fitFlags.zeroShift, 'zeroShift');
             addParam(paramGroups['Structural & Instrumental'], '2theta Min (°)', workerWorkingData ? workerWorkingData.tth[0] : null, undefined, undefined);
             addParam(paramGroups['Structural & Instrumental'], '2theta Max (°)', workerWorkingData ? workerWorkingData.tth[workerWorkingData.tth.length - 1] : null, undefined, undefined);
@@ -8052,16 +8314,44 @@ const spaceGroupName = selectedSg
             const reflectionsSection = [];
             if (hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
                 const isPawley = (refinementMode === 'pawley');
+
+                // The doublet: the integrated area below is the sum over the
+                // Ka1/Ka2 pair, so it is larger than the single-wavelength
+                // intensity by (1 + I2/I1). |Fo| divides that back out, which
+                // makes the printed structure factors directly comparable
+                // with a monochromatic (or synchrotron) measurement instead
+                // of carrying a source-dependent constant.
+                const dbl = (finalParams.ratio > 1e-6 && finalParams.lambda2 > 1e-6 &&
+                             Math.abs(finalParams.lambda - finalParams.lambda2) > 1e-6);
+                const doubletSum = dbl ? (1 + finalParams.ratio) : 1;
+
                 // Le Bail has ONE intensity per reflection: the decomposed
                 // observed intensity. Pawley additionally has the refined
                 // parameter, which is worth comparing against the observed.
-                const reflWidths = isPawley ? [15, 18, 18, 18, 18] : [15, 18, 18, 18];
-                const reflHeader = formatLine(
-                    isPawley
-                        ? ['h,k,l', '2th_corr (°)', 'I_refined', 'sigma(I)', 'I_obs (Area)']
-                        : ['h,k,l', '2th_corr (°)', 'I_obs (Area)', 'sigma(I)'],
-                    reflWidths);
-                reflectionsSection.push('', '--- Reflections List (Integrated Intensities) ---', reflHeader, '-'.repeat(reflHeader.length));
+                //
+                // Both now report the full set required to get from a peak to
+                // a structure factor: the integrated intensity of the whole
+                // reflection, its multiplicity, its Lorentz-polarisation
+                // factor, and the resulting |Fo|.
+                const reflCols = ['h,k,l', '2th_corr (°)', 'd (Å)', 'm', 'Lp',
+                                  'I_hkl (Area)', 'sigma(I)', '|Fo|'];
+                const reflWidths = [13, 12, 9, 5, 12, 14, 12, 12];
+                if (isPawley) { reflCols.push('I_obs (Area)'); reflWidths.push(14); }
+                const reflHeader = formatLine(reflCols, reflWidths);
+
+                reflectionsSection.push(
+                    '',
+                    '--- Reflections List (Integrated Intensities) ---',
+                    `Lp model : ${polarizationDescription(reportPol)}`,
+                    ...polarizationFormulaLines(reportPol).map(s => '  ' + s),
+                    `I_hkl    : integrated intensity of the reflection${dbl ? ' (Ka1 + Ka2)' : ''}, scale factor applied`,
+                    'm        : powder multiplicity of the reflection',
+                    `|Fo|     : sqrt( I_hkl / ( m * Lp${dbl ? ` * ${doubletSum.toFixed(4)}` : ''} ) )   [arbitrary scale]`,
+                    ...(isPawley
+                        ? ['I_obs    : same reflection re-integrated from the observed pattern (cross-check)']
+                        : []),
+                    '',
+                    reflHeader, '-'.repeat(reflHeader.length));
 
                 let i_obs_map = new Map();
                 if (isPawley) {
@@ -8135,12 +8425,37 @@ const spaceGroupName = selectedSg
                              esd_I_str = isFinite(scaled) ? scaled.toFixed(1) : '-';
                         }
 
+                        //   Lorentz-polarisation and the structure factor.
+                        // Lp is evaluated at the CORRECTED 2theta -- the same
+                        // angle printed in the table -- because that is where
+                        // the peak actually sits; using the ideal Bragg angle
+                        // would put Lp and the reported position out of step.
+                        const lpVal = lorentzPolarization(tthCorr, reportPol);
+                        const mult  = (Number.isFinite(hkl.multiplicity) && hkl.multiplicity > 0)
+                                      ? hkl.multiplicity : 1;
+                        const lp_str = Number.isFinite(lpVal) ? lpVal.toFixed(4) : 'n/a';
+
+                        // |Fo| exists only where the intensity is positive. A
+                        // negative extracted area is a real measurement (the
+                        // background ran above the data there), so it is
+                        // printed as such in I_hkl and simply has no square
+                        // root -- inventing a zero would hide it.
+                        let fo_str = '-';
+                        if (Number.isFinite(lpVal) && lpVal > 0 && total_calc_area > 0) {
+                            const fsq = total_calc_area / (mult * lpVal * doubletSum);
+                            if (isFinite(fsq) && fsq > 0) fo_str = Math.sqrt(fsq).toFixed(3);
+                        }
+
                         if (Math.abs(i_obs) > 0.01 || total_calc_area > 0.01) {
                             const row = [
                                 hkl.hkl_list[0],
                                 tthCorr.toFixed(4),
+                                Number.isFinite(hkl.d) ? hkl.d.toFixed(4) : '-',
+                                String(mult),
+                                lp_str,
                                 total_calc_area.toFixed(1),
-                                esd_I_str
+                                esd_I_str,
+                                fo_str
                             ];
                             if (isPawley) row.push(i_obs_str);
                             reflectionsSection.push(formatLine(row, reflWidths));
@@ -8186,6 +8501,7 @@ const spaceGroupName = selectedSg
             return [
                 ...header,
                 ...statsSection,
+                ...lpSection,
                 ...whAnalysisSection,
                 ...paramLines,
                 ...backgroundPointsSection, 
@@ -8269,6 +8585,72 @@ const spaceGroupName = selectedSg
             validateAndRun(e.target, handleFullHklRecalculation));
         document.getElementById('ratio21').addEventListener('change', (e) =>
             validateAndRun(e.target, handleFullHklRecalculation));
+
+        //   Polarisation model.
+        //
+        // Lp is NOT a refinement parameter: in Le Bail and Pawley the peak
+        // intensity is free and absorbs it entirely, so changing the model
+        // cannot change a single fitted number. It changes what those numbers
+        // MEAN -- every |Fo| in the report, the Wilson prior behind the
+        // French-Wilson correction, the charge-flipping input and the
+        // space-group probabilities. Because nothing has to be re-refined,
+        // the change is applied retroactively to the live fit and to every
+        // stored run, so re-exporting an old run uses the model now on screen
+        // rather than silently keeping a stale one.
+        function updatePolarizationUI() {
+            const pol = getPolarizationSettings();
+            const monoRow = document.getElementById('pol-mono-row');
+            const fracRow = document.getElementById('pol-frac-row');
+            
+            if (monoRow) monoRow.style.display = (pol.mode === 'lab') ? '' : 'none';
+            if (fracRow) fracRow.style.display = (pol.mode === 'synchrotron') ? '' : 'none';
+
+        }
+
+        function applyPolarizationToStoredRuns() {
+            const pol = getPolarizationSettings();
+            let touched = 0;
+            const stamp = (r) => {
+                if (r && r.params) { r.params.polarization = { ...pol }; touched++; }
+            };
+            try {
+                stamp(getLiveFitResults());
+                if (typeof lastFitResultsCache !== 'undefined') stamp(lastFitResultsCache);
+                if (typeof rpHistory === 'object' && rpHistory) {
+                    Object.keys(rpHistory).forEach(mode => {
+                        (rpHistory[mode] || []).forEach(entry => stamp(entry && entry.results));
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not restamp the polarisation model on stored runs:', e);
+            }
+            return touched;
+        }
+
+        function onPolarizationChanged() {
+            updatePolarizationUI();
+            const n = applyPolarizationToStoredRuns();
+            // Re-render whatever run card is on screen so its report preview
+            // shows the new Lp immediately.
+            try {
+                if (typeof rpHistory === 'object' && rpHistory) {
+                    Object.keys(rpHistory).forEach(mode => {
+                        if ((rpHistory[mode] || []).length && typeof rpRenderRun === 'function') rpRenderRun(mode);
+                    });
+                }
+            } catch { /* the panels simply refresh on the next render */ }
+            if (n > 0) {
+                showToast(`Lp model set to: ${polarizationDescription(getPolarizationSettings())}. `
+                          + 'Reports and |Fo| updated; the fitted intensities are unchanged.', 'info', 6000);
+            }
+        }
+
+        ['polarization-mode', 'mono-2theta', 'pol-fraction'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('change', onPolarizationChanged);
+        });
+        updatePolarizationUI();
+
         
         // Lattice parameters use event delegation because the inputs are
         // rebuilt every time the system changes. 'change' (blur / Enter)
@@ -9263,10 +9645,25 @@ async function generatePdfReport(results, modeName) {
         let yPosition = 20;
 
         const summaryText = generateReportContent('summary');
+        // jsPDF's built-in fonts are WinAnsi, so anything outside it renders
+        // as a blank or a mojibake box. The reflection table added a few more
+        // non-ASCII characters (Angstrom, theta, superscripts), so the
+        // transliteration list is extended to match rather than leaving holes
+        // in the column headers.
         const pdfText = summaryText
             .replace(/χ²/g, 'Chi^2')
             .replace(/°/g, 'deg')
-            .replace(/β/g, 'Beta');
+            .replace(/β/g, 'Beta')
+            .replace(/θ/g, 'th')
+            .replace(/η/g, 'eta')
+            .replace(/λ/g, 'lambda')
+            .replace(/σ/g, 'sigma')
+            .replace(/Å/g, 'A')
+            .replace(/²/g, '^2')
+            .replace(/·/g, '.')
+            .replace(/[–—]/g, '-')
+            .replace(/[‘’]/g, "'")
+            .replace(/[“”]/g, '"');
 
         const lines = pdfText.split('\n');
         doc.setFont('Courier');
@@ -9290,10 +9687,26 @@ async function generatePdfReport(results, modeName) {
                 fontStyle = 'bold';
                 yPosition += 4;
             }
-            
+
             doc.setFontSize(fontSize);
             doc.setFont(undefined, fontStyle);
+
+            // The reflection table is wider than it used to be (it now carries
+            // m, Lp and |Fo|), and a Courier line that overflows the text
+            // width is silently clipped by jsPDF -- the columns would just
+            // vanish off the right edge of the page. Shrink the offending
+            // line instead; monospace means the whole row stays aligned.
+            let drawSize = fontSize;
+            try {
+                const w = doc.getTextWidth(line);
+                if (w > contentWidth && w > 0) {
+                    drawSize = Math.max(4.5, fontSize * (contentWidth / w));
+                    doc.setFontSize(drawSize);
+                }
+            } catch { /* getTextWidth unavailable: fall back to the full size */ }
+
             doc.text(line, margin, yPosition);
+            doc.setFontSize(fontSize);
             yPosition += fontSize * 0.4;
         }
 
