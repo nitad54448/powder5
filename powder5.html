@@ -722,11 +722,12 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 145, 4 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 146, 7 August 2026";
   
 
     //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
+    // 7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
         const resp = await fetch('cctbx_space_groups_all_settings_v7.json');
@@ -2186,7 +2187,7 @@ function getSymopsForSetting(sg) {
 
     const raw = setting.symops;
     if (!Array.isArray(raw) || raw.length === 0) {
-        return { error: 'This JSON has no "symops" field. Regenerate it with cctbx_generate_sg_harker_v7.py — the v5 "rotations" array holds rotations only (no translations, centring collapsed) and cannot build a structure.' };
+        return { error: 'This JSON has no "symops" field. Regenerate it with cctbx_generate_sg_harker_v7.py.' };
     }
 
     const symops = raw.map(op => ({
@@ -6007,12 +6008,18 @@ function calculateWilliamsonHall(params, hklList) {
                  startIndex: workingData.startIndex
              };
 
-            //   Prepare data payload for the worker  
+const minTth = parseFloat(controls.tthMinSlider.value);
+             const maxTth = parseFloat(controls.tthMaxSlider.value);
+             const fittedHklList = masterHklList.filter(
+                 peak => peak.tth !== null && peak.tth >= minTth && peak.tth <= maxTth
+             );
+
+             //   Prepare data payload for the worker  
              const workerPayload = {
                  initialParams: currentParams,
                  fitFlags: fitFlags,
                  workingData: workerWorkingData, // Send the sliced data
-                 masterHklList: JSON.parse(JSON.stringify(masterHklList)), // Send a deep copy
+                 masterHklList: JSON.parse(JSON.stringify(fittedHklList)), // Send only reflections in fitted range
                  // The worker resolves the SG itself via SG_ENGINE. The
                  // Hall symbol uniquely identifies a setting; the number
                  // is a fallback if Hall lookup misses.
@@ -8162,10 +8169,7 @@ const spaceGroupName = selectedSg
             if (refinementMode === 'le-bail' && Object.keys(esds).length > 0) {
                 const nI = (fitResults && fitResults.nIntensities) || 0;
                 esdWarning = (esdWarning ? esdWarning + ' ' : '')
-                    + `Le Bail ESDs are lower bounds: the ${nI} extracted intensities are `
-                    + `counted in the degrees of freedom but are absent from the normal-equations `
-                    + `matrix, so profile-to-intensity correlation is not propagated. Use a Pawley `
-                    + `refinement for defensible uncertainties.`;
+                    + `Le Bail ESDs are lower bounds.`;
             }
 
             const paramWidths = [24, 18, 10, 18]; // Name, Value, Fitted, ESD
@@ -8264,7 +8268,7 @@ const spaceGroupName = selectedSg
                 }
             }
             if (esdWarning) {
-                 paramLines.push(`NOTE regarding ESDs: ${esdWarning}`, ''); // Add blank line after warning
+                 paramLines.push(`NOTE regarding ESDs: ${esdWarning}`, ''); // 
             }
 
 
@@ -8285,31 +8289,6 @@ const spaceGroupName = selectedSg
                  backgroundPointsSection.push(''); // Add blank line after section
             }
             
-
-            // --- Harker Sections ---
-            const harkerList = (selectedSg && selectedSg.harker_sections) || 
-                (selectedSg && globalThis.SG_DATABASE?.space_groups?.[selectedSg.number]?.settings
-                    ?.find(s => s.symbol === selectedSg.symbol || s.hall === selectedSg.hall)?.harker_sections);
-
-            const harkerSection = [];
-            if (harkerList && harkerList.length > 0) {
-                const hWidths = [10, 8, 10, 20, 20, 20];
-                const hHeader = formatLine(['Type', 'Coord', 'Value', 'Solve_X', 'Solve_Y', 'Solve_Z'], hWidths);
-                harkerSection.push('', '--- Harker Sections ---', hHeader, '-'.repeat(hHeader.length));
-                harkerList.forEach(sec => {
-                    harkerSection.push(formatLine([
-                        sec.type,
-                        sec.coordinate,
-                        sec.value.toFixed(3),
-                        sec.solver.x,
-                        sec.solver.y,
-                        sec.solver.z
-                    ], hWidths));
-                });
-                harkerSection.push('');
-            }
-
-
 
             const reflectionsSection = [];
             if (hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
@@ -8505,7 +8484,6 @@ const spaceGroupName = selectedSg
                 ...whAnalysisSection,
                 ...paramLines,
                 ...backgroundPointsSection, 
-                ...harkerSection,
                 ...reflectionsSection,
                 ...dataSection
             ].join('\n');
