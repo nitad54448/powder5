@@ -1601,23 +1601,62 @@ blockquote {
                     <ul>
                         <li><em>As solved</em> is the raw charge-flipping density, exactly what the algorithm produced.</li>
                         <li><em>Symmetry-averaged</em> is the same density after the Structure step has shifted it onto the space-group origin and averaged it over the symmetry operators. It is much cleaner, because averaging \(n\) equivalent copies of the cell suppresses the noise by \(\sqrt{n}\) — but it <strong>assumes the space group is right</strong>, so judge the solution on the raw map and use this one to read it. It only becomes selectable once the structure has been built.</li>
+                        <li><em>None (atoms only)</em> draws no density at all &mdash; just the
+                            cell edges and the atom spheres. Once the map has done its job and you
+                            trust the solution, the surface is mostly in the way: it hides the
+                            spheres it is there to justify, and judging bond geometry or spotting
+                            an impossible contact is far easier without it. Selecting it greys out
+                            the <em>Level</em> slider, since there is nothing for it to act on.
+                            <p>
+                            This is also the fastest option, not merely the tidiest: the surface
+                            extraction is skipped outright rather than being computed and hidden,
+                            so switching to it is instant even at 128&sup3;. The atom coordinates
+                            are those of the symmetry-averaged frame, the same as for
+                            <em>Symmetry-averaged</em> &mdash; with no map on screen there is
+                            nothing for them to be aligned against, so the structure's own frame is
+                            the only meaningful choice.
+                            </p></li>
                         <li><em>Atom positions</em> is a list under the viewer controls, one row per
                             unique site from the Structure block: rank, colour, peak height,
                             multiplicity, and a show/hide toggle. Every site starts hidden, so the
                             density can be judged on its own first; click a row to bring one in, or use
-                            <em>show all</em>. Ten rows are shown at a time and the list scrolls beyond
-                            that. The header counts what is visible, and the caption under the viewer
-                            says how many positions are drawn and how many sites are hidden.
+                            <em>hide all</em> / <em>show all</em>. Ten rows are shown at a time and the
+                            list scrolls beyond that. The header counts what is visible, and the caption
+                            under the viewer says how many positions are drawn and how many sites are
+                            hidden. Two buttons sit on the row beneath the header, each under the column
+                            it acts on: <em>reset colours</em> on the left, over the swatches, and
+                            <em>hide all</em> on the right, over the visibility markers.
                             <p>
                             Each site is drawn <strong>expanded over the symmetry operators</strong>: a
                             site of multiplicity 4 appears four times, once beside each of its four
                             density lobes, and hiding its row removes the whole orbit at once. The
                             Structure table lists only one representative per orbit, so drawing that
-                            list directly would leave most of the lobes bare. The swatch in the list is
-                            the colour of the sphere &mdash; sixteen distinct colours, enough that a
-                            solution with more than eight sites does not reuse one &mdash; and the sphere
-                            radius follows the peak height, so in PbSO<sub>4</sub> the four Pb lobes are
-                            obvious against the lighter atoms.
+                            list directly would leave most of the lobes bare. The sphere radius follows
+                            the peak height, so in PbSO<sub>4</sub> the four Pb lobes are obvious
+                            against the lighter atoms.
+                            </p>
+                            <p>
+                            <strong>Site colours can be changed.</strong> The swatch in each row is a
+                            colour picker: click it and the spheres recolour as you drag, so you can
+                            match the picture to what you believe the structure to be. The default
+                            palette holds sixteen distinct colours, enough that a solution with more
+                            than eight sites does not reuse one, but the defaults carry no chemical
+                            meaning &mdash; they are assigned in order of peak height and nothing more.
+                            That is exactly why recolouring is useful: charge flipping gives you
+                            density, not elements (see the note under
+                            <a href="#cf-structure">Building a Structure</a>), so the identification of
+                            which lobe is which atom is yours to make, and colour is the natural way to
+                            record it. Giving the two sites you read as oxygen the same red, or the
+                            heavy atom a colour that stands out from its neighbours, makes a crowded
+                            cell legible in a way the rank ordering cannot.
+                            </p>
+                            <p>
+                            The colour belongs to the <strong>site</strong>, not to the individual
+                            sphere, so every symmetry image of that atom follows at once &mdash; the same
+                            grouping the show/hide toggle uses. Clicking the swatch opens the picker
+                            without hiding the row, so recolouring and hiding stay independent.
+                            <em>Reset colours</em> puts every site back to its palette default and is
+                            available only once something has actually been changed.
                             </p>
                             <p>
                             Nothing has been least-squares refined at this stage; these are located
@@ -1638,6 +1677,19 @@ blockquote {
                (<code>.csv</code>) and the full density grid (<code>.grd</code>); the
                refined sites are exported separately, from the button under the
                Structure block.</p>
+
+            <div class="note">
+                Site colours are a <strong>viewing aid only</strong>. They are not written
+                to the <code>.cif</code>, the <code>.csv</code> or the report, and they are
+                not stored with the run &mdash; so they are cleared whenever a new structure
+                appears, which includes re-selecting an earlier run from the history. That is
+                deliberate rather than an omission: colours are keyed by site rank, and
+                rank&nbsp;3 of one solution has nothing to do with rank&nbsp;3 of the next.
+                Carrying them over would relabel the new structure in the one way you could
+                not check, and it would look intentional. If a colour assignment matters,
+                record it outside the program &mdash; or take a screenshot before switching
+                runs.
+            </div>
 
             <div class="note">
                 The surface is extracted with <strong>Surface Nets</strong> rather than
@@ -2088,7 +2140,7 @@ blockquote {
             </div>
         </section>
         <footer id="help-footer">
-            Powder 5, version 143, 03 August 2026
+            Powder 5, version 147, 08 August 2026
         </footer>
     </main>
 </div>

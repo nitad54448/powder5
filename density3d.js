@@ -34,6 +34,20 @@
 (function (global) {
 'use strict';
 
+// ---------------------------------------------------------------------------
+//  Lattice geometry comes from crystal.js, which the document loads
+//  immediately before this file. cellBasis and fracToCart used to be defined
+//  here as well as in powder5.html and (in metric-tensor form) in
+//  charge_flipping_worker.js.
+//
+//  In a browser crystal.js's declarations are already global and the scope
+//  chain finds them; under node they are module-scoped, so pull them in.
+// ---------------------------------------------------------------------------
+if (typeof cellBasis === 'undefined'
+        && typeof require === 'function' && typeof module !== 'undefined') {
+    Object.assign(global, require('./crystal.js'));
+}
+
 // ===========================================================================
 //  Lookup tables, generated rather than transcribed.
 //
@@ -173,30 +187,9 @@ function surfaceNets(data, dims) {
 //  Crystallography
 // ===========================================================================
 
-// Fractional -> Cartesian, in the standard setting: a along x, b in the xy
-// plane. Returned column-major as three basis vectors, which is what the
-// vertex transform and the cell wireframe both want.
-function cellBasis(cell) {
-    const d2r = Math.PI / 180;
-    const a = cell.a, b = cell.b, c = cell.c;
-    const al = (cell.alpha ?? 90) * d2r, be = (cell.beta ?? 90) * d2r, ga = (cell.gamma ?? 90) * d2r;
-    const ca = Math.cos(al), cb = Math.cos(be), cg = Math.cos(ga), sg = Math.sin(ga);
-    const vol = Math.sqrt(Math.max(1e-12,
-        1 - ca * ca - cb * cb - cg * cg + 2 * ca * cb * cg));
-    return {
-        av: [a, 0, 0],
-        bv: [b * cg, b * sg, 0],
-        cv: [c * cb, c * (ca - cb * cg) / sg, c * vol / sg]
-    };
-}
-
-function fracToCart(basis, f0, f1, f2) {
-    return [
-        basis.av[0] * f0 + basis.bv[0] * f1 + basis.cv[0] * f2,
-        basis.av[1] * f0 + basis.bv[1] * f1 + basis.cv[1] * f2,
-        basis.av[2] * f0 + basis.bv[2] * f1 + basis.cv[2] * f2
-    ];
-}
+// MOVED. cellBasis and fracToCart now live in crystal.js (see the loader at
+// the top of this IIFE), alongside metricTensor, cellVolume and the d-spacing
+// helpers. They are used here exactly as before.
 
 // Whole-map statistics, so the isolevel can be quoted in sigma exactly as the
 // 2D section caption does.
@@ -264,6 +257,49 @@ const SITE_PALETTE = [
     0xda8fff, 0xac8e68, 0x8e8cd8, 0x4cd964
 ];
 
+// ---------------------------------------------------------------------------
+//  Per-site colour overrides, rank -> 0xRRGGBB.
+//
+//  The palette above is the DEFAULT. A user who has just solved a structure
+//  knows things the program does not -- which lobe is the heavy atom, which
+//  two sites are the same element -- and the only way to express that in a
+//  picture is to colour the spheres. Overrides live here rather than in
+//  powder5.html so that siteColor(), buildSiteGroup() and the legend swatch
+//  cannot disagree about what colour a site is, which was the whole reason
+//  siteColor() was exposed in the first place.
+//
+//  Keyed by rank, so they survive a re-render of the same structure. They are
+//  NOT meaningful across a new solution -- rank 3 of one solution has nothing
+//  to do with rank 3 of the next -- so the caller clears them when a fresh
+//  structure arrives.
+// ---------------------------------------------------------------------------
+/** @type {Map<number, number>} */
+const SITE_COLOR_OVERRIDES = new Map();
+
+/** Default palette colour for a rank, as 0xRRGGBB. @param {number} rank */
+function defaultSiteColorInt(rank) {
+    const i = (Number.isFinite(rank) ? rank : 1) - 1;
+    const n = SITE_PALETTE.length;
+    return SITE_PALETTE[((i % n) + n) % n];
+}
+
+/** Effective colour for a rank, override first. @param {number} rank */
+function siteColorInt(rank) {
+    const o = SITE_COLOR_OVERRIDES.get(rank);
+    return (o === undefined) ? defaultSiteColorInt(rank) : o;
+}
+
+/**
+ * Parses '#rrggbb' (or 'rrggbb') to an integer, or null if unparseable.
+ * @param {string} hex
+ * @returns {number|null}
+ */
+function parseHexColor(hex) {
+    if (typeof hex !== 'string') return null;
+    const m = hex.trim().match(/^#?([0-9a-fA-F]{6})$/);
+    return m ? parseInt(m[1], 16) : null;
+}
+
 // Spheres for one expanded site list. Shared geometry and material per rank,
 // so a fifty-position cell costs two GPU resources per distinct site rather
 // than two per sphere.
@@ -287,7 +323,7 @@ function buildSiteGroup(t, basis, sites) {
             // radius tracks Z.
             geoms.set(rank, new THREE.SphereGeometry(baseRad * (0.55 + 0.75 * Math.cbrt(rel)), 16, 12));
             mats.set(rank, new THREE.MeshPhongMaterial({
-                color: SITE_PALETTE[(rank - 1) % SITE_PALETTE.length], shininess: 60
+                color: siteColorInt(rank), shininess: 60
             }));
         }
         const c = fracToCart(basis, st.x, st.y, st.z);
@@ -297,6 +333,11 @@ function buildSiteGroup(t, basis, sites) {
     }
     group.userData.sharedGeometries = [...geoms.values()];
     group.userData.sharedMaterials = [...mats.values()];
+    // Kept so setSiteColor can repaint one rank in place. Recolouring by
+    // rebuilding the group would drop and reallocate every sphere for what is
+    // a single uniform change -- visible as a hitch while dragging a colour
+    // picker, which fires continuously.
+    group.userData.materialsByRank = mats;
     return group;
 }
 
@@ -433,9 +474,58 @@ const Density3D = {
     // can label the spheres without keeping a second copy of the palette that
     // could drift out of step with this one.
     siteColor(rank) {
-        const i = (Number.isFinite(rank) ? rank : 1) - 1;
-        return '#' + SITE_PALETTE[((i % SITE_PALETTE.length) + SITE_PALETTE.length)
-                                  % SITE_PALETTE.length].toString(16).padStart(6, '0');
+        return '#' + siteColorInt(rank).toString(16).padStart(6, '0');
+    },
+
+    /** The palette default for a rank, ignoring any override. */
+    defaultSiteColor(rank) {
+        return '#' + defaultSiteColorInt(rank).toString(16).padStart(6, '0');
+    },
+
+    /** True if this rank has been recoloured away from the palette default. */
+    hasSiteColorOverride(rank) {
+        return SITE_COLOR_OVERRIDES.has(rank);
+    },
+
+    /**
+     * Recolours one site. Repaints the existing material in place, so this is
+     * cheap enough to call from a colour picker's continuous `input` event.
+     *
+     * @param {number} rank  Site rank.
+     * @param {string|null} hex '#rrggbb', or null to restore the palette default.
+     * @returns {boolean} True if the colour was applied.
+     */
+    setSiteColor(rank, hex) {
+        if (!Number.isFinite(rank)) return false;
+        if (hex === null || hex === undefined || hex === '') {
+            SITE_COLOR_OVERRIDES.delete(rank);
+        } else {
+            const v = parseHexColor(hex);
+            if (v === null) return false;
+            SITE_COLOR_OVERRIDES.set(rank, v);
+        }
+        return this._repaintRank(rank);
+    },
+
+    /** Drops every override and repaints. Call when a new structure arrives. */
+    resetSiteColors() {
+        const ranks = [...SITE_COLOR_OVERRIDES.keys()];
+        SITE_COLOR_OVERRIDES.clear();
+        for (const r of ranks) this._repaintRank(r);
+        return ranks.length;
+    },
+
+    /** Pushes the current colour for `rank` into the live material, if any. */
+    _repaintRank(rank) {
+        const t = this._three;
+        const mats = t && t.sites && t.sites.userData && t.sites.userData.materialsByRank;
+        if (!mats) return true;              // nothing drawn yet; colour applies on next build
+        const m = mats.get(rank);
+        if (m && m.color) {
+            m.color.setHex(siteColorInt(rank));
+            t.needsRender = true;
+        }
+        return true;
     },
 
     // Redraw only the atom spheres. Toggling one site off used to go through
@@ -455,29 +545,35 @@ const Density3D = {
         if (!this._three) return null;
         const t = this._three, THREE = t.THREE;
         const { map, gridSize, cell, sigmaLevel, stride, showCell, showSites, sites } = opts;
+        // showSurface:false draws the cell and the atoms with NO density. The
+        // isosurface is by far the most expensive thing here, so it is skipped
+        // outright rather than built and hidden.
+        const showSurface = opts.showSurface !== false;
         if (!map || !gridSize || !cell) return null;
 
         const stats = mapStats(map);
         const level = (sigmaLevel || 3) * (stats.sigma || 1);
 
         const t0 = (global.performance && performance.now) ? performance.now() : Date.now();
-        const iso = buildIsosurface(map, gridSize, level, stride);
+        const iso = showSurface ? buildIsosurface(map, gridSize, level, stride) : null;
         const t1 = (global.performance && performance.now) ? performance.now() : Date.now();
 
         const basis = cellBasis(cell);
 
         // Sample index -> fractional -> Cartesian, in place.
-        const pos = iso.mesh.positions;
-        const s = iso.scale;
-        for (let i = 0; i < pos.length; i += 3) {
-            const c = fracToCart(basis, pos[i] * s, pos[i + 1] * s, pos[i + 2] * s);
-            pos[i] = c[0]; pos[i + 1] = c[1]; pos[i + 2] = c[2];
+        const pos = iso ? iso.mesh.positions : null;
+        if (iso) {
+            const s = iso.scale;
+            for (let i = 0; i < pos.length; i += 3) {
+                const c = fracToCart(basis, pos[i] * s, pos[i + 1] * s, pos[i + 2] * s);
+                pos[i] = c[0]; pos[i + 1] = c[1]; pos[i + 2] = c[2];
+            }
         }
 
         // --- surface ---
         this._disposeObject(t.surface);
         t.surface = null;
-        if (iso.mesh.triangleCount > 0) {
+        if (iso && iso.mesh.triangleCount > 0) {
             const geo = new THREE.BufferGeometry();
             geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
             geo.setIndex(new THREE.BufferAttribute(iso.mesh.indices, 1));
@@ -580,9 +676,10 @@ const Density3D = {
             level,
             sigma: stats.sigma,
             maxRho: stats.hi,
-            triangles: iso.mesh.triangleCount,
-            vertices: iso.mesh.vertexCount,
-            cells: (iso.samplesPerAxis - 1) ** 3,
+            surfaceDrawn: !!iso,
+            triangles: iso ? iso.mesh.triangleCount : 0,
+            vertices: iso ? iso.mesh.vertexCount : 0,
+            cells: iso ? (iso.samplesPerAxis - 1) ** 3 : 0,
             ms: Math.round(t1 - t0)
         };
     },

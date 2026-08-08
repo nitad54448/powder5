@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Installation Check</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 20px;
+      line-height: 1.4;
+    }
+    .ok { color: #4ec9b0; }
+    .bad { color: #f44747; font-weight: bold; }
+    .info { color: #569cd6; font-weight: bold; }
+    pre { white-space: pre-wrap; word-wrap: break-word; }
+  </style>
+</head>
+<body>
+  <h2>Installation Check</h2>
+  <h3>This app should be run through a web server</h3>
+  <button onclick="runCheck()">Re-run Check</button>
+  <pre id="output"></pre>
+
+  <script>
+    const log = (msg = '', cls = '') => {
+      const out = document.getElementById('output');
+      const span = document.createElement('span');
+      if (cls) span.className = cls;
+      span.textContent = msg + '\n';
+      out.appendChild(span);
+    };
+
+    const EXPECT = {
+      'powder5.html':              { starts: '<!DOCTYPE html>',              min: 300000 },
+      'constants.js':              { starts: '// constants.js',              min: 15000  },
+      'crystal.js':                { starts: '// crystal.js',                min: 10000  },
+      'profile.js':                { starts: '// profile.js',                min: 15000  },
+      'density3d.js':              { starts: '// density3d.js',              min: 15000  },
+      'refinement_worker.js':      { starts: '// refinement_worker.js',      min: 60000  },
+      'charge_flipping_worker.js': { starts: '// charge_flipping_worker.js', min: 40000  }
+    };
+
+    const ALSO_NEEDED = [
+      'style.css',
+      'sg_engine.js',
+      'cctbx_space_groups_all_settings_v7.json',
+      'charge_flipping.wgsl',
+      'xrd_compute.wgsl',
+      'lib/chart.umd.min.js',
+      'lib/three.min.js',
+      'lib/jspdf.umd.min.js',
+      'lib/html2canvas.min.js'
+    ];
+
+    async function fetchFile(url) {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const text = await res.text();
+        return { text, size: new Blob([text]).size };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function runCheck() {
+      document.getElementById('output').innerHTML = '';
+      let problems = 0;
+      const bad = m => { problems++; log('  [X] ' + m, 'bad'); };
+      const ok = m => log('  [ok] ' + m, 'ok');
+
+      log('Checking web server directory...\n', 'info');
+
+      // 1. Is each file the file it claims to be?
+      log('1. Is each file the file it claims to be?\n', 'info');
+      const firstLines = new Map();
+
+      for (const [name, exp] of Object.entries(EXPECT)) {
+        const file = await fetchFile(name);
+        if (!file) { bad(`${name} is MISSING`); continue; }
+
+        const head = file.text.slice(0, 200).split(/\r?\n/)[0].trim();
+
+        if (!head.startsWith(exp.starts)) {
+          bad(`${name} starts with "${head.slice(0, 50)}"`);
+          log(`       expected it to start with "${exp.starts}"`);
+          for (const [other, oe] of Object.entries(EXPECT)) {
+            if (head.startsWith(oe.starts)) {
+              log(`       >>> this file contains ${other}, saved under the wrong name`);
+            }
+          }
+          continue;
+        }
+        if (file.size < exp.min) {
+          bad(`${name} is only ${file.size} bytes (expected at least ${exp.min}) -- truncated download?`);
+          continue;
+        }
+        if (firstLines.has(head)) {
+          bad(`${name} and ${firstLines.get(head)} have identical first lines -- duplicate content?`);
+          continue;
+        }
+        firstLines.set(head, name);
+        ok(`${name.padEnd(28)} ${String(file.size).padStart(7)} bytes`);
+      }
+
+
+      // 2. Dependencies referenced in powder5.html
+      log('\n2. Does powder5.html ask for anything that is not here?\n', 'info');
+      const htmlFile = await fetchFile('powder5.html');
+      if (htmlFile) {
+        const srcs = [...htmlFile.text.matchAll(/<script src="([^"]+)"><\/script>/g)].map(m => m[1]);
+        log(`   powder5.html loads: ${srcs.join(', ')}\n`);
+        for (const s of srcs) {
+          const f = await fetchFile(s);
+          if (f) ok(s);
+          else bad(`${s} is referenced by powder5.html but not present`);
+        }
+
+        const opens = (htmlFile.text.match(/<script(\s|>)/g) || []).length;
+        const closes = (htmlFile.text.match(/<\/script>/g) || []).length;
+        if (opens !== closes) {
+          bad(`powder5.html has ${opens} <\/script> and ${closes} <\/script> -- unbalanced, the page will render as raw text`);
+        } else {
+          ok(`script tags balanced (${opens})`);
+        }
+      } else {
+        bad('powder5.html not found, skipping its dependency check');
+      }
+
+
+
+      // 3. Untouched files
+      log('\n3. Untouched files the app still needs\n', 'info');
+      for (const f of ALSO_NEEDED) {
+        const file = await fetchFile(f);
+        if (file) ok(f);
+        else bad(`${f} is missing`);
+      }
+
+      // 4. Worker checks
+      log('\n4. The workers must be able to reach the shared modules\n', 'info');
+      for (const w of ['refinement_worker.js', 'charge_flipping_worker.js']) {
+        const file = await fetchFile(w);
+        if (!file) continue;
+        const m = file.text.match(/importScripts\(([^)]*)\)/);
+        if (!m) { bad(`${w} has no importScripts call`); continue; }
+        const files = m[1].split(',').map(s => s.trim().replace(/['"]/g, ''));
+        let missing = [];
+        for (const dep of files) {
+          const depFile = await fetchFile(dep);
+          if (!depFile) missing.push(dep);
+        }
+        if (missing.length) bad(`${w} needs ${missing.join(', ')} beside it`);
+        else ok(`${w.padEnd(28)} finds ${files.join(', ')}`);
+      }
+
+      log('\n----------------------------------------------------------------------');
+      if (problems === 0) {
+        log('Everything checks out. If the page is still broken, it is a stale browser cache.', 'ok');
+      } else {
+        log(`${problems} problem(s) found -- see the [X] lines above.`, 'bad');
+      }
+    }
+
+    window.onload = runCheck;
+  </script>
+</body>
+</html>

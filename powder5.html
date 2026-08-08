@@ -11,6 +11,14 @@
     <!-- three.js r160 UMD. r161 removed build/three.min.js, so the version is
          pinned; the isosurface viewer degrades to a message without it. -->
     <script src="lib/three.min.js"></script>
+    <!-- Shared modules: single source of truth for the physical constants, the
+         lattice geometry and the peak-shape model. The workers load the same
+         three files via importScripts. Order matters (profile.js reads
+         constants.js's declarations) and they must come BEFORE density3d.js,
+         which uses crystal.js's cellBasis/fracToCart. -->
+    <script src="constants.js"></script>
+    <script src="crystal.js"></script>
+    <script src="profile.js"></script>
     <script src="density3d.js"></script>
     <script src="lib/jspdf.umd.min.js"></script>
     <script src="lib/html2canvas.min.js"></script>
@@ -21,6 +29,46 @@
     
     <!-- Extracted CSS -->
     <link rel="stylesheet" href="style.css">
+
+    <!-- Per-site colour picker in the isosurface legend.
+         Kept here rather than in style.css because it is only three rules and
+         they exist purely to strip the native <input type="color"> chrome --
+         the browser's default padding and border make a 14px swatch look like
+         a button. The vendor pseudo-elements cannot be set from an inline
+         style attribute, which is why this is a rule block and not inline.
+         Sizing is left to .cf-site-swatch in style.css so the picker lines up
+         with whatever the rest of the legend uses. -->
+    <style>
+      .cf-site-color {
+        -webkit-appearance: none; -moz-appearance: none; appearance: none;
+        padding: 0;
+        min-width: 12px;
+        min-height: 12px;
+        border: 1px solid rgba(0, 0, 0, 0.28);
+        border-radius: 3px;
+        background: none;
+        cursor: pointer;
+        flex: 0 0 auto;
+        vertical-align: middle;
+      }
+      .cf-site-color::-webkit-color-swatch-wrapper { padding: 0; }
+      .cf-site-color::-webkit-color-swatch { border: none; border-radius: 2px; }
+      .cf-site-color::-moz-color-swatch { border: none; border-radius: 2px; }
+      .cf-site-row.is-hidden .cf-site-color { opacity: 0.45; }
+
+      /* Legend actions row. The title keeps its own line above; these two sit
+         under it, left and right, matching the columns they act on. Both need
+         nowrap: at this width "hide all" and "reset colours" otherwise break
+         mid-label, which is what made them look like three controls. */
+      .cf-site-legend-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin: 1px 0 5px;
+      }
+      .cf-site-legend-actions > button { white-space: nowrap; }
+    </style>
 
 </head>
 
@@ -461,10 +509,11 @@
 
                         <div class="cf-section-controls">
                             <label class="control-label" for="cf-iso-map"
-                                   title="Which density to draw. 'As solved' is the raw charge-flipping map. 'Symmetry-averaged' is the same map after the structure step has placed it on the space-group origin and averaged it over the symmetry operators — cleaner, but it assumes the space group is right.">Map</label>
+                                   title="Which density to draw. 'As solved' is the raw charge-flipping map. 'Symmetry-averaged' is the same map after the structure step has placed it on the space-group origin and averaged it over the symmetry operators — cleaner, but it assumes the space group is right. 'None' draws no density at all, leaving the cell and the atom positions on their own — useful once you trust the map and want to look at the geometry.">Map</label>
                             <select id="cf-iso-map" class="control-select">
                                 <option value="solution" selected>As solved</option>
                                 <option value="symmetrised" disabled>Symmetry-averaged</option>
+                                <option value="none">None (atoms only)</option>
                             </select>
 
                             <label class="control-label" for="cf-iso-level" style="margin-top: 10px;">Level (σ)</label>
@@ -479,6 +528,17 @@
                                  title="The atom positions from the Structure block below: the density maxima reduced to one per symmetry orbit. Drawn as spheres, so you can see whether they sit inside the density lobes. Click a row to hide that site and all its symmetry images.">
                                 <div class="cf-site-legend-head">
                                     <span id="cf-site-legend-title">Atom positions</span>
+                                </div>
+                                <!-- Actions on their own row, one per column of
+                                     the list they act on: 'reset colours' sits
+                                     over the colour swatches, 'hide all' over
+                                     the visibility dots. Two buttons crowded
+                                     onto the title line wrapped "hide all"
+                                     across two lines and read as unrelated to
+                                     the columns they control. -->
+                                <div class="cf-site-legend-actions">
+                                    <button type="button" id="cf-site-legend-colors" class="cf-site-legend-all"
+                                            title="Put every site back to its default palette colour">reset colours</button>
                                     <button type="button" id="cf-site-legend-all" class="cf-site-legend-all"
                                             title="Show or hide every site at once">hide all</button>
                                 </div>
@@ -618,7 +678,7 @@
 
         <div class="tooltip-content">
             <h4>Powder 5 Fit</h4>
-            <p>Analyze powder XRD using the LeBail or Pawley method. <a href="powder5_help.html" target="_blank" style="color: #6495ED;">Method Guide &rarr;</a></p>
+            <p>Analyze powder diffraction data by using LeBail or Pawley method. <a href="powder5_help.html" target="_blank" style="color: #6495ED;">Method Guide &rarr;</a></p>
             <hr>
             <h4>Supported File Formats:</h4>
             <p>Generic 2-column (2θ intensity), .xrdml, .brml, .ras, .uxd, .udf, GSAS .esd/.xra</p>
@@ -722,12 +782,13 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 146, 7 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 147, 8 August 2026";
   
 
     //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     // 7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
+    //8 aug 2026, v 147, GPU leak corrected
 document.addEventListener('DOMContentLoaded', async () => {      
     try {
         const resp = await fetch('cctbx_space_groups_all_settings_v7.json');
@@ -762,7 +823,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('cf-section-slider').addEventListener('input', drawChargeFlipSection);
     document.getElementById('cf-section-autoscale').addEventListener('change', drawChargeFlipSection);
 
-    document.getElementById('cf-iso-map').addEventListener('change', () => cfScheduleIsosurface(0));
+    document.getElementById('cf-iso-map').addEventListener('change', () => {
+        // Sync the level control immediately rather than waiting for the
+        // scheduled redraw, so switching to 'None' greys the slider at once.
+        cfSyncIsoLevelEnabled();
+        cfScheduleIsosurface(0);
+    });
     document.getElementById('cf-iso-level').addEventListener('input', () => cfScheduleIsosurface(180));
     // Toggling geometry does not need the surface rebuilt, only redrawn.
     document.getElementById('cf-iso-cell').addEventListener('change', (e) => {
@@ -772,6 +838,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     (function wireSiteLegend() {
         const list = document.getElementById('cf-iso-site-list');
         const allBtn = document.getElementById('cf-site-legend-all');
+        const colorBtn = document.getElementById('cf-site-legend-colors');
         if (!list) return;
         const flip = (row) => {
             const rank = Number(row.dataset.rank);
@@ -780,16 +847,49 @@ document.addEventListener('DOMContentLoaded', async () => {
             else cfHiddenSiteRanks.add(rank);
             cfApplySiteVisibility();
         };
+        // The colour picker sits INSIDE the row, so without this guard opening
+        // it would also toggle the site off -- the atom would vanish at the
+        // moment you tried to recolour it.
+        const onPicker = (e) => !!(e.target.closest && e.target.closest('.cf-site-color'));
         list.addEventListener('click', (e) => {
+            if (onPicker(e)) return;
             const row = e.target.closest('.cf-site-row');
             if (row) flip(row);
         });
         list.addEventListener('keydown', (e) => {
             if (e.key !== ' ' && e.key !== 'Enter') return;
+            if (onPicker(e)) return;      // space opens the native picker
             const row = e.target.closest('.cf-site-row');
             if (!row) return;
             e.preventDefault();
             flip(row);
+        });
+        // `input` fires continuously while the picker is dragged, which is what
+        // makes the 3D view track the colour live. Density3D.setSiteColor
+        // repaints the existing material rather than rebuilding the spheres, so
+        // this is cheap enough to run on every event.
+        //
+        // Deliberately NOT re-rendering the legend here: replacing the row would
+        // destroy the very input the user is dragging and close the picker.
+        list.addEventListener('input', (e) => {
+            const inp = e.target.closest && e.target.closest('.cf-site-color');
+            if (!inp) return;
+            const rank = Number(inp.dataset.rank);
+            if (!Number.isFinite(rank)) return;
+            if (typeof Density3D !== 'undefined'
+                    && typeof Density3D.setSiteColor === 'function') {
+                Density3D.setSiteColor(rank, inp.value);
+            }
+            cfSyncSiteColorResetButton();
+        });
+        if (colorBtn) colorBtn.addEventListener('click', () => {
+            if (typeof Density3D !== 'undefined'
+                    && typeof Density3D.resetSiteColors === 'function') {
+                Density3D.resetSiteColors();
+            }
+            // Safe to re-render here: the picker is closed by the time a click
+            // lands on this button.
+            cfRenderSiteLegend();
         });
         if (allBtn) allBtn.addEventListener('click', () => {
             const sites = (cfStructure && cfStructure.sites) ? cfStructure.sites : [];
@@ -1256,7 +1356,8 @@ function monoclinicUniqueAxis(sg) {
     return axis;
 }
 
-const MONOCLINIC_ANGLE_FOR_AXIS = { a: 'alpha', b: 'beta', c: 'gamma' };
+// MOVED to crystal.js: MONOCLINIC_ANGLE_FOR_AXIS (and its companion
+// MONOCLINIC_FIXED_ANGLES_FOR_AXIS, plus normaliseCell which applies them).
 
 function fullCellFromParams(p, system) {
     if (!p) return null;
@@ -1833,13 +1934,34 @@ function cfIsoUnavailableMessage() {
 
 // Which map the viewer is showing. The symmetrised map only exists once the
 // structure has been built, so the option is enabled from renderStructure.
+//
+// 'none' still returns a map. The viewer needs the grid to size the scene and
+// to report sigma, and skipping the surface is decided by the showSurface flag
+// passed to Density3D.show() -- which is where the marching-cubes pass is
+// actually avoided. Returning null here instead would take the cell and the
+// atoms down with the density.
 function cfIsoSourceMap() {
-    const wantSym = document.getElementById('cf-iso-map').value === 'symmetrised';
-    if (wantSym && cfStructure && cfStructure.map) {
-        return { map: cfStructure.map, gridSize: cfStructure.gridSize, label: 'symmetry-averaged map' };
+    const kind = document.getElementById('cf-iso-map').value;
+    const haveSym = !!(cfStructure && cfStructure.map);
+
+    if (kind === 'symmetrised' && haveSym) {
+        return { map: cfStructure.map, gridSize: cfStructure.gridSize,
+                 label: 'symmetry-averaged map', surface: true };
+    }
+    if (kind === 'none') {
+        // Prefer the symmetrised grid when it exists, because the atom
+        // positions are quoted in ITS frame (see cfExpandedSitePositions).
+        // Nothing is drawn from it either way; this only keeps the scene
+        // dimensions and the reported sigma consistent with the coordinates.
+        const src = haveSym
+            ? { map: cfStructure.map, gridSize: cfStructure.gridSize }
+            : (cfLastResult ? { map: cfLastResult.map, gridSize: cfLastResult.gridSize } : null);
+        if (!src) return null;
+        return { map: src.map, gridSize: src.gridSize, label: 'no density', surface: false };
     }
     if (!cfLastResult) return null;
-    return { map: cfLastResult.map, gridSize: cfLastResult.gridSize, label: 'map as solved' };
+    return { map: cfLastResult.map, gridSize: cfLastResult.gridSize,
+             label: 'map as solved', surface: true };
 }
 
 function cfRefreshIsoSourceOptions() {
@@ -1849,6 +1971,22 @@ function cfRefreshIsoSourceOptions() {
     const have = !!(cfStructure && cfStructure.map);
     if (symOpt) symOpt.disabled = !have;
     if (!have && sel.value === 'symmetrised') sel.value = 'solution';
+    // 'None' needs nothing built, so it is never disabled.
+}
+
+// The level slider means nothing when no density is drawn. Grey it out rather
+// than leaving a live control that does not affect the picture -- a slider you
+// can drag with no result reads as a bug.
+function cfSyncIsoLevelEnabled() {
+    const none = document.getElementById('cf-iso-map').value === 'none';
+    const slider = document.getElementById('cf-iso-level');
+    const label = document.getElementById('cf-iso-level-label');
+    if (slider) {
+        slider.disabled = none;
+        slider.style.opacity = none ? '0.4' : '';
+        slider.title = none ? 'No density is being drawn, so there is no level to set.' : '';
+    }
+    if (label && none) label.textContent = 'no density drawn';
 }
 
 function cfScheduleIsosurface(delay) {
@@ -1887,6 +2025,10 @@ function cfExpandedSitePositions(mapKind) {
     const out = [];
     const wrap = v => { const f = v - Math.floor(v); return (f >= 1 - 1e-9) ? 0 : f; };
 
+    // Only the raw 'as solved' map needs the coordinates pushed back through
+    // the origin shift and the hand. 'symmetrised' and 'none' both want the
+    // structure's own frame -- for 'none' because there is no map on screen for
+    // them to agree with, so the structure frame is the only sensible one.
     const toRaw = (mapKind === 'solution');
     const shift = cfStructure.originShift || [0, 0, 0];
     const hand = cfStructure.hand === -1 ? -1 : 1;
@@ -1950,6 +2092,21 @@ function cfSiteSwatchColor(rank) {
     return 'transparent';
 }
 
+// The 'reset colours' button is only meaningful once something has been
+// recoloured. Kept as its own function because the colour picker's `input`
+// handler deliberately does NOT re-render the legend (that would close the
+// picker mid-drag), so it has to be able to update this button on its own.
+function cfSyncSiteColorResetButton() {
+    const btn = document.getElementById('cf-site-legend-colors');
+    if (!btn) return;
+    const sites = (cfStructure && Array.isArray(cfStructure.sites)) ? cfStructure.sites : [];
+    const canAsk = typeof Density3D !== 'undefined'
+                && typeof Density3D.hasSiteColorOverride === 'function';
+    const anyCustom = canAsk && sites.some(st => Density3D.hasSiteColorOverride(st.rank));
+    btn.disabled = !sites.length || !anyCustom;
+    btn.style.opacity = btn.disabled ? '0.45' : '';
+}
+
 function cfRenderSiteLegend() {
     const list = document.getElementById('cf-iso-site-list');
     const title = document.getElementById('cf-site-legend-title');
@@ -1972,6 +2129,7 @@ function cfRenderSiteLegend() {
         allBtn.textContent = (shown === 0) ? 'show all' : 'hide all';
         allBtn.disabled = !sites.length;
     }
+    cfSyncSiteColorResetButton();
 
     if (!sites.length) {
         list.innerHTML = '<div class="cf-site-legend-empty">Build the structure to list the sites.</div>';
@@ -1981,13 +2139,21 @@ function cfRenderSiteLegend() {
     list.innerHTML = sites.map(st => {
         const off = cfHiddenSiteRanks.has(st.rank);
         const mult = `${st.multiplicity}${st.special ? '*' : ''}`;
+        const customColor = (typeof Density3D !== 'undefined'
+            && typeof Density3D.hasSiteColorOverride === 'function')
+            ? Density3D.hasSiteColorOverride(st.rank) : false;
         return `<div class="cf-site-row${off ? ' is-hidden' : ''}" data-rank="${st.rank}" role="checkbox"`
              + ` tabindex="0" aria-checked="${off ? 'false' : 'true'}"`
              + ` title="Site ${st.rank}: height ${st.relative.toFixed(3)}, multiplicity ${mult}`
              + ` at (${st.x.toFixed(3)}, ${st.y.toFixed(3)}, ${st.z.toFixed(3)}). Click to `
              + `${off ? 'show' : 'hide'} it.">`
              + `<span class="cf-site-rank">${st.rank}</span>`
-             + `<span class="cf-site-swatch" style="background:${cfSiteSwatchColor(st.rank)}"></span>`
+             + `<input type="color" class="cf-site-swatch cf-site-color"`
+             + ` data-rank="${st.rank}" value="${cfSiteSwatchColor(st.rank)}"`
+             + ` aria-label="Colour of site ${st.rank}"`
+             + ` title="Colour of site ${st.rank}`
+             + `${customColor ? ' (changed from the default)' : ''}`
+             + ` - click to change it.">`
              + `<span class="cf-site-height">${st.relative.toFixed(3)}</span>`
              + `<span class="cf-site-mult">&times;${mult}</span>`
              + `<span class="cf-site-eye">${off ? '&#9679;' : '&#9673;'}</span>`
@@ -2046,7 +2212,10 @@ function cfDrawIsosurface() {
     // all-or-nothing "Atom positions" checkbox is now just "hide all".
     const sitePositions = cfExpandedSitePositions(mapKind);
 
-    note.textContent = 'Extracting the surface…';
+    cfSyncIsoLevelEnabled();
+    note.textContent = (src.surface === false)
+        ? 'Drawing the cell and the atoms…'
+        : 'Extracting the surface…';
     let rep = null;
     try {
         rep = Density3D.show({
@@ -2054,6 +2223,7 @@ function cfDrawIsosurface() {
             gridSize: src.gridSize,
             cell: cfLastResult.cell,
             sigmaLevel, showCell, showSites: true,
+            showSurface: src.surface !== false,
             sites: sitePositions
         });
     } catch (e) {
@@ -2063,10 +2233,17 @@ function cfDrawIsosurface() {
     }
     if (!rep) { note.textContent = 'Could not build the surface.'; return; }
 
-    document.getElementById('cf-iso-level-label').textContent =
-        `${sigmaLevel.toFixed(1)} σ = ${rep.level.toFixed(3)} (map max 1.000)`;
+    if (src.surface === false) {
+        document.getElementById('cf-iso-level-label').textContent = 'no density drawn';
+    } else {
+        document.getElementById('cf-iso-level-label').textContent =
+            `${sigmaLevel.toFixed(1)} σ = ${rep.level.toFixed(3)} (map max 1.000)`;
+    }
 
-    const baseText = (rep.triangles === 0
+    const baseText = (src.surface === false
+        ? `No density drawn — cell and atom positions only. ` +
+          `Axes a/b/c are red/green/blue. Drag to rotate, scroll to zoom.`
+        : rep.triangles === 0
         ? `Nothing reaches ${sigmaLevel.toFixed(1)} σ — lower the level.`
         : `${src.label}, ${rep.triangles.toLocaleString()} triangles in ${rep.ms} ms. ` +
           `Axes a/b/c are red/green/blue. Drag to rotate, scroll to zoom.`);
@@ -2299,6 +2476,14 @@ function renderStructure(st, got) {
     cfHiddenSiteRanks.clear();
     st.sites.forEach(site => cfHiddenSiteRanks.add(site.rank));
 
+    // Colour overrides go with it, for the same reason: they are keyed by rank,
+    // and rank 3 of the old solution is not rank 3 of this one. Carrying them
+    // over would silently mislabel the new structure in the one way the user
+    // cannot check -- they would look deliberate.
+    if (typeof Density3D !== 'undefined' && typeof Density3D.resetSiteColors === 'function') {
+        Density3D.resetSiteColors();
+    }
+
     // Reveal the Structure block. Its container ships with `hidden` in the
     // markup and is re-hidden from three places -- the start of a run, the
     // panel reset, and the history restore -- but NOTHING ever took the class
@@ -2416,91 +2601,20 @@ function exportChargeFlipMap() {
        
 
 // ---------------------------------------------------------------------------
-//  Profile truncation window.
+//  MOVED to constants.js, loaded by a script tag in the document head and by
+//  importScripts in both workers.
 //
-//  A Gaussian is dead by ~4 FWHM; a Lorentzian is not. At 8 FWHM a pure
-//  Lorentzian still loses ~4% of its area to truncation and another ~4% to the
-//  pedestal subtraction in prepareVoigt. That in itself is survivable, because
-//  the Le Bail extraction measures the area of the profile as actually drawn --
-//  but the loss depends on eta, and eta moves as the widths refine, so a FIXED
-//  window leaks truncation error straight into the intensity/width
-//  correlation. The window is therefore scaled with the Lorentzian content,
-//  and the exact analytic area of the UNtruncated shape is carried on the prep
-//  object (prep.analyticArea) so integrated intensities can be reported free
-//  of the truncation bias.
-// ---------------------------------------------------------------------------
-const CALCULATION_WINDOW_MULTIPLIER_G = 8.0;    // pure Gaussian
-const CALCULATION_WINDOW_MULTIPLIER_L = 25.0;   // pure Lorentzian
-const PROFILE_WINDOW_MAX_DEG = 10.0;            // hard cap, keeps cost bounded
-const CALCULATION_WINDOW_MULTIPLIER = CALCULATION_WINDOW_MULTIPLIER_G; // legacy alias
-
-// ---------------------------------------------------------------------------
-//  Minimum resolvable profile FWHM, degrees 2-theta. Set from the real data
-//  step (setMinProfileFwhmFromAxis) as soon as the pattern is known.
+//  This block held CALCULATION_WINDOW_MULTIPLIER_*, PROFILE_WINDOW_MAX_DEG,
+//  MIN_PROFILE_FWHM_DEG, setMinProfileFwhmFromAxis, softPositive, PV_G0 /
+//  PV_L0 / PV_GAUSS_AREA / PV_LORENTZ_AREA and pvMixCoeffs -- every one of
+//  them also declared, independently, in refinement_worker.js.
 //
-//  A peak narrower than a couple of data steps is not measurable, and letting
-//  the refiner go there is exactly how a fit with a bad cell "improves" Rwp:
-//  a spike in the wrong place costs less than a broad peak in the wrong place,
-//  so the profile collapses instead of the cell correcting.
+//  Two copies of a physical constant is not a tidiness problem. If one is
+//  edited and the other is not, this preview and the fit compute DIFFERENT
+//  profile functions; the refinement still converges, the report is still
+//  self-consistent, and the numbers are wrong, with nothing in the program
+//  able to notice. They are now declared once.
 // ---------------------------------------------------------------------------
-let MIN_PROFILE_FWHM_DEG = 1e-3;
-function setMinProfileFwhmFromAxis(tthAxis) {
-    if (!tthAxis || tthAxis.length < 3) return;
-    const step = (tthAxis[tthAxis.length - 1] - tthAxis[0]) / (tthAxis.length - 1);
-    if (isFinite(step) && step > 0) MIN_PROFILE_FWHM_DEG = Math.max(1e-4, 2 * step);
-}
-
-/**
- * Smooth positive branch: >= floor, strictly increasing, derivative never 0.
- *     softPositive(x, f) = (x + sqrt(x^2 + 4 f^2)) / 2
- * f at x = 0, ~x for x >> f, ~f^2/|x| for x << -f, d/dx > 0 everywhere.
- *
- * FIX: replaces the `if (sigma_sq_cdeg2 > 0) { ... }` guards in the width
- * calculators. Those guards were a hard dead zone -- once a width combination
- * went non-positive the width stuck at its default value, the one-sided
- * finite-difference column came out identically zero, and the parameter was
- * frozen there for the rest of the fit. It could not recover even after the
- * cell and zero-point had been corrected.
- */
-function softPositive(x, floor) {
-    if (!isFinite(x)) return floor;
-    return 0.5 * (x + Math.sqrt(x * x + 4 * floor * floor));
-}
-
-// Peak heights of the UNIT-AREA Gaussian and Lorentzian, in units of 1/FWHM.
-const PV_G0 = 2 * Math.sqrt(Math.LN2 / Math.PI);   // 0.9394372787
-const PV_L0 = 2 / Math.PI;                         // 0.6366197724
-// Areas of the UNIT-HEIGHT Gaussian and Lorentzian, in units of FWHM.
-const PV_GAUSS_AREA   = 1 / PV_G0;                 // 1.0644670194
-const PV_LORENTZ_AREA = 1 / PV_L0;                 // 1.5707963268
-
-/**
- * Mixing coefficients for a pseudo-Voigt evaluated on UNIT-HEIGHT components.
- *
- * FIX (eta convention). The pseudo-Voigt is defined as eta*L + (1-eta)*G with
- * L and G normalised to unit AREA -- that is what makes eta a mixing fraction,
- * and it is the convention the Thompson-Cox-Hastings eta polynomial was fitted
- * for. This code carries a peak HEIGHT per reflection, so the components are
- * evaluated unit-height and the area normalisation is folded into these
- * coefficients, which are then renormalised so the mixture is still 1 at the
- * peak centre.
- *
- * Mixing unit-height components directly (the previous behaviour) is a
- * DIFFERENT function: L(0)/G(0) = 0.637/0.939 = 0.678 at equal FWHM, so a TCH
- * eta of 0.578 (Gamma_L/Gamma = 0.5) was rendered as a shape whose true area
- * mixing fraction is 0.48. For simple_pvoigt, where eta is refined, that was
- * only a mislabelling; for tch_aniso, where eta is COMPUTED from the
- * polynomial, the modelled Lorentzian content was systematically too high and
- * X / Y had to absorb the difference.
- */
-function pvMixCoeffs(eta, hg, hl) {
-    const e = Math.max(0, Math.min(1, eta));
-    const wL = e * PV_L0 / Math.max(1e-12, hl);
-    const wG = (1 - e) * PV_G0 / Math.max(1e-12, hg);
-    const s = wL + wG;
-    if (!(s > 0) || !isFinite(s)) return { cL: e, cG: 1 - e };
-    return { cL: wL / s, cG: wG / s };
-}
 
         /**
          * Covariance matrix from a normal-equations matrix JtJ.
@@ -2592,20 +2706,9 @@ function pvMixCoeffs(eta, hg, hl) {
             return { cov, undetermined };
         }
 
-        /**
-         * First index i with arr[i] >= target, on an ASCENDING array. O(log n).
-         * PERF FIX: replaces `let s=0; while (s<n && arr[s]<target) s++;`, which
-         * made every pattern evaluation O(n_peaks * n_points). Mirrors the
-         * identical helper in refinement_worker.js.
-         */
-        function lowerBound(arr, target) {
-            let lo = 0, hi = arr.length;
-            while (lo < hi) {
-                const mid = (lo + hi) >> 1;
-                if (arr[mid] < target) lo = mid + 1; else hi = mid;
-            }
-            return lo;
-        }
+        // MOVED to constants.js. The comment that used to sit here said this
+        // helper "mirrors the identical helper in refinement_worker.js" -- a
+        // fourth hand-maintained copy. There is now one.
  
 const tooltipContainer = document.querySelector('.help-tooltip-container');
 const tooltipContent = document.querySelector('.tooltip-content');
@@ -4792,76 +4895,18 @@ setTimeout(() => {
         return { key: kh + ',' + kk + ',' + kl, size: images.size, h: rh, k: rk, l: rl };
     }
 
-    /**
-     * 1/d^2 as a function of (h,k,l), using exactly the same metric as
-     * updateHklPositions() so that generation and the downstream 2-theta
-     * filter can never disagree about which reflections are in range.
-     * `lSeparable` is true when 1/d^2 has no h*l or k*l cross term, i.e. when
-     * the l loop can break as soon as one l fails.
-     */
-    function buildInvDsq(system, params) {
-        const { a, b, c, alpha, beta, gamma } = params;
-        if (!(a > 0)) return null;
-        const deg2rad = Math.PI / 180;
-        const a_sq = a * a;
-
-        switch (system) {
-            case 'cubic':
-                return { f: (h, k, l) => (h * h + k * k + l * l) / a_sq, lSeparable: true };
-
-            case 'tetragonal': {
-                const c_sq = (c > 0) ? c * c : a_sq;
-                return { f: (h, k, l) => (h * h + k * k) / a_sq + (l * l) / c_sq, lSeparable: true };
-            }
-
-            case 'orthorhombic': {
-                const b_sq = (b > 0) ? b * b : a_sq;
-                const c_sq = (c > 0) ? c * c : a_sq;
-                return { f: (h, k, l) => (h * h) / a_sq + (k * k) / b_sq + (l * l) / c_sq, lSeparable: true };
-            }
-
-            case 'hexagonal':
-            case 'trigonal':
-            case 'rhombohedral': {
-                const c_sq = (c > 0) ? c * c : a_sq;
-                return {
-                    f: (h, k, l) => 4 * (h * h + h * k + k * k) / (3 * a_sq) + (l * l) / c_sq,
-                    lSeparable: true
-                };
-            }
-
-            // Monoclinic is not special-cased: the general metric below
-            // reduces to the monoclinic closed form exactly once the two
-            // fixed angles are 90, and it does so for unique axis a, b and c
-            // alike. updateHklPositions() shares the same treatment, so the
-            // generator and the 2-theta filter cannot drift apart.
-            case 'monoclinic':
-            case 'triclinic': {
-                const b_val = (b > 0) ? b : a;
-                const c_val = (c > 0) ? c : a;
-                const al = (alpha || 90) * deg2rad, be = (beta || 90) * deg2rad, ga = (gamma || 90) * deg2rad;
-                const cosA = Math.cos(al), cosB = Math.cos(be), cosG = Math.cos(ga);
-                const sinA = Math.sin(al), sinB = Math.sin(be), sinG = Math.sin(ga);
-                const vf = 1 - cosA * cosA - cosB * cosB - cosG * cosG + 2 * cosA * cosB * cosG;
-                if (vf <= 1e-9 || Math.abs(sinA) < 1e-9 || Math.abs(sinB) < 1e-9 || Math.abs(sinG) < 1e-9) return null;
-                const V = a * b_val * c_val * Math.sqrt(vf);
-                const as = b_val * c_val * sinA / V, bs = a * c_val * sinB / V, cs = a * b_val * sinG / V;
-                const cAs = (cosB * cosG - cosA) / (sinB * sinG);
-                const cBs = (cosA * cosG - cosB) / (sinA * sinG);
-                const cGs = (cosA * cosB - cosG) / (sinA * sinB);
-                const as_sq = as * as, bs_sq = bs * bs, cs_sq = cs * cs;
-                const ab = 2 * as * bs * cGs, bc = 2 * bs * cs * cAs, ac = 2 * as * cs * cBs;
-                return {
-                    f: (h, k, l) => h * h * as_sq + k * k * bs_sq + l * l * cs_sq
-                                  + h * k * ab + k * l * bc + h * l * ac,
-                    lSeparable: false
-                };
-            }
-
-            default:
-                return null;
-        }
-    }
+    // ---------------------------------------------------------------------
+    //  MOVED to crystal.js as buildInvDsqEvaluator(system, params).
+    //
+    //  The comment that used to sit here promised this function used "exactly
+    //  the same metric as updateHklPositions() so that generation and the
+    //  downstream 2-theta filter can never disagree". It was the fifth
+    //  hand-maintained copy of the reciprocal metric in this codebase, and
+    //  that promise was kept by hand across two files. It is now structural:
+    //  buildInvDsqEvaluator is built from the same buildInvDsq that
+    //  updateHklPositions uses, and test_refactor_equivalence.js asserts the
+    //  two agree to 4e-16 over every system and both monoclinic settings.
+    // ---------------------------------------------------------------------
 
 /**
  * Generates the list of raw HKL indices {h, k, l, multiplicity} for PREVIEW/REFINEMENT.
@@ -4912,12 +4957,15 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     const baseMaxIndex = Math.ceil(maxDim / dMin) + 5;
     const maxI = Math.min(baseMaxIndex, 50); // absolute safety cap
 
-    const metric = buildInvDsq(sgSystem, params);
+    const metric = buildInvDsqEvaluator(sgSystem, params);
     if (!metric) {
         console.error(`HKL Gen Error: could not build the metric for system "${sgSystem}".`);
         return [];
     }
-    const invDsq = metric.f;
+    // Named invDsqAt, not invDsq: crystal.js exports a global `invDsq`
+    // (the coefficient-form evaluator) and shadowing it here would make
+    // two different functions answer to one name in one file.
+    const invDsqAt = metric.f;
 
     const ops = getLaueReciprocalOps(spaceGroup);
     if (!ops) {
@@ -4941,12 +4989,12 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
             // Cheapest possible rejection of a whole (h,k) column. For the
             // separable metrics 1/d^2 is minimised over l at l = 0, so if
             // even that is out of range nothing in the column can be in.
-            if (metric.lSeparable && invDsq(h, k, 0) > inv_d_sq_max && !(h === 0 && k === 0)) continue;
+            if (metric.lSeparable && invDsqAt(h, k, 0) > inv_d_sq_max && !(h === 0 && k === 0)) continue;
 
             for (let l = 0; l <= maxI; l++) {
                 if (h === 0 && k === 0 && l === 0) continue;   // origin
 
-                const q = invDsq(h, k, l);
+                const q = invDsqAt(h, k, l);
                 if (!(q > 0) || !isFinite(q)) continue;
                 if (q > inv_d_sq_max) {
                     if (metric.lSeparable) break;               // no larger l can pass
@@ -4980,123 +5028,14 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
 
     return rawReflections;
 }
-function updateHklPositions(hklList, params, system) {
-    const { a, b, c, alpha, beta, gamma, lambda } = params;
-    if (!hklList || hklList.length === 0) return;
-    if (!params || !lambda || lambda <= 0 || !a || a <= 0) {
-         hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
-         return;
-    }
-
-    const deg2rad = Math.PI / 180;
-    const lambda_sq_over_4 = (lambda * lambda) / 4.0;
-    const a_sq = a * a;
-
-    let b_sq, c_sq;
-    let a_star_sq, b_star_sq, c_star_sq, ab_star, bc_star, ac_star;
-
-    // Monoclinic shares the general reciprocal metric with triclinic. With
-    // the two fixed angles at 90 it reduces to the closed form it replaces,
-    // exactly (agreement to 1 part in 1e16), and unique axis a, b and c all
-    // come out right without a branch each.
-    if (system === 'triclinic' || system === 'monoclinic') {
-        const al = (alpha || 90) * deg2rad;
-        const be = (beta || 90) * deg2rad;
-        const ga = (gamma || 90) * deg2rad;
-        const b_val = b || a;
-        const c_val = c || a;
-        
-        const cosA = Math.cos(al), cosB = Math.cos(be), cosG = Math.cos(ga);
-        const sinA = Math.sin(al), sinB = Math.sin(be), sinG = Math.sin(ga);
-        
-        const volume_factor = 1 - cosA*cosA - cosB*cosB - cosG*cosG + 2*cosA*cosB*cosG;
-        if (volume_factor <= 1e-9 || Math.abs(sinA) < 1e-9 || Math.abs(sinB) < 1e-9 || Math.abs(sinG) < 1e-9) {
-             hklList.forEach(peak => { if(peak) { peak.tth = null; peak.d = null; } });
-             return;
-        }
-        const V = a * b_val * c_val * Math.sqrt(volume_factor);
-        
-        const a_star = b_val * c_val * sinA / V;
-        const b_star = a * c_val * sinB / V;
-        const c_star = a * b_val * sinG / V;
-
-        const cosA_star = (cosB * cosG - cosA) / (sinB * sinG);
-        const cosB_star = (cosA * cosG - cosB) / (sinA * sinG);
-        const cosG_star = (cosA * cosB - cosG) / (sinA * sinB);
-
-        a_star_sq = a_star * a_star;
-        b_star_sq = b_star * b_star;
-        c_star_sq = c_star * c_star;
-        ab_star = 2 * a_star * b_star * cosG_star;
-        bc_star = 2 * b_star * c_star * cosA_star;
-        ac_star = 2 * a_star * c_star * cosB_star;
-        
-        } else if (system === 'tetragonal' || system === 'hexagonal' || system === 'rhombohedral' || system === 'trigonal') {
-         c_sq = (c && c > 0) ? (c * c) : a_sq;
-    } else if (system === 'orthorhombic') {
-         b_sq = (b && b > 0) ? (b * b) : a_sq;
-         c_sq = (c && c > 0) ? (c * c) : a_sq;
-    }
-
-    hklList.forEach(peak => {
-        if (!peak || peak.h_orig === undefined || peak.k_orig === undefined || peak.l_orig === undefined) {
-             if(peak) { peak.tth = null; peak.d = null; }
-             return;
-        }
-        const h = peak.h_orig;
-        const k = peak.k_orig;
-        const l = peak.l_orig;
-        const h2 = h * h;
-        const k2 = k * k;
-        const l2 = l * l;
-
-        let inv_d_sq = 0;
-        try {
-            switch(system) {
-                case 'cubic':
-                    inv_d_sq = (h2 + k2 + l2) / a_sq;
-                    break;
-                case 'tetragonal':
-                    inv_d_sq = (h2 + k2) / a_sq + l2 / c_sq;
-                    break;
-                case 'orthorhombic':
-                    inv_d_sq = h2/a_sq + k2/b_sq + l2/c_sq;
-                    break;
-                case 'hexagonal':
-                case 'rhombohedral':
-                case 'trigonal':
-                     if (a_sq <= 0 || c_sq <= 0) throw new Error("Invalid lattice param");
-                    inv_d_sq = 4 * (h2 + h*k + k2) / (3 * a_sq) + l2 / c_sq;
-                    break;
-                case 'monoclinic':
-                case 'triclinic':
-                    if (a_star_sq === undefined) throw new Error("Invalid lattice param");
-                    inv_d_sq = h2 * a_star_sq + k2 * b_star_sq + l2 * c_star_sq + h * k * ab_star + k * l * bc_star + h * l * ac_star;
-                    break;
-                default:
-                    throw new Error(`Unknown system: ${system}`);
-            }
-
-            if (!isFinite(inv_d_sq) || inv_d_sq <= 1e-12) {
-                peak.tth = null;
-                peak.d = null;
-            } else {
-                const sinThetaSq = lambda_sq_over_4 * inv_d_sq;
-                if (sinThetaSq <= 1 && sinThetaSq > 0) {
-                     const thetaRad = Math.asin(Math.sqrt(sinThetaSq));
-                     peak.tth = 2 * thetaRad / deg2rad;
-                    peak.d = 1 / Math.sqrt(inv_d_sq);
-                } else {
-                    peak.tth = null;
-                    peak.d = null;
-                }
-            }
-        } catch (error) {
-             peak.tth = null;
-             peak.d = null;
-        }
-    });
-}
+// ---------------------------------------------------------------------------
+//  MOVED to crystal.js. The copy that used to be here was byte-identical to
+//  the one in refinement_worker.js.
+//
+//  crystal.js also carries the monoclinic unique-axis convention that this
+//  file used to express through MONOCLINIC_ANGLE_FOR_AXIS while the workers
+//  spoke only of beta -- see normaliseCell() there for the explicit version.
+// ---------------------------------------------------------------------------
 
 
         /**
@@ -5166,490 +5105,18 @@ function updateHklPositions(hklList, params, system) {
     }
 
 
-        //   Profile Shape & Width (Needed for Preview/Tooltips)  
-        function calculatePeakShift(tth, params) {
-             if (!params || !params.profileType) return 0;
-            const profileType = params.profileType;
-            
-            const calcShift = (tth, shft, trns) => {
-                const thetaRad = tth * (Math.PI / 180) / 2;
-                if (Math.abs(thetaRad - Math.PI / 2.0) < 1e-6) return 0;
-                const cosTheta = Math.cos(thetaRad);
-                const sin2Theta = Math.sin(2 * thetaRad);
-                const displacementShift = -(shft / 1000) * cosTheta * (180 / Math.PI);
-                const transparencyShift = trns * sin2Theta * (180 / Math.PI);
-                const totalShift = displacementShift + transparencyShift;
-                return isFinite(totalShift) ? totalShift : 0;
-            };
-
-            switch (profileType) {
-                case "simple_pvoigt":
-                    return calcShift(tth, params.shft || 0, params.trns || 0);
-                case "split_pvoigt":
-                    return calcShift(tth, params.shft_split || 0, params.trns_split || 0);
-                case "tch_aniso":
-                default:
-                    return 0; // No shift for TCH profile
-            }
-        }
-
-        /*  ============================================================
-         *  GSAS profile-function conventions (CW types 3 & 4)
-         *  ============================================================
-         *  Units of the profile parameters follow GSAS exactly:
-         *
-         *    Gaussian (Caglioti):   σ²[cdeg²]/(8·ln2)
-         *                          = GU·tan²θ + GV·tanθ + GW + GP/cos²θ
-         *      → H_G[deg] = √(8·ln2 · σ²) / 100
-         *
-         *    Lorentzian:            γ_L[cdeg]
-         *                          = LX/cosθ + LY·tanθ                (TCH)
-         *                          = LX/cosθ                          (Simple/Split)
-         *      → γ_L[deg] = γ_L[cdeg] / 100
-         *
-         *    Conversions (Kaduk & Reid, Powder Diffr. 26, 88, 2011):
-         *      GSAS_GU = 1803.4 · FullProf_U          (1803.4 = 100²/(8·ln2))
-         *      GSAS_LX = 100   · FullProf_Y_size
-         *      GSAS_LY = 100   · FullProf_X_strain
-         *
-         *  In this UI:
-         *    • Simple pVoigt fields  GU, GV, GW, GP, LX  → GSAS GU, GV, GW, GP, LX
-         *    • TCH fields            U, V, W            → GSAS GU, GV, GW
-         *                            X, Y                → GSAS LY, LX
-         *      (i.e. TCH "X" is the strain Lorentzian × tanθ,
-         *            TCH "Y" is the size   Lorentzian / cosθ — matches
-         *            Thompson-Cox-Hastings 1987 notation, which GSAS adopted.)
-         *    • Split pVoigt fields   GU_L/R, GV_L/R, GW_L/R, LX_L/R → GSAS units
-         *
-         *  Stephens (1999) anisotropic strain (TOPAS / GSAS-II form):
-         *      M_HKL = ΣS_HKL · h^H k^K l^L                (deg-4 polynomial)
-         *      pp    = d² · √max(M_HKL,0) / 1000
-         *      γ_L_aniso[deg] = (1.8/π) · pp · η     · tanθ
-         *      γ_G_aniso[deg] = (1.8/π) · pp · (1−η) · tanθ
-         *
-         *  All width helpers below return widths in DEGREES 2θ.
-         */
-
-        //   √(8·ln2)/100  — converts √(σ²[cdeg²]/(8·ln2)) → FWHM in deg.
-        const GSAS_GAUSSIAN_TO_DEG  = Math.sqrt(8 * Math.LN2) / 100.0;
-        //   1/100  — converts γ_L[cdeg] → γ_L[deg].
-        const GSAS_LORENTZIAN_TO_DEG = 1.0 / 100.0;
-        //   Stephens prefactor: 1.8/π is the canonical TOPAS/GSAS-II value
-        //   (it is sqrt(8 ln 2)/π · 1, written as a rounded literal).
-        const STEPHENS_PREFACTOR = 1.8 / Math.PI;
-        //   Stephens-mixing default when no explicit η is supplied. GSAS-II
-        //   uses Lorentzian-dominated anisotropic strain; we follow suit.
-        const STEPHENS_DEFAULT_ETA = 1.0;
-
-/**
- * Caglioti sigma^2 (GSAS centidegree^2 / 8ln2) -> Gaussian FWHM in degrees.
- * Component floors are a QUARTER of the minimum resolvable FWHM, so neither
- * component alone pins the total; the combined floor in calculateProfileWidths
- * does that, and it preserves the Gaussian/Lorentzian ratio (hence eta).
- */
-function gaussianFromSigmaSq(sigma_sq_cdeg2) {
-    const floorSq = Math.pow(0.25 * MIN_PROFILE_FWHM_DEG / GSAS_GAUSSIAN_TO_DEG, 2);
-    return Math.sqrt(softPositive(sigma_sq_cdeg2, floorSq)) * GSAS_GAUSSIAN_TO_DEG;
-}
-/** Lorentzian gamma (GSAS centidegrees) -> FWHM in degrees. */
-function lorentzianFromGamma(gL_cdeg) {
-    const floor = 0.25 * MIN_PROFILE_FWHM_DEG / GSAS_LORENTZIAN_TO_DEG;
-    return softPositive(gL_cdeg, floor) * GSAS_LORENTZIAN_TO_DEG;
-}
-
-/**
- * Smooth lower bound at `f`: ~f for x <= f, within 0.6% of x by x = 2.5f, with a
- * nonzero derivative throughout.
- *
- * The exponent is a deliberate compromise. sqrt(x^2 + f^2) is the smoothest
- * choice but inflates a legitimate 2.5f width by 8%, which is not acceptable in
- * a quantity being refined; a very sharp knee keeps widths honest but makes the
- * derivative BELOW the floor so small that a parameter driven deep past it is
- * effectively frozen again -- the exact failure this floor exists to avoid.
- * Fourth order keeps the inflation under 1% at 2.5f while leaving a usable
- * gradient pointing back out.
- */
-function softFloor(x, f) {
-    if (!isFinite(x) || !(x > 0)) return f;
-    if (!(f > 0)) return x;
-    const r = x / f;
-    if (r > 20) return x;                       // floor irrelevant; avoid pow overflow
-    return f * Math.pow(Math.pow(r, 4) + 1, 0.25);
-}
-
-
-function applyFwhmFloor(gamma_G, gamma_L) {
-    return {
-        gamma_G: softFloor(gamma_G, MIN_PROFILE_FWHM_DEG),
-        gamma_L: softFloor(gamma_L, MIN_PROFILE_FWHM_DEG)
-    };
-}
-
-        function calculateProfileWidths(tth, hkl, params, side = 'center') {
-             if (!params || !params.profileType) {
-                 return { gamma_G: MIN_PROFILE_FWHM_DEG, gamma_L: MIN_PROFILE_FWHM_DEG };
-             }
-
-            const profileType = params.profileType;
-            const thetaRad = tth * (Math.PI / 180) / 2;
-
-            const MAX_ANGLE_RAD = Math.PI / 2.0 - 1e-6;
-            const safeThetaRad = Math.min(thetaRad, MAX_ANGLE_RAD);
-             if (safeThetaRad < 1e-6) {
-                 return { gamma_G: MIN_PROFILE_FWHM_DEG, gamma_L: MIN_PROFILE_FWHM_DEG };
-             }
-
-            const tanTheta = Math.tan(safeThetaRad);
-            const cosTheta = Math.cos(safeThetaRad);
-            const cosTheta_safe = Math.max(cosTheta, 1e-9);
-            const cosThetaSq_safe = Math.max(cosTheta * cosTheta, 1e-9);
-
-            let gamma_G = MIN_PROFILE_FWHM_DEG;     //  FWHM in degrees 2θ
-            let gamma_L = MIN_PROFILE_FWHM_DEG;     //  FWHM in degrees 2θ
-
-            switch (profileType) {
-                case "simple_pvoigt": {
-                    //   Caglioti in GSAS units (centidegrees²/(8 ln2)).
-                    const GU = params.GU || 0;
-                    const GV = params.GV || 0;
-                    const GW = params.GW || 0;
-                    const GP = params.GP || 0;
-                    const LX = params.LX || 0;
-                    const sigma_sq_cdeg2 = GU * tanTheta * tanTheta + GV * tanTheta + GW + GP / cosThetaSq_safe;
-                    gamma_G = gaussianFromSigmaSq(sigma_sq_cdeg2);
-                    //   Lorentzian (size only) in centidegrees → degrees.
-                    const gL_cdeg = LX / cosTheta_safe;
-                    gamma_L = lorentzianFromGamma(gL_cdeg);
-                    break;
-                }
-
-                case "split_pvoigt": {
-                    //   Same Caglioti / size-Lorentzian as Simple, with
-                    //   independent left/right parameters.
-                    let GU, GV, GW, LX;
-                    if (side === 'left') {
-                        GU = params.GU_L || 0; GV = params.GV_L || 0;
-                        GW = params.GW_L || 0; LX = params.LX_L || 0;
-                    } else {  //  'right' or 'center'
-                        GU = params.GU_R || 0; GV = params.GV_R || 0;
-                        GW = params.GW_R || 0; LX = params.LX_R || 0;
-                    }
-                    const sigma_sq_cdeg2 = GU * tanTheta * tanTheta + GV * tanTheta + GW;
-                    gamma_G = gaussianFromSigmaSq(sigma_sq_cdeg2);
-                    const gL_cdeg = LX / cosTheta_safe;
-                    gamma_L = lorentzianFromGamma(gL_cdeg);
-                    break;
-                }
-
-                case "tch_aniso": {
-                    //   TCH/GSAS profile: U,V,W are GSAS GU,GV,GW;
-                    //                     X,Y are GSAS LY (strain), LX (size).
-                    const U = params.U || 0;
-                    const V = params.V || 0;
-                    const W = params.W || 0;
-                    const X = params.X || 0;     //  GSAS LY  (strain · tanθ)
-                    const Y = params.Y || 0;     //  GSAS LX  (size   / cosθ)
-
-                    const sigma_sq_cdeg2 = U * tanTheta * tanTheta + V * tanTheta + W;
-                    gamma_G = gaussianFromSigmaSq(sigma_sq_cdeg2);
-                    const gL_cdeg = X * tanTheta + Y / cosTheta_safe;
-                    gamma_L = lorentzianFromGamma(gL_cdeg);
-
-                    //   Stephens anisotropic strain — orthorhombic-and-up form.
-                    //   Higher-symmetry systems (cubic, tetragonal, hexagonal,
-                    //   trigonal) collapse via enforceSymmetryConstraints which
-                    //   slaves S040,S004,S220,S202,S022 to S400 (and S220) as
-                    //   appropriate. Lower symmetry (monoclinic, triclinic)
-                    //   would need extra terms (S301, S121, S103, S211, S031,
-                    //   S013, S121, S112, S211); we don't expose those yet.
-                    if (hkl && hkl.d && hkl.h_orig !== undefined) {
-                        const d_sq = hkl.d * hkl.d;
-                        if (d_sq > 1e-9) {
-                            const h_val = hkl.h_orig, k_val = hkl.k_orig, l_val = hkl.l_orig;
-                            const h2 = h_val*h_val, k2 = k_val*k_val, l2 = l_val*l_val;
-                            const h4 = h2*h2,        k4 = k2*k2,        l4 = l2*l2;
-
-                            const S400 = params.S400 || 0, S040 = params.S040 || 0, S004 = params.S004 || 0;
-                            const S220 = params.S220 || 0, S202 = params.S202 || 0, S022 = params.S022 || 0;
-
-                            let M_HKL = 0;
-            if (params.system === 'hexagonal' || params.system === 'trigonal' || params.system === 'rhombohedral') {
-                const hk_term = h2 + h_val * k_val + k2;
-                M_HKL = S400 * hk_term * hk_term + S004 * l4 + S202 * hk_term * l2;
-            } else {
-                M_HKL = S400*h4 + S040*k4 + S004*l4 + S220*h2*k2 + S202*h2*l2 + S022*k2*l2;
-            }
-
-                            if (M_HKL > 0 && isFinite(M_HKL)) {
-                                //   pp = d² · √M / 1000   (TOPAS macro / GSAS-II form)
-                                const pp = d_sq * Math.sqrt(M_HKL) / 1000.0;
-                                //   Strain broadens like tanθ.
-                                const aniso_total = STEPHENS_PREFACTOR * pp * tanTheta;
-                                //   Split L / G by η_aniso (default: pure Lorentzian).
-                                const eta_a = (typeof params.eta_aniso === 'number')
-                                              ? Math.max(0, Math.min(1, params.eta_aniso))
-                                              : STEPHENS_DEFAULT_ETA;
-                                const aniso_L = aniso_total * eta_a;
-                                const aniso_G = aniso_total * (1 - eta_a);
-                                if (isFinite(aniso_L) && aniso_L > 0) gamma_L += aniso_L;
-                                if (isFinite(aniso_G) && aniso_G > 0) {
-                                    //   Add in quadrature to the Gaussian width.
-                                    gamma_G = Math.sqrt(gamma_G*gamma_G + aniso_G*aniso_G);
-                                }
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-
-            return applyFwhmFloor(gamma_G, gamma_L);
-        }
-
-
-        /**
-         * Calculates the total FWHM of a pseudo-Voigt peak from its Gaussian and Lorentzian components.
-         * Runs in main thread for previews.
-         */
-        function getPeakFWHM(gamma_G, gamma_L) {
-            // Ensure inputs are positive numbers
-            const gG = Math.max(1e-9, gamma_G || 1e-9);
-            const gL = Math.max(1e-9, gamma_L || 1e-9);
-
-            // Thompson-Cox-Hastings approximation
-            const fwhm_g_5 = Math.pow(gG, 5);
-            const fwhm_l_5 = Math.pow(gL, 5);
-            const fwhm_g_4_l = Math.pow(gG, 4) * gL;
-            const fwhm_g_3_l_2 = Math.pow(gG, 3) * Math.pow(gL, 2);
-            const fwhm_g_2_l_3 = Math.pow(gG, 2) * Math.pow(gL, 3);
-            const fwhm_g_l_4 = gG * Math.pow(gL, 4);
-
-            const fwhm_pow5 = fwhm_g_5 +
-                              2.69269 * fwhm_g_4_l +
-                              2.42843 * fwhm_g_3_l_2 +
-                              4.47163 * fwhm_g_2_l_3 +
-                              0.07842 * fwhm_g_l_4 +
-                              fwhm_l_5;
-
-             if (fwhm_pow5 < 0 || !isFinite(fwhm_pow5)) return Math.max(gG, gL, 1e-6); // Fallback
-
-             const fwhm = Math.pow(fwhm_pow5, 0.2);
-             return Math.max(1e-6, fwhm); // Ensure minimum positive FWHM
-        }
-
-        /**
-         * Calculates the integrated area under a pseudo-Voigt peak shape.
-         * Runs in main thread for previews.
-         */
-        function getPseudoVoigtArea(tth_peak, hkl, params) {
-            const GAUSS_AREA_CONST = PV_GAUSS_AREA;
-            const LORENTZ_AREA_CONST = PV_LORENTZ_AREA;
-
-            if (!params || !params.profileType) return 1.0;
-
-            // FIX: delegate to prepareVoigt so this can never drift out of the
-            // eta convention evalVoigt uses. prep.analyticArea is the exact
-            // area of the untruncated unit-height mixture; the switch below is
-            // kept only as a fallback if prepareVoigt is unavailable.
-            try {
-                const prep = prepareVoigt(tth_peak, tth_peak, hkl, params);
-                if (prep && isFinite(prep.analyticArea) && prep.analyticArea > 0) {
-                    return prep.analyticArea;
-                }
-            } catch (e) { /* fall through to the analytic switch */ }
-
-            const profileType = params.profileType;
-
-            switch (profileType) {
-                case "simple_pvoigt": {
-                    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-                    const gG = Math.max(1e-9, gamma_G);
-                    const gL = Math.max(1e-9, gamma_L);
-                    const area_G = gG * GAUSS_AREA_CONST;
-                    const area_L = gL * LORENTZ_AREA_CONST;
-                    const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
-                    const totalArea = currentEta * area_L + (1 - currentEta) * area_G;
-                    return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
-                }
-                
-                case "split_pvoigt": {
-                    // We must approximate the area of the split function.
-                    // We'll average the areas calculated from the left and right widths.
-                    const { gamma_G: gG_L, gamma_L: gL_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
-                    const { gamma_G: gG_R, gamma_L: gL_R } = calculateProfileWidths(tth_peak, hkl, params, 'right');
-                    
-                    const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
-                    
-                    const area_G_L = Math.max(1e-9, gG_L) * GAUSS_AREA_CONST;
-                    const area_L_L = Math.max(1e-9, gL_L) * LORENTZ_AREA_CONST;
-                    const totalArea_L = currentEta * area_L_L + (1 - currentEta) * area_G_L;
-
-                    const area_G_R = Math.max(1e-9, gG_R) * GAUSS_AREA_CONST;
-                    const area_L_R = Math.max(1e-9, gL_R) * LORENTZ_AREA_CONST;
-                    const totalArea_R = currentEta * area_L_R + (1 - currentEta) * area_G_R;
-                    
-                    const totalArea = (totalArea_L + totalArea_R) / 2.0;
-                    return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
-                }
-
-                case "tch_aniso": {
-                    const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-                    const gG = Math.max(1e-9, gamma_G);
-                    const gL = Math.max(1e-9, gamma_L);
-                    
-                    const fwhm = getPeakFWHM(gG, gL);
-                    const ratio = (fwhm > 1e-9) ? gL / fwhm : 0;
-                    const eta_calc = 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3);
-                    const currentEta = Math.max(0, Math.min(1, eta_calc));
-                    const area_G_combined = fwhm * GAUSS_AREA_CONST;
-                    const area_L_combined = fwhm * LORENTZ_AREA_CONST;
-                    const totalArea = currentEta * area_L_combined + (1 - currentEta) * area_G_combined;
-                    return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
-                }
-            }
-            return 1.0; // Default
-        }
-
-
-function prepareVoigt(tth_peak, x0, hkl, params) {
-    if (!params) return null;
-    const profileType = params.profileType;
-    const Cg = 2.772588722239781; // 4 * ln(2)
-    
-    // Precompute asymmetry coefficient once per peak (for TCH)
-    let asym_param = 0;
-    if (profileType === "tch_aniso" && (params.SL || params.HL) && tth_peak >= 0.1 && tth_peak < 180) {
-        const theta_rad = tth_peak * (Math.PI / 180) / 2.0;
-        const safe_theta_rad = Math.max(1e-6, Math.min(Math.PI / 2.0 - 1e-6, theta_rad));
-        const tan_theta = Math.tan(safe_theta_rad);
-        if (Math.abs(tan_theta) >= 1e-9) {
-            asym_param = (params.SL || 0) / tan_theta + (params.HL || 0);
-        }
-    }
-
-    let prep;
-    let fwhm_total;
-
-    if (profileType === "simple_pvoigt") {
-        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-        const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
-        const eta = Math.max(0, Math.min(1, params.eta || 0.5));
-        fwhm_total = getPeakFWHM(H_G, H_L);
-        // eta is the AREA mixing fraction; pvMixCoeffs converts it to weights
-        // for the unit-height components evalVoigt actually evaluates.
-        const mix1 = pvMixCoeffs(eta, H_G, H_L);
-        prep = { type: 1, x0, asym_param, H_G, H_L, eta,
-                 cL: mix1.cL, cG: mix1.cG, Cg };
-        prep.analyticArea = mix1.cL * PV_LORENTZ_AREA * H_L
-                          + mix1.cG * PV_GAUSS_AREA   * H_G;
-    } else if (profileType === "split_pvoigt") {
-        const wL = calculateProfileWidths(tth_peak, hkl, params, 'left');
-        const wR = calculateProfileWidths(tth_peak, hkl, params, 'right');
-        const H_G_L = Math.max(1e-9, wL.gamma_G), H_L_L = Math.max(1e-9, wL.gamma_L);
-        const H_G_R = Math.max(1e-9, wR.gamma_G), H_L_R = Math.max(1e-9, wR.gamma_L);
-        const eta = Math.max(0, Math.min(1, params.eta_split || 0.5));
-        fwhm_total = Math.max(getPeakFWHM(H_G_L, H_L_L), getPeakFWHM(H_G_R, H_L_R));
-        // Each flank gets its own mixing weights (the widths differ), and each
-        // is renormalised to 1 at delta = 0, so the profile stays continuous
-        // across the centre.
-        const mixL = pvMixCoeffs(eta, H_G_L, H_L_L);
-        const mixR = pvMixCoeffs(eta, H_G_R, H_L_R);
-        prep = { type: 2, x0, asym_param, H_G_L, H_L_L, H_G_R, H_L_R, eta,
-                 cL_L: mixL.cL, cG_L: mixL.cG, cL_R: mixR.cL, cG_R: mixR.cG, Cg };
-        prep.analyticArea = 0.5 * (mixL.cL * PV_LORENTZ_AREA * H_L_L
-                                 + mixL.cG * PV_GAUSS_AREA   * H_G_L)
-                          + 0.5 * (mixR.cL * PV_LORENTZ_AREA * H_L_R
-                                 + mixR.cG * PV_GAUSS_AREA   * H_G_R);
-    } else { // tch_aniso
-        const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
-        const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
-        const fwhm = Math.max(1e-9, getPeakFWHM(H_G, H_L));
-        let eta = 0;
-        if (fwhm > 1e-9) {
-            const ratio = H_L / fwhm;
-            eta = Math.max(0, Math.min(1, 1.36603 * ratio - 0.47719 * (ratio * ratio) + 0.11116 * Math.pow(ratio, 3)));
-        }
-        fwhm_total = fwhm;
-        // The TCH eta polynomial above is defined for AREA-normalised
-        // components, so it must be converted before use -- see pvMixCoeffs.
-        const mix3 = pvMixCoeffs(eta, fwhm, fwhm);
-        prep = { type: 3, x0, asym_param, fwhm, eta,
-                 cL: mix3.cL, cG: mix3.cG, Cg };
-        prep.analyticArea = (mix3.cL * PV_LORENTZ_AREA + mix3.cG * PV_GAUSS_AREA) * fwhm;
-    }
-
-    // See refinement_worker.js for the rationale: max_d is now the single
-    // authoritative truncation radius (it used to disagree with the window
-    // calculatePattern chose), and the pedestal replaces PEAK_HEIGHT_CUTOFF so
-    // the profile reaches zero continuously instead of stepping off a cliff.
-    prep.fwhm_total = Math.max(1e-6, fwhm_total);
-    // Window scaled by Lorentzian content: 8 FWHM for a pure Gaussian up to
-    // CALCULATION_WINDOW_MULTIPLIER_L for a pure Lorentzian, capped in degrees
-    // so a pathologically broad peak cannot make the window span the pattern.
-    const etaWin = Math.max(0, Math.min(1, prep.eta || 0));
-    const windowMult = CALCULATION_WINDOW_MULTIPLIER_G
-                     + (CALCULATION_WINDOW_MULTIPLIER_L - CALCULATION_WINDOW_MULTIPLIER_G) * etaWin;
-    const truncationRadius = Math.min(PROFILE_WINDOW_MAX_DEG,
-        windowMult * Math.max(0.01, prep.fwhm_total) * (asym_param !== 0 ? 2.0 : 1.0));
-
-    // Pedestal: the profile value at the truncation radius. Subtracting it
-    // (clamped at zero) is what makes the profile reach zero continuously at
-    // the window edge instead of dropping off a cliff.
-    //
-    // Measured with max_d temporarily Infinity: probing at exactly
-    // `x0 + truncationRadius` otherwise rounds a fraction of an ulp past the
-    // cutoff, evalVoigt early-returns 0, and the pedestal silently comes out
-    // as 0. An asymmetric shape has two different edge values, so take the
-    // larger -- then neither flank can go negative. Twice per peak, not per
-    // data point.
-    prep.pedestal = 0;
-    prep.max_d = Infinity;
-    prep.pedestal = Math.max(evalVoigt(x0 + truncationRadius, prep),
-                             evalVoigt(x0 - truncationRadius, prep));
-    prep.max_d = truncationRadius;
-    return prep;
-}
-
-/**
- * Profile value at x, truncated at p.max_d and pedestal-subtracted so it
- * reaches zero continuously at the window edge.
- * This is the innermost hot loop of the whole program -- it runs once per data
- * point per reflection per function evaluation -- so it is deliberately kept
- * as one self-contained function with no helper call.
- */
-function evalVoigt(x, p) {
-    if (!p) return 0.0;
-    let delta = x - p.x0;
-    if (delta > p.max_d || delta < -p.max_d) return 0.0;
-    if (p.asym_param !== 0 && Math.abs(delta) >= 1e-9) {
-        // FIX: SIGNED delta. The old code took Math.abs(delta) inside the
-        // correction, so both flanks stretched identically and SL/HL produced
-        // symmetric broadening with no asymmetry at all.
-        const t = Math.max(-0.95, Math.min(0.95, p.asym_param * delta));
-        delta /= (1.0 - t);   // 1 - t is in [0.05, 1.95], always positive
-    }
-
-    let hg, hl, cL, cG;
-    if (p.type === 1) {
-        hg = p.H_G; hl = p.H_L; cL = p.cL; cG = p.cG;
-    } else if (p.type === 2) {
-        if (delta < 0) { hg = p.H_G_L; hl = p.H_L_L; cL = p.cL_L; cG = p.cG_L; }
-        else           { hg = p.H_G_R; hl = p.H_L_R; cL = p.cL_R; cG = p.cG_R; }
-    } else {
-        hg = hl = p.fwhm; cL = p.cL; cG = p.cG;
-    }
-
-    const dg = (delta / hg) * (delta / hg);
-    const dl = (delta / hl) * (delta / hl);
-    const g = Math.exp(-p.Cg * dg);
-    const l = 1.0 / (1.0 + 4.0 * dl);
-    // cL / cG are the area-correct mixing weights (see pvMixCoeffs),
-    // renormalised so this expression is 1 at delta = 0.
-    const v = cL * l + cG * g - p.pedestal;
-    return v > 0 ? v : 0.0;
-}
-
-// Keep pseudoVoigt as a backward-compatible wrapper for any legacy call sites
+// ---------------------------------------------------------------------------
+//  MOVED to profile.js: calculatePeakShift, gaussianFromSigmaSq,
+//  lorentzianFromGamma, softFloor, applyFwhmFloor, calculateProfileWidths,
+//  getPeakFWHM, getPseudoVoigtArea, prepareVoigt and evalVoigt.
+//
+//  This was ~200 lines duplicated with refinement_worker.js, and the two
+//  copies HAD ALREADY DIVERGED: the worker carried a reciprocal-precompute
+//  optimisation in evalVoigt that never reached this file, and this file
+//  carried getPseudoVoigtArea that never reached the worker. profile.js is the
+//  merge of the two; test/test_refactor_equivalence.js asserts it reproduces
+//  the previous behaviour bit for bit.
+// ---------------------------------------------------------------------------
         /**
          * Calculates the overall diffraction pattern. Runs in main thread for previews.
          */
