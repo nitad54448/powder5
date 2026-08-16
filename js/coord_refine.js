@@ -1,6 +1,3 @@
-// Bumped whenever this file changes, same convention as swarm_wyckoff.js.
-const SHARKO_COORD_REFINE_VERSION = '2026-08-13a';
-
 /* ------------------------------------------------------------------
    coord_refine.js - the last step: Wyckoff-constrained coordinate
    refinement of a proposed structure against the Pawley intensities.

@@ -290,16 +290,43 @@ function writePdCIF(b) {
     // believed the tag would then apply its own refined zero on top, shifting
     // the pattern twice. The zero is written separately below as the refinable
     // quantity it is.
+    // The scan extent, stated as scalars as well as listed as a column.
+    //
+    // parsePdCifFile() BELOW already looks for these three tags -- they are how
+    // it reconstructs an axis from a file whose profile loop has no angle
+    // column -- and this writer never emitted them, so a powder5 pdCIF was
+    // missing the summary of its own range. They are also the fastest way for
+    // a reader (human or otherwise) to see what was actually saved, which is
+    // exactly what was in doubt when the exported range did not follow the
+    // sliders. _inc is written only for a uniform axis; asserting a step for an
+    // irregular one would misplace every point after the first gap.
+    if (b.tth.length) {
+        const ax = ioAxisStep(b.tth);
+        L.push('_pd_meas_2theta_range_min       ' + ioNum(b.tth[0], 5),
+               '_pd_meas_2theta_range_max       ' + ioNum(b.tth[b.tth.length - 1], 5));
+        if (ax.uniform) L.push('_pd_meas_2theta_range_inc       ' + ioNum(ax.step, 6));
+        L.push('_pd_meas_number_of_points       ' + b.tth.length, '');
+    }
+
     L.push('loop_',
            '    _pd_proc_point_id',
            '    _pd_meas_2theta_scan',
            '    _pd_meas_intensity_total');
     if (haveCalc) L.push('    _pd_calc_intensity_total');
     if (haveBkg)  L.push('    _pd_proc_intensity_bkg_calc');
+    // A MISSING VALUE IS "?", NOT ZERO.
+    //
+    // ioNum() turns a non-finite value into 0.000, which in a calculated
+    // intensity column is not a missing value at all -- it is the assertion
+    // that the model predicts no counts there. Over a region outside the fitted
+    // range that reads as a calculated pattern which collapses to the axis, and
+    // any program computing a residual from this file gets the observed counts
+    // back as the difference. CIF has a null token; this uses it.
+    const cifNum = (v, dp) => Number.isFinite(v) ? v.toFixed(dp) : '?';
     for (let i = 0; i < b.tth.length; i++) {
-        let row = `  ${i + 1}  ${ioNum(b.tth[i], 5)}  ${ioNum(b.obs[i], 3)}`;
-        if (haveCalc) row += `  ${ioNum(b.calc[i], 3)}`;
-        if (haveBkg)  row += `  ${ioNum(b.bkg[i], 3)}`;
+        let row = `  ${i + 1}  ${ioNum(b.tth[i], 5)}  ${cifNum(b.obs[i], 3)}`;
+        if (haveCalc) row += `  ${cifNum(b.calc[i], 3)}`;
+        if (haveBkg)  row += `  ${cifNum(b.bkg[i], 3)}`;
         L.push(row);
     }
     L.push('');

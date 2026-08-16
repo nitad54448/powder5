@@ -1,3 +1,169 @@
+// ---------------------------------------------------------------------------
+//  ZIP CONTAINERS
+//
+//  .brml (Bruker) and .rasx (Rigaku) are not XML files. They are ZIP archives
+//  with XML and text INSIDE them, and the loader read every file as text -- so
+//  a .brml arrived as the raw deflate stream, its extension matched the BRML
+//  rule, DOMParser was handed binary and threw, and the file fell through to
+//  the two-column fallback which found nothing. The registry entry for .rasx
+//  additionally routed to the BRML parser, which would not have worked even on
+//  an unzipped one: RASX keeps its intensities in a plain text profile, not in
+//  the XML at all.
+//
+//  Requires lib/jszip.min.js. Without it the archive formats are refused with
+//  a message that says so, rather than failing as a parse error.
+// ---------------------------------------------------------------------------
+
+/** ZIP local file header magic, "PK\x03\x04". */
+const isZipBuffer = (buf) => {
+    const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+    return b.length >= 4 && b[0] === 0x50 && b[1] === 0x4B && b[2] === 0x03 && b[3] === 0x04;
+};
+
+/**
+ * Bytes to text, without mangling the legacy formats.
+ *
+ * Most instrument text files are ASCII, but the older ones carry degree signs
+ * and micro symbols in a single-byte codepage. Strict UTF-8 would reject those
+ * bytes and lenient UTF-8 turns them into replacement characters, so a failed
+ * UTF-8 decode falls back to windows-1252 rather than keeping the damage.
+ */
+const decodeTextBuffer = (buf) => {
+    let s = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+    if (s.indexOf('\uFFFD') >= 0) {
+        try { s = new TextDecoder('windows-1252').decode(buf); } catch (e) { /* keep utf-8 */ }
+    }
+    return s;
+};
+
+/**
+ * Pull a wavelength out of whatever XML an archive happens to carry.
+ *
+ * Every vendor spells it differently and the surrounding schema is large, so
+ * this looks for the number rather than the structure. Bounded to 0.3-3.0 A:
+ * that covers every laboratory anode and neutron instrument, and rejects the
+ * unrelated numbers -- goniometer radii, slit widths, timestamps -- that a
+ * looser pattern would pick up.
+ */
+const sniffWavelengthFromXml = (xml) => {
+    const pats = [
+        /kAlpha1[^0-9\-]{0,40}([0-9]*\.[0-9]+)/i,
+        /<Wavelength[^>]*>\s*([0-9]*\.[0-9]+)/i,
+        /Wavelength[^0-9\-]{0,40}([0-9]*\.[0-9]+)/i
+    ];
+    for (const p of pats) {
+        const m = xml.match(p);
+        if (m) {
+            let v = parseFloat(m[1]);
+            // Rigaku states it in nm in some files.
+            if (v > 0.03 && v < 0.3) v *= 10;
+            if (v >= 0.3 && v <= 3.0) return v;
+        }
+    }
+    return null;
+};
+
+/**
+ * Parse an unzipped archive, given its entries as {name, text}.
+ *
+ * Tried in order of how specifically the entry names identify the vendor, so a
+ * container that happens to hold several readable things is read as the format
+ * it actually is rather than as whichever entry sorted first.
+ *
+ * @param {{name: string, text: string}[]} entries
+ * @param {string} fileName
+ */
+const parseZipEntries = (entries, fileName) => {
+    const xml = entries.filter(e => /\.xml$/i.test(e.name));
+    const problems = [];
+
+    //   Bruker BRML: the scan lives in Experiment*/RawData*.xml
+    const raw = entries.filter(e => /rawdata.*\.xml$/i.test(e.name));
+    for (const e of raw) {
+        try {
+            const r = parseBrukerBrmlFile(e.text);
+            if (r && r.tth && r.tth.length) {
+                if (!r.wavelength) {
+                    for (const x of xml) {
+                        const wl = sniffWavelengthFromXml(x.text);
+                        if (wl) { r.wavelength = wl; break; }
+                    }
+                }
+                return r;
+            }
+        } catch (err) { problems.push(`${e.name}: ${err.message}`); }
+    }
+
+    //   Rigaku RASX: intensities in Data*/Profile*.txt, conditions in XML
+    const prof = entries.filter(e => /profile.*\.txt$/i.test(e.name));
+    for (const e of prof) {
+        try {
+            const r = parseDataFile(e.text, `${fileName}:${e.name}`);
+            if (r && r.tth && r.tth.length) {
+                for (const x of xml) {
+                    const wl = sniffWavelengthFromXml(x.text);
+                    if (wl) { r.wavelength = wl; break; }
+                }
+                return r;
+            }
+        } catch (err) { problems.push(`${e.name}: ${err.message}`); }
+    }
+
+    //   An XRDML or anything else the ordinary detector recognises.
+    for (const e of entries) {
+        // Skip the metadata files every container carries; running the
+        // two-column fallback over them yields a few stray numbers that look
+        // like a one-point pattern.
+        if (/(^|\/)(\[Content_Types\]|_rels|docProps)/i.test(e.name)) continue;
+        try {
+            const r = detectAndParseFile(e.name, e.text);
+            if (r && r.tth && r.tth.length > 1) return r;
+        } catch (err) { problems.push(`${e.name}: ${err.message}`); }
+    }
+
+    throw new Error(
+        `${fileName} is a ZIP archive, but none of its ${entries.length} entries ` +
+        `held a readable powder scan.` +
+        (problems.length ? ` Tried: ${problems.slice(0, 3).join('; ')}` : ''));
+};
+
+/**
+ * The loader's entry point: bytes in, parsed pattern out.
+ *
+ * Async because unzipping is. Everything that is not an archive takes the same
+ * synchronous path it always did, decoded from the buffer instead of being
+ * handed to FileReader.readAsText.
+ *
+ * @param {string} fileName
+ * @param {ArrayBuffer} buffer
+ * @returns {Promise<object>}
+ */
+const detectAndParseBuffer = async (fileName, buffer) => {
+    if (!isZipBuffer(buffer)) {
+        return detectAndParseFile(fileName, decodeTextBuffer(buffer));
+    }
+    if (typeof JSZip === 'undefined') {
+        throw new Error(
+            `${fileName} is a ZIP archive (.brml and .rasx both are), and the unzip ` +
+            `library is not loaded. Add lib/jszip.min.js, or unzip the file and open ` +
+            `the RawData XML or Profile text inside it.`);
+    }
+    const zip = await JSZip.loadAsync(buffer);
+    const entries = [];
+    const names = Object.keys(zip.files).filter(n => !zip.files[n].dir);
+    for (const n of names) {
+        // Only the text members are of interest; an embedded image or a
+        // thumbnail decoded as text is megabytes of noise for the parsers to
+        // walk through.
+        if (!/\.(xml|txt|csv|dat|asc|raw|xrdml|ras|rels)$/i.test(n) && !/rawdata/i.test(n)) continue;
+        entries.push({ name: n, text: await zip.files[n].async('string') });
+    }
+    if (!entries.length) {
+        throw new Error(`${fileName} is a ZIP archive with no text entries to read.`);
+    }
+    return parseZipEntries(entries, fileName);
+};
+
 /**
          * Smart file detector. It checks for known headers and extensions
          * and falls back to a generic 2-column parser.
@@ -30,9 +196,16 @@
                     test: (name, content) => name.endsWith('.brml') || (content.includes('<?xml') && content.includes('<RawDataFile')),
                     parser: parseBrukerBrmlFile
                 },
-                { // Rigaku RASX (try brml parser)
-                    test: (name, content) => name.endsWith('.rasx') && content.includes('<?xml'),
-                    parser: parseBrukerBrmlFile
+                { // Rigaku RASX, already unzipped by hand.
+                  //
+                  // This used to route to parseBrukerBrmlFile, which looks for
+                  // <RawDataFile> and Bruker's TwoTheta axis attributes -- tags
+                  // a RASX does not contain. RASX keeps its intensities in a
+                  // plain two-column Profile text member, so an unzipped one
+                  // reaching this point is either that text or an XML that only
+                  // carries conditions. Both are handled by falling through.
+                    test: (name, content) => name.endsWith('.rasx') && !content.includes('<?xml'),
+                    parser: parseDataFile
                 },
                 { // UXD
                     test: (name, content, firstLine) => name.endsWith('.uxd') || firstLine.startsWith('_FILEVERSION'),

@@ -94,6 +94,46 @@ var<workgroup> rPen: array<f32, WG>;
 var<workgroup> rWgt: array<f32, WG>;
 var<workgroup> local_rMin: array<f32, 256>;
 
+
+// COUNTING NEIGHBOURS NEEDS EVERY IMAGE, NOT THE NEAREST ONE.
+//
+// cartDist below returns a single scalar: the distance to the CLOSEST image of
+// atom j. That is the right answer for a clash floor and for "how far is the
+// nearest partner", and it is the wrong answer for "how many partners are
+// there". Two lattice translates of the same j can both sit inside a
+// coordination shell whenever the repeat is short enough -- a cubic perovskite
+// B cation has its six oxygens as three symmetry images and their three
+// translates, so a "B O 6" rule counted three and charged the structure for the
+// other three forever. The host reference in contacts.js has always enumerated
+// the neighbouring cells and counted each image separately; this makes the
+// kernel agree with it.
+//
+// COUNT_SHELL is applied ONLY to the rule-matching pairs, so the 27x cost falls
+// on the handful of A-B pairs a constraint actually names rather than on the
+// whole contact loop. Injected like MIN_IMAGE_SHELL; setting it to 0 restores
+// the previous nearest-image-only counting.
+const COUNT_SHELL: i32 = 1;  //__COUNT_SHELL__
+
+// The fractional separation, in the reduced basis, wrapped to the nearest
+// image. Split out of cartDist so the shell can be walked without recomputing
+// the basis transform for every translation.
+fn fracDelta(p1: vec3<f32>, p2: vec3<f32>) -> vec3<f32> {
+    let d = p1 - p2;
+    let q = vec3<f32>(
+        params.r0.x*d.x + params.r0.y*d.y + params.r0.z*d.z,
+        params.r1.x*d.x + params.r1.y*d.y + params.r1.z*d.z,
+        params.r2.x*d.x + params.r2.y*d.y + params.r2.z*d.z);
+    return q - round(q);
+}
+
+/** Cartesian length of a fractional vector in the reduced basis. */
+fn cartLen(t: vec3<f32>) -> f32 {
+    let cx = params.o0.x*t.x + params.o0.y*t.y + params.o0.z*t.z;
+    let cy = params.o1.x*t.x + params.o1.y*t.y + params.o1.z*t.z;
+    let cz = params.o2.x*t.x + params.o2.y*t.y + params.o2.z*t.z;
+    return sqrt(cx*cx + cy*cy + cz*cz);
+}
+
 fn cartDist(p1: vec3<f32>, p2: vec3<f32>) -> f32 {
     let d = p1 - p2;
     var q = vec3<f32>(
@@ -331,40 +371,64 @@ sWeight = sWeight + zw;
         for (var m = 0u; m < MAX_COORD_SLOTS; m = m + 1u) { slot[m] = NO_NEIGHBOUR; }
 
         for (var j = 0u; j < nTot; j = j + 1u) {
-            if (j == i) { continue; }
             let tj = gT[j];
-            let d = cartDist(pi, vec3<f32>(gx[j], gy[j], gz[j]));
+            let pj = vec3<f32>(gx[j], gy[j], gz[j]);
+            let d = cartDist(pi, pj);
 
-            let dmin = local_rMin[ti * u32(params.nElem) + tj];
-            if (j > i && d < dmin) {
-                let overlap = (dmin - d) / max(dmin, 1e-3);
-                pen = pen + params.penClash * (1.0 + 9.0 * overlap);
+            // The clash floor is a statement about the CLOSEST approach, so it
+            // stays on the nearest image. j == i is excluded because an atom
+            // cannot collide with itself; its lattice translates are handled
+            // by the counting pass below, which can legitimately treat them as
+            // neighbours in a short-repeat structure.
+            if (j != i) {
+                let dmin = local_rMin[ti * u32(params.nElem) + tj];
+                if (j > i && d < dmin) {
+                    let overlap = (dmin - d) / max(dmin, 1e-3);
+                    pen = pen + params.penClash * (1.0 + 9.0 * overlap);
+                }
             }
 
-            if (myRules != 0u) {
-                for (var k = 0u; k < nRules; k = k + 1u) {
-                    if ((myRules & (1u << k)) == 0u) { continue; }
-                    if (ruleB[k] != tj) { continue; }
-                    nearest[k] = min(nearest[k], d);
-                    if (d >= ruleMin[k] && d <= ruleMax[k]) {
+            if (myRules == 0u) { continue; }
+            for (var k = 0u; k < nRules; k = k + 1u) {
+                if ((myRules & (1u << k)) == 0u) { continue; }
+                if (ruleB[k] != tj) { continue; }
+
+                let nk = u32(ruleN[k]);
+                let counted = (ruleMode[k] != 0u && nk > 0u);
+                let qf = fracDelta(pi, pj);
+
+                // EVERY IMAGE OF j WITHIN THE SHELL, COUNTED SEPARATELY.
+                //
+                // Distances OUTSIDE the window are still offered to the slot
+                // list: the deficit below is graded on how far each of the N
+                // nearest partners misses by, and dropping the far ones would
+                // collapse "partner at 2.5 A, wanted 1.65" and "no partner at
+                // all" onto the same flat penalty, taking the gradient the
+                // search descends with it.
+                for (var sa = -COUNT_SHELL; sa <= COUNT_SHELL; sa = sa + 1) {
+                for (var sb = -COUNT_SHELL; sb <= COUNT_SHELL; sb = sb + 1) {
+                for (var sc = -COUNT_SHELL; sc <= COUNT_SHELL; sc = sc + 1) {
+                    let dd = cartLen(qf + vec3<f32>(f32(sa), f32(sb), f32(sc)));
+                    if (dd < 1.0e-4) { continue; }   // the atom itself
+                    nearest[k] = min(nearest[k], dd);
+                    if (dd >= ruleMin[k] && dd <= ruleMax[k]) {
                         inWindow[k] = inWindow[k] + 1.0;
                     }
-                    let nk = u32(ruleN[k]);
-                    if (ruleMode[k] != 0u && nk > 0u) {
+                    if (counted) {
                         let lo = slotOff[k];
-                        let hi = lo + nk;              
-                        if (d < slot[hi - 1u]) {
+                        let hi = lo + nk;
+                        if (dd < slot[hi - 1u]) {
                             var m = hi - 1u;
                             loop {
-                                if (m > lo && slot[m - 1u] > d) {
+                                if (m > lo && slot[m - 1u] > dd) {
                                     slot[m] = slot[m - 1u];
                                     m = m - 1u;
                                 } else { break; }
                             }
-                            slot[m] = d;
+                            slot[m] = dd;
                         }
                     }
-                }
+                }}}
             }
         }
 

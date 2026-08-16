@@ -1,7 +1,3 @@
-// Bumped whenever this file changes. Harko.html compares it against what it
-// expects and says so if a browser cache is serving something older.
-const SHARKO_CONTACTS_VERSION = '2026-08-09j';
-
 /* ------------------------------------------------------------------
    Interatomic distances for a candidate structure.
 

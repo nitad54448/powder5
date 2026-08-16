@@ -1,5 +1,5 @@
 // charge_flipping.wgsl
-// version 138, 2 august 2026
+// version 157, 16 august 2026
 //
 // WebGPU kernels for dual-space charge flipping on powder data, with the
 // space group applied DIRECTLY inside the iteration loop.

@@ -1,4 +1,5 @@
 // constants.js
+// version 157, 16 aug 2026
 // ---------------------------------------------------------------------------
 //  SINGLE SOURCE OF TRUTH for the physical and numerical constants shared by
 //  the main thread (powder5.html), refinement_worker.js and

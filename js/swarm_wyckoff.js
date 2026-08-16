@@ -1,9 +1,3 @@
-// Bumped whenever this file changes. Harko.html compares it against what it
-// expects and says so if a browser cache is serving something older - a stale
-// module reports errors at line numbers that no longer exist, which sends you
-// looking for a bug that was already fixed.
-const SHARKO_SWARM_WYCKOFF_VERSION = '2026-08-09j';
-
 /* ------------------------------------------------------------------
    swarm_wyckoff.js - the whole Wyckoff-constrained structure search.
 
@@ -157,7 +151,7 @@ function swMaxGenAtoms(device, floor = 128) {
     }
 }
 
-function swInject(src, maxGen, minImageShell = 0, groupStride = 3) {
+function swInject(src, maxGen, minImageShell = 0, groupStride = 3, countShell = 1) {
     let out = src.replace(
         /const\s+MAX_GEN_ATOMS\s*:\s*u32\s*=\s*\d+u\s*;\s*\/\/__MAX_GEN_ATOMS__/,
         `const MAX_GEN_ATOMS: u32 = ${maxGen}u; //__injected__`);
@@ -168,6 +162,18 @@ function swInject(src, maxGen, minImageShell = 0, groupStride = 3) {
         /const\s+MIN_IMAGE_SHELL\s*:\s*i32\s*=\s*-?\d+\s*;\s*\/\/__MIN_IMAGE_SHELL__/,
         `const MIN_IMAGE_SHELL: i32 = ${minImageShell}; //__injected__`);
     if (out === before) throw new Error('MIN_IMAGE_SHELL marker not found in the kernel source.');
+
+    // COUNT_SHELL governs how many lattice translations the COORDINATION
+    // COUNTING walks, which is a different question from MIN_IMAGE_SHELL's
+    // "is the nearest-image distance trustworthy in this basis". Counting needs
+    // the neighbouring cells whatever the basis, because two translates of one
+    // atom can both be genuine neighbours; 1 matches expandForContacts() in
+    // contacts.js, which is the reference these numbers have to agree with.
+    const beforeCount = out;
+    out = out.replace(
+        /const\s+COUNT_SHELL\s*:\s*i32\s*=\s*-?\d+\s*;\s*\/\/__COUNT_SHELL__/,
+        `const COUNT_SHELL: i32 = ${countShell}; //__injected__`);
+    if (out === beforeCount) throw new Error('COUNT_SHELL marker not found in the kernel source.');
 
     // GROUP_STRIDE only exists in the reflection kernel, so a missing marker is
     // not an error here - the density kernel legitimately has none.
@@ -575,6 +581,11 @@ async function runWyckoffSearch(o) {
         }
     }
 
+    // The coordination filter is CORRECT and stays on. Checked against PbSO4 in
+    // Pnma: without it the enumeration returns 35 assignments, with it 19, and
+    // the true one (Pb 4c / S 4c / O 8d + O 4c + O 4c) is present either way.
+    // All it removes is sulfur on 4a and 4b, both of which have an inversion
+    // centre that no tetrahedron can sit on -- exactly what it claims to do.
     const en = enumerateAssignments(o.setting.wyckoff, demand, {
         maxSites: o.maxSitesPerElement ?? SW_DEFAULTS.maxSitesPerElement,
         maxRepeat: o.maxRepeat ?? SW_DEFAULTS.maxRepeatPerPosition,
@@ -815,8 +826,68 @@ const S = GPUBufferUsage.STORAGE;
     params[PARAM.fTabOff] = fTabOff;
     params[PARAM.nRefl] = refl.nRefl;
     params[PARAM.penClash] = o.penClash ?? SW_DEFAULTS.penClash;
-    params[PARAM.penBond] = o.penBond ?? SW_DEFAULTS.penBond;
-    params[PARAM.penCoord] = o.penCoord ?? SW_DEFAULTS.penCoord;
+
+    // THE BOND PENALTY IS PER CHARGED NEIGHBOUR SLOT, NOT A RAW SUM.
+    //
+    // penBond and penCoord are documented as being "in CC units", and they were
+    // not: the kernel accumulates them over every atom carrying a rule and every
+    // neighbour slot that rule tracks, and hands the total to a score that is
+    // CC minus the penalty, with CC confined to [0, 1]. On PbSO4 with the one
+    // reasonable rule "S O 4 1.35/1.65" that is four sulfurs times four slots,
+    // and at a random start with the nearest oxygens near 3 A the raw penalty
+    // is 13.8 -- multiplied by the ramp, between 2.8 and 55. Against a
+    // correlation that can only move by 1.0 in total, the diffraction data is
+    // switched off: the sampler optimises geometry alone until a tetrahedron
+    // exists, and only then does CC begin to matter, by which point the chain
+    // is in whatever basin the geometry led it to.
+    //
+    // The symptom is a search that gets WORSE when given correct chemistry. The
+    // run that produced this fix returned CC 0.699 with the constraint and CC
+    // 0.993 without, and the structure it chose satisfied the constraint less
+    // well than the one it rejected -- zero oxygens in the window against four,
+    // penalty 0.87 against 0.00. It lost on both terms, which can only happen
+    // if the objective it was actually descending was neither of them.
+    //
+    // Dividing by the number of charged slots restores the documented meaning:
+    // one unit of penBond per Angstrom of error PER BOND. The same PbSO4 start
+    // then costs 0.17 early and 3.46 late, so the data leads while the swarm is
+    // choosing a basin and the geometry closes it out -- which is what the
+    // ramp was written to do. A structure that satisfies its constraints is
+    // charged nothing either way, so the answer's score is unchanged.
+    //
+    // Applied on the host, to penBond and penCoord only. Those two params
+    // appear nowhere in the kernel except the rule branches, so the clash term
+    // -- which is tuned, unnormalised, and works -- is untouched.
+    const nOf = (el) => {
+        const d = demand.find(x => String(x.element).toUpperCase() === String(el).toUpperCase());
+        return d ? d.count : 0;
+    };
+    let bondSlots = 0, coordCentres = 0;
+    for (const w of (o.windows || [])) {
+        const nA = nOf(w.a);
+        if (!nA) continue;
+        const hasCount = Number.isFinite(w.count) && w.count > 0;
+        const hasMax = Number.isFinite(w.dmax);
+        if (hasCount) {
+            bondSlots += nA * w.count;      // one slot per demanded neighbour
+            coordCentres += nA;             // the surplus term charges once per centre
+        } else if (hasMax) {
+            bondSlots += nA;                // nearest-neighbour rule: one charge per centre
+            // buildRestraintTables mirrors a bare upper bound, so B is charged too.
+            if (w.bothWays !== false && String(w.a).toUpperCase() !== String(w.b).toUpperCase()) {
+                bondSlots += nOf(w.b);
+            }
+        }
+    }
+    const bondNorm = Math.max(1, bondSlots);
+    const coordNorm = Math.max(1, coordCentres);
+    params[PARAM.penBond] = (o.penBond ?? SW_DEFAULTS.penBond) / bondNorm;
+    params[PARAM.penCoord] = (o.penCoord ?? SW_DEFAULTS.penCoord) / coordNorm;
+    if (bondSlots > 0) {
+        say(`Distance restraints charge ${bondSlots} neighbour slot(s) across the cell; ` +
+            `penBond is divided by that, so the penalty is per bond and stays commensurate ` +
+            `with the correlation instead of swamping it.`);
+    }
     params[PARAM.penScale] = SW_DEFAULTS.penRampStart;
     
     params[PARAM.nGroupsActive] = o.densityMap ? o.gridSize : refl.nGroups;

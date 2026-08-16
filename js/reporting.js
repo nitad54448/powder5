@@ -816,6 +816,28 @@ function generateWyckoffReport(st) {
         }
     }
 
+    // The restraints the search ran under, spelled out.
+    //
+    // Without this the report states an R factor and a set of coordinates and
+    // leaves out what the coordinates were REQUIRED to satisfy -- and a
+    // structure produced under a coordination demand is a different claim from
+    // one produced without it. describeDistanceConstraint lives in powder5.html
+    // and is the same formatter the Results panel uses, so the report and the
+    // screen cannot describe the same rule two different ways.
+    const cons = Array.isArray(st.distanceConstraints) ? st.distanceConstraints : [];
+    lines.push('', '--- Distance Constraints ---');
+    if (cons.length && typeof describeDistanceConstraint === 'function') {
+        cons.forEach(w => lines.push('  ' + describeDistanceConstraint(w)));
+        lines.push('',
+            '  A constraint naming a coordination number is enforced on that many',
+            '  nearest partners of the named centre, and only outward FROM the first',
+            '  element: "S O 4" asks each S for four O, not each O for four S.',
+            '  Partners are counted per symmetry image AND per lattice translation, so',
+            '  an atom bonded to two translates of one neighbour counts both.');
+    } else {
+        lines.push('  None. Only the minimum-contact floor was applied.');
+    }
+
     lines.push('',
         'Coordinates were fitted to the Pawley intensities and tabulated scattering',
         'factors, weighted on 1/sigma^2 from the Pawley decomposition rather than on',

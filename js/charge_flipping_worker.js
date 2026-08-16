@@ -1,5 +1,5 @@
 // charge_flipping_worker.js
-// version 138, 2 august 2026 -- GPU (WebGPU) path with CPU fallback,
+// version 157, 16 august 2026 -- GPU (WebGPU) path with CPU fallback,
 // space group applied inside the iteration.
 //
 // Dual-space charge flipping (Oszlanyi & Suto, Acta Cryst A60 (2004) 134)
@@ -2580,7 +2580,12 @@ async function runWyckoffDensityFit(densityMap, N, cell, symops, job) {
     }
 
 
-    postMessage({ type: 'cf-wyckoff-start', message: 'Compiling WebGPU Swarm...' });
+    // "Compiling WebGPU Swarm..." described an internal implementation step to
+    // a user who has no way to act on it, and it stayed on screen as the last
+    // thing said until the first progress message arrived -- so an idle panel
+    // read as if a shader compile were stuck. The phase is now named for what
+    // the program is doing on the user's behalf.
+    postMessage({ type: 'cf-wyckoff-start', message: 'Preparing\u2026' });
 
     let out;
     try {

@@ -31,6 +31,10 @@
     <script src="js/charting.js"></script>
     <script src="js/spline_background.js"></script>
     <script src="js/refinement_controller.js"></script>
+    <!-- .brml and .rasx are ZIP archives; parsers.js unzips them through this.
+         Absent, those two formats are refused with an explanation rather than
+         failing as a parse error - nothing else depends on it. -->
+    <script src="lib/jszip.min.js"></script>
     <script src="lib/jspdf.umd.min.js"></script>
 
     <script src="lib/html2canvas.min.js"></script>
@@ -245,7 +249,14 @@
                            <label for="show-spline-points-checkbox" class="control-label">Show Points on Chart</label>
                            <input type="checkbox" id="show-spline-points-checkbox" class="fit-checkbox" style="justify-self: start;">
                        </div>
-                        <div id="spline-points-list" style="max-height: 230px; overflow-y: auto; border: 1px solid var(--system-gray-4); border-radius: 8px; padding: 8px 0 8px 8px;">
+                        <!-- The height was pinned at 230px, which showed about
+                             six of forty anchors on any screen. It now scales
+                             with the viewport (the subtracted constant is the
+                             header, tab strip and the two controls above this
+                             list) and carries a drag handle, so a tall window
+                             shows the whole table and a short one still leaves
+                             the rest of the panel reachable. -->
+                        <div id="spline-points-list" style="height: clamp(160px, calc(100vh - 420px), 62vh); overflow-y: auto; resize: vertical; border: 1px solid var(--system-gray-4); border-radius: 8px; padding: 8px 0 8px 8px;">
                             </div>
                     </div>
                 </div>
@@ -406,10 +417,10 @@
             <!-- CHARGE FLIPPING TAB -->
             <div id="tab-panel-charge-flipping" class="tab-content-panel">
                 <div class="control-group">
-                    <h2>Ab Initio Structure Solution</h2>
+                
                     <p style="font-size: 12px; color: var(--system-secondary-label); margin-bottom: 12px;">
                         Solves the structure from the Pawley-extracted intensities by dual-space Charge Flipping.
-                        The selected space group is applied inside the iteration: orbits are generated from its real
+                        The selected space group can be applied inside the iteration: orbits are generated from its real
                         symmetry operators, systematic absences are held at zero, and symmetry equivalents are
                         constrained to equal |F|. Only reflections that genuinely overlap in 2θ share their intensity.
                     </p>
@@ -630,21 +641,12 @@
                  handlers bind to it unchanged.
                  ============================================================== -->
             <div id="tab-panel-wyckoff" class="tab-content-panel">
-
-                        <h2 style="margin: 0 0 12px 0;">Wyckoff Target Composition</h2>
-                        
-
-
-
-
-
-
                         <div id="cf-wyckoff-inputs">
                     <p style="font-size: 12px; color: var(--system-secondary-label); margin-bottom: 12px;">
                         Fits atoms on Wyckoff positions of the given composition directly to the
-                        Pawley intensities. It needs no charge-flipping map: the objective is
+                        Pawley intensities. The objective is
                         |F<sub>calc</sub>|&sup2; against the observed intensities, weighted by
-                        1/&sigma;&sup2;, so light atoms are not lost under the ripples of a heavy one.
+                        1/&sigma;&sup2;.
                     </p>
 
                     <div class="parameter-grid-2col">
@@ -676,7 +678,7 @@
                         <label class="control-label" for="cf-wyckoff-iterations"
                                title="Steps per chain. Logarithmic: the useful range spans three decades and a linear slider spends most of its travel between 5000 and 10000.">Iterations</label>
                         <div class="slider-value-track">
-                            <input type="range" id="cf-wyckoff-iterations" class="custom-slider" min="0" max="1000" step="1" value="767">
+                            <input type="range" id="cf-wyckoff-iterations" class="custom-slider" min="0" max="10000" step="1" value="767">
                             <span id="cf-wyckoff-iterations-value" class="slider-value-display">2000</span>
                         </div>
 
@@ -689,7 +691,7 @@
 
                         <label class="control-label" for="cf-wyckoff-min-contact"
                                title="Floor applied to every unlike atom pair. A candidate that breaks it is rejected outright, before and after the coordinate refinement.">Min contact (&Aring;)</label>
-                        <input type="number" id="cf-wyckoff-min-contact" min="0.5" max="4" step="0.05" value="1.0" class="control-input">
+                        <input type="number" id="cf-wyckoff-min-contact" min="0.5" max="4" step="0.05" value="1.1" class="control-input">
                     </div>
 
                     <label class="control-label" for="cf-wyckoff-windows" style="display:block; margin: 12px 0 4px 0;"
@@ -697,6 +699,11 @@
                     <textarea id="cf-wyckoff-windows" class="control-input" rows="3"
                               style="width:100%; box-sizing:border-box; font-family: var(--font-mono); font-size: 12px;"
                               placeholder="S O 4 1.35/1.65"></textarea>
+                    <!-- Reads back every rule as a sentence, and names the ones
+                         that will not be applied. A dropped rule used to be
+                         invisible: the search simply ran without it. -->
+                    <div id="cf-wyckoff-windows-status" class="cf-hint"
+                         style="margin-top: 6px; font-size: 12px; line-height: 1.45;"></div>
                 </div>
                     
 
@@ -978,7 +985,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 156, 16 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 157, 16 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -987,6 +994,7 @@
     //13 aug, moved the Wyckoff constraint block
     //14 aug, chenged the peak search in CF from interpolation to block integr
     //removed the cctbx dependencies, all data is in /sg and /scatter
+    //16 aug, v 157, corrected the brgl and rigaku zip formats; corrected the Wyckoff search constraints 
 
     document.addEventListener('DOMContentLoaded', async () => {     
     
@@ -1144,6 +1152,7 @@
         terminateChargeFlipWorker();
         wySetRunning(false);
         document.body.style.cursor = '';
+        wyckoffPhase = 'idle';
         setWyckoffStatus('Search cancelled.', 'warn');
         showToast('Wyckoff search cancelled.', 'info');
     });
@@ -1194,6 +1203,19 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
         }
         const mc = document.getElementById('cf-wyckoff-min-contact');
         if (mc) mc.addEventListener('change', () => clampNumberInput(mc, 1.0));
+
+        // Read the rules back as sentences while they are being typed. The
+        // element check needs the formula, so a change there re-runs it too:
+        // "S O 4 1.35/1.65" is a valid line and a dead rule at the same time if
+        // the composition says PbSO4 was actually typed as PbS04 with a zero.
+        const wnd = document.getElementById('cf-wyckoff-windows');
+        const frm = document.getElementById('cf-wyckoff-formula');
+        if (wnd) {
+            const sync = () => renderConstraintStatus();
+            wnd.addEventListener('input', sync);
+            if (frm) frm.addEventListener('input', sync);
+            sync();
+        }
     }
 
     document.getElementById('cf-iso-map').addEventListener('change', () => {        // Sync the level control immediately rather than waiting for the
@@ -1954,6 +1976,10 @@ function cfIsCentrosymmetricSetting() {
  *
  * @param {object} msg  A cf-wyckoff-start or cf-wyckoff-progress message.
  */
+/** Which phase the Wyckoff panel is currently reporting: idle, preparing or
+ *  processing. Tracked so the status line is written once per transition. */
+let wyckoffPhase = 'idle';
+
 function wyckoffProgress(msg) {
     const cont = document.getElementById('wyckoff-progress-container');
     if (cont) cont.classList.remove('hidden');
@@ -1961,12 +1987,30 @@ function wyckoffProgress(msg) {
     const gen = document.getElementById('wyckoff-gen-count');
     const cc  = document.getElementById('wyckoff-cc');
 
+    // THE PHASE IS NAMED FOR WHAT THE USER IS WAITING ON, NOT FOR THE STEP.
+    //
+    // Every message used to be passed straight through, so the panel read
+    // "Compiling WebGPU Swarm..." -- an internal step nobody can act on -- and
+    // then kept reading it, because nothing overwrote the text until the run
+    // finished. An idle panel therefore looked like a stalled shader compile.
+    // There are now three states: Preparing while the device and tables are
+    // built, Processing once generations are arriving, and a result at the end.
+    // The idle state is the en dash setWyckoffStatus() already falls back to.
     if (msg.type === 'cf-wyckoff-start') {
         if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; void bar.offsetWidth; }
-        if (gen) gen.textContent = msg.message || 'starting\u2026';
+        if (gen) gen.textContent = 'Preparing\u2026';
         if (cc) cc.textContent = '--';
-        setWyckoffStatus(msg.message || 'Starting\u2026');
+        wyckoffPhase = 'preparing';
+        setWyckoffStatus('Preparing\u2026');
         return;
+    }
+
+    // First progress message: the preparation is over and the search is
+    // running. Set once rather than on every generation, so the status line is
+    // not rewritten a thousand times with the same string.
+    if (msg.generation === 0 || wyckoffPhase !== 'processing') {
+        wyckoffPhase = 'processing';
+        setWyckoffStatus('Processing\u2026');
     }
 
     const frac = (msg.wave - 1 + (msg.restart - 1 + msg.generation / msg.generations) / msg.restarts) / msg.waves;
@@ -2137,11 +2181,38 @@ function logEvent(message) {
  *
  * @returns {object|null} null when there is no data to write.
  */
-function buildExportBundle() {
+function buildExportBundle(opts) {
     if (!fullExperimentalData || !fullExperimentalData.tth || !fullExperimentalData.tth.length) return null;
 
-    const tth = Array.from(fullExperimentalData.tth);
-    const obs = Array.from(fullExperimentalData.intensity);
+    let tth = Array.from(fullExperimentalData.tth);
+    let obs = Array.from(fullExperimentalData.intensity);
+
+    // THE EXPORT FOLLOWS THE 2-THETA SLIDERS.
+    //
+    // This used to write fullExperimentalData unconditionally, so narrowing the
+    // range and refitting changed everything on screen and nothing in the saved
+    // file: the pdCIF still carried the original span, and the region outside
+    // the fit -- which has no calculated profile at all -- was filled in below
+    // with zeros by ioNum(). The result was a file whose 2-theta range never
+    // updated and whose calculated pattern was flat over whatever the user had
+    // excluded. The fitted window is what the calculated columns actually
+    // describe, so it is what gets written.
+    const limit = !opts || opts.limitToRange !== false;
+    if (limit && controls.tthMinSlider && controls.tthMaxSlider &&
+        !controls.tthMinSlider.disabled) {
+        const lo = parseFloat(controls.tthMinSlider.value);
+        const hi = parseFloat(controls.tthMaxSlider.value);
+        if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo) {
+            const keptT = [], keptO = [];
+            for (let i = 0; i < tth.length; i++) {
+                if (tth[i] >= lo && tth[i] <= hi) { keptT.push(tth[i]); keptO.push(obs[i]); }
+            }
+            // Only if something survives: an empty export is worse than a full
+            // one, and a range that excludes every point is a slider bug, not
+            // an instruction to write nothing.
+            if (keptT.length >= 2) { tth = keptT; obs = keptO; }
+        }
+    }
 
     let calc = null, bkg = null;
     try {
@@ -2211,8 +2282,18 @@ function openExportModal() {
                     'wavelength, the cell, the space group and the reflection list with its ' +
                     'standard uncertainties. The only format here that keeps the whole result.'
         };
-        document.getElementById('export-format-note').textContent = notes[sel.value] || '';
+        // What will actually be written, in points and degrees. The dialog used
+        // to describe the FORMAT and say nothing about the extent, so there was
+        // no way to notice that the range being saved was not the one on screen.
+        const b = buildExportBundle({ limitToRange: limitEl ? limitEl.checked : true });
+        const extent = (b && b.tth.length)
+            ? `  Writing ${b.tth.length} point(s), ` +
+              `${b.tth[0].toFixed(3)}\u2013${b.tth[b.tth.length - 1].toFixed(3)}\u00b0.`
+            : '';
+        document.getElementById('export-format-note').textContent = (notes[sel.value] || '') + extent;
     };
+    const limitEl = document.getElementById('export-limit-range');
+    if (limitEl) limitEl.onchange = sync;
     sel.onchange = sync;
     sync();
 
@@ -2232,7 +2313,8 @@ function doExport() {
     const err = document.getElementById('export-error');
     const show = (m) => { err.textContent = m; err.style.display = ''; };
     try {
-        const bundle = buildExportBundle();
+        const limitEl = document.getElementById('export-limit-range');
+        const bundle = buildExportBundle({ limitToRange: limitEl ? limitEl.checked : true });
         if (!bundle) return show('There is no pattern to save.');
         const id = document.getElementById('export-format').value;
         let name = (document.getElementById('export-filename').value || '').trim();
@@ -2362,11 +2444,39 @@ function parseDistanceConstraints(text) {
         let count = null, mode = null, dmin = null, dmax = null;
 
         if (!hasSlash) {
-            dmin = parseFloat(rest[0]);
-            if (!Number.isFinite(dmin)) { bad.push(`line ${i + 1}: "${rest[0]}" is not a distance`); return; }
-            if (rest.length > 1) {
-                dmax = parseFloat(rest[1]);
-                if (!Number.isFinite(dmax)) { bad.push(`line ${i + 1}: "${rest[1]}" is not a distance`); return; }
+            // THE COUNT PLACEHOLDER IS ACCEPTED HERE TOO.
+            //
+            // "O O - 2.0" and "O O - 2.0/" mean the same thing to a reader --
+            // no coordination number, a floor at 2.0 A -- but only the second
+            // parsed. The '-' was recognised solely inside the slash branch, so
+            // the first form reached parseFloat('-'), came back NaN and was
+            // rejected as "not a distance". The rejection was then discarded by
+            // both launchers, so the rule silently did not exist.
+            let nums = rest;
+            if (rest[0] === '-' || rest[0] === '*') {
+                count = null;
+                nums = rest.slice(1);
+                if (!nums.length) {
+                    bad.push(`line ${i + 1}: "${a} ${b} ${rest[0]}" states nothing - ` +
+                             `add a distance, e.g. "${a} ${b} - 2.0"`);
+                    return;
+                }
+            } else if (/^\d+\+?$/.test(rest[0]) && rest.length === 1) {
+                // A bare integer with no distance anywhere on the line is a
+                // coordination number the user forgot to give a window for,
+                // not a 4 angstrom bond. Reading it as a distance is silently
+                // wrong, so say so instead.
+                bad.push(`line ${i + 1}: "${rest[0]}" on its own is ambiguous - ` +
+                         `write "${a} ${b} ${rest[0]} dmin/dmax" for a coordination number, ` +
+                         `or "${a} ${b} ${rest[0]}.0" for a distance`);
+                return;
+            }
+
+            dmin = parseFloat(nums[0]);
+            if (!Number.isFinite(dmin)) { bad.push(`line ${i + 1}: "${nums[0]}" is not a distance`); return; }
+            if (nums.length > 1) {
+                dmax = parseFloat(nums[1]);
+                if (!Number.isFinite(dmax)) { bad.push(`line ${i + 1}: "${nums[1]}" is not a distance`); return; }
             }
         } else {
             let range;
@@ -2412,6 +2522,199 @@ function parseDistanceConstraints(text) {
         out.push({ a, b, count, countMode: mode, dmin, dmax });
     });
     return { windows: out, bad, warn };
+}
+
+/**
+ * Kernel limits the distance restraints are packed against.
+ *
+ * These are compile-time array bounds in swarm_density.wgsl and
+ * swarm_reflection.wgsl, not preferences. The shader clamps the rule count with
+ * min(), and indexes one shared coordination-slot array across all rules, so
+ * exceeding either bound does NOT fail -- it silently drops rules, or lets one
+ * rule's neighbour slots run into the next one's. Both are checked on the host
+ * so the user is told, rather than being handed a search that quietly enforced
+ * something other than what was typed.
+ *
+ * DECLARED INSIDE validateDistanceConstraints, NOT BESIDE IT. Everything in
+ * this file from the DOMContentLoaded handler down shares one function scope,
+ * and the constraint textarea is wired up some 1300 lines ABOVE this point --
+ * so a `const` here is still in its temporal dead zone when that wiring paints
+ * the status line for the first time, and the whole initialisation chain dies
+ * on a ReferenceError. Function declarations hoist and `const` does not, which
+ * is why the functions around it were fine and these two were not.
+ */
+
+/**
+ * One distance constraint, in words.
+ *
+ * The textarea is a terse syntax the user has to hold in their head; the
+ * Results panel is read later, often by somebody else, and "S O 4 1.35/1.65"
+ * there asks the reader to re-derive the grammar from the manual. This states
+ * the same rule as a sentence, so what the search was actually told is legible
+ * in the report it produced.
+ *
+ * @param {object} w  One entry from parseDistanceConstraints().windows
+ * @returns {string}
+ */
+function describeDistanceConstraint(w) {
+    if (!w) return '';
+    // The parser upper-cases both symbols so the rules match the kernel's type
+    // table case-insensitively. That is the right thing to compare on and the
+    // wrong thing to print: "PB-O" is not how anybody writes lead.
+    const cap = (s) => String(s).charAt(0).toUpperCase() + String(s).slice(1).toLowerCase();
+    const A = cap(w.a), B = cap(w.b);
+    const hasMin = Number.isFinite(w.dmin), hasMax = Number.isFinite(w.dmax);
+    const d = (v) => v.toFixed(2);
+
+    let range;
+    if (hasMin && hasMax)      range = `${d(w.dmin)} to ${d(w.dmax)} \u00c5`;
+    else if (hasMax)           range = `up to ${d(w.dmax)} \u00c5`;
+    else if (hasMin)           range = `at least ${d(w.dmin)} \u00c5`;
+    else                       range = null;
+
+    if (Number.isFinite(w.count) && w.count > 0) {
+        const n = w.countMode === 'atleast' ? `${w.count} or more` : `${w.count}`;
+        return `${A}\u2013${B} distance constrained to ${range || 'any distance'}, ` +
+               `coordination ${n}`;
+    }
+    // No count: the rule is a pure distance statement, and the two bounds are
+    // enforced by different mechanisms -- dmax pulls the nearest partner in,
+    // dmin is a hard floor on the pair. Saying "constrained to" for both would
+    // suggest a window that is policed symmetrically, which it is not.
+    if (hasMin && hasMax) return `${A}\u2013${B} distance constrained to ${d(w.dmin)} to ${d(w.dmax)} \u00c5`;
+    if (hasMax)           return `${A}\u2013${B} nearest neighbour within ${d(w.dmax)} \u00c5`;
+    if (hasMin)           return `${A}\u2013${B} no closer than ${d(w.dmin)} \u00c5`;
+    return `${A}\u2013${B}: no constraint`;
+}
+
+/** All of them, one per line. */
+function describeDistanceConstraints(windows) {
+    return (windows || []).map(describeDistanceConstraint);
+}
+
+/**
+ * Everything wrong with the constraint text, in one place.
+ *
+ * parseDistanceConstraints already returned `bad` and `warn`, and BOTH
+ * launchers threw them away -- they read `.windows` and nothing else. A
+ * mistyped rule was therefore dropped without a word and the search ran
+ * unconstrained, which is indistinguishable from the constraint being ignored.
+ * This adds the checks that need context the parser does not have: the target
+ * composition, and the kernel's array bounds.
+ *
+ * @param {string} text      Raw textarea contents.
+ * @param {string} formula   Target composition, for the element check.
+ * @returns {{windows: object[], errors: string[], warnings: string[]}}
+ */
+function validateDistanceConstraints(text, formula) {
+    // Compile-time array bounds in swarm_density.wgsl and swarm_reflection.wgsl.
+    // See the note above on why these are local rather than shared.
+    const WY_MAX_BOND_RULES = 8;    // MAX_BOND_RULES
+    const WY_MAX_COORD_SLOTS = 16;  // MAX_COORD_SLOTS
+
+    const r = parseDistanceConstraints(text || '');
+    const errors = r.bad.slice();
+    const warnings = r.warn.slice();
+
+    // Elements that are not in the target composition can never match an atom,
+    // so the rule is inert. Silent inertness is the failure mode this whole
+    // function exists to prevent, so it is called out.
+    //
+    // The element symbols are pulled straight out of the formula string rather
+    // than through parseFormula(): that lives in the worker's importScripts set
+    // and is not reliably in page scope here. Only the SYMBOLS are needed, and
+    // a symbol is an upper-case letter optionally followed by a lower-case one.
+    let known = null;
+    if (formula) {
+        const m = String(formula).match(/[A-Z][a-z]?/g);
+        if (m && m.length) known = new Set(m.map(s => s.toUpperCase()));
+    }
+    if (known && known.size) {
+        const unseen = new Set();
+        for (const w of r.windows) {
+            if (!known.has(w.a)) unseen.add(w.a);
+            if (!known.has(w.b)) unseen.add(w.b);
+        }
+        for (const el of unseen) {
+            errors.push(`"${el}" is not in the target composition, so no atom can ever match it`);
+        }
+    }
+
+    if (r.windows.length > WY_MAX_BOND_RULES) {
+        errors.push(`${r.windows.length} rules given, but the kernel holds ${WY_MAX_BOND_RULES}. ` +
+                    `The extra ones would be dropped without being applied.`);
+    }
+
+    // Only rules that state a count consume neighbour slots; see slotOff[] in
+    // the shaders.
+    const slots = r.windows.reduce(
+        (n, w) => n + (Number.isFinite(w.count) && w.count > 0 ? w.count : 0), 0);
+    if (slots > WY_MAX_COORD_SLOTS) {
+        errors.push(`The coordination numbers total ${slots}, above the kernel's ` +
+                    `${WY_MAX_COORD_SLOTS} neighbour slots. Above that limit the rules ` +
+                    `overwrite each other's neighbour lists.`);
+    }
+
+    // A rule is only tested from its FIRST element outward: the kernel matches
+    // ruleA against the atom it is standing on. "O S 4 1.35/1.65" asks every
+    // oxygen for four sulfurs, which is not what "S O 4 1.35/1.65" asks.
+    for (const w of r.windows) {
+        if (w.a !== w.b && Number.isFinite(w.count) && w.count > 0) {
+            const mirrored = r.windows.some(v => v.a === w.b && v.b === w.a &&
+                                                 Number.isFinite(v.count));
+            if (mirrored) {
+                warnings.push(`Both "${w.a} ${w.b}" and "${w.b} ${w.a}" state a coordination ` +
+                              `number. They are separate demands, not one bond counted once.`);
+                break;
+            }
+        }
+    }
+
+    return { windows: r.windows, errors, warnings };
+}
+
+/**
+ * Paint the validator's verdict under the textarea.
+ *
+ * Reading the rules back as sentences is the point: it is how the user finds
+ * out that "O O 4" was taken as a distance rather than a coordination number,
+ * or that a line they meant to write never became a rule at all.
+ *
+ * @param {object} [v]  A validateDistanceConstraints() result. Re-read from the
+ *                      textarea when omitted.
+ */
+function renderConstraintStatus(v) {
+    const el = document.getElementById('cf-wyckoff-windows-status');
+    if (!el) return;
+    if (!v) {
+        const t = document.getElementById('cf-wyckoff-windows');
+        const f = document.getElementById('cf-wyckoff-formula');
+        v = validateDistanceConstraints(t ? t.value : '', f ? f.value : '');
+    }
+
+    const esc = (s) => String(s).replace(/[&<>]/g, ch =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch]);
+    const parts = [];
+
+    if (v.windows.length) {
+        parts.push('<div style="color:var(--system-secondary-label);">' +
+            describeDistanceConstraints(v.windows)
+                .map(s => '&bull; ' + esc(s)).join('<br>') + '</div>');
+    }
+    for (const e of v.errors) {
+        parts.push(`<div style="color:var(--system-red,#c0392b);">\u2715 ${esc(e)}</div>`);
+    }
+    for (const w of v.warnings) {
+        parts.push(`<div style="color:var(--system-orange,#c47f1a);">\u26a0 ${esc(w)}</div>`);
+    }
+    if (!parts.length && !(v.windows.length)) {
+        el.innerHTML = '<span style="color:var(--system-secondary-label);">' +
+            'No distance constraints. Format: <code>A B N dmin/dmax</code>, one per line ' +
+            '\u2014 e.g. <code>S O 4 1.35/1.65</code>, or <code>O O - 2.0/</code> for a bare floor.' +
+            '</span>';
+        return;
+    }
+    el.innerHTML = parts.join('');
 }
 
 /**
@@ -3569,8 +3872,29 @@ function runWyckoffStandalone() {
     const p = fitResults.params || {};
     const cell = { a: p.a, b: p.b, c: p.c, alpha: p.alpha, beta: p.beta, gamma: p.gamma };
 
+    // THE CONSTRAINTS ARE CHECKED BEFORE THE RUN, NOT DISCARDED.
+    //
+    // This used to read .windows and drop .bad on the floor, so a rule with a
+    // typo in it was removed without a word and the search ran with fewer
+    // constraints than the user could see in the box. Refusing to start is the
+    // only honest response: a search that silently ignored half its restraints
+    // costs minutes and produces a structure the user will trust for the wrong
+    // reason.
+    const wyWindowsEl = document.getElementById('cf-wyckoff-windows');
+    const vc = validateDistanceConstraints(wyWindowsEl ? wyWindowsEl.value : '', formula);
+    renderConstraintStatus(vc);
+    if (vc.errors.length) {
+        const m = `Distance constraints: ${vc.errors[0]}`;
+        setWyckoffStatus(m, 'warn'); showToast(m, 'error');
+        return;
+    }
+    vc.warnings.forEach(w => logEvent(`Distance constraints: ${w}`));
+
     setWyckoffStatus('Running Wyckoff search against the Pawley intensities\u2026');
     logEvent(`Wyckoff search: start (${formula.trim()}, ${sg.symbol || sg.number})`);
+    if (vc.windows.length) {
+        describeDistanceConstraints(vc.windows).forEach(s => logEvent(`  constraint: ${s}`));
+    }
     document.body.style.cursor = 'wait';
     wyckoffCancelled = false;
     wySetRunning(true);
@@ -3605,6 +3929,7 @@ function runWyckoffStandalone() {
             done();
             cfStructure = msg.results;
             cfStructure.spaceGroup = sg;
+            wyckoffPhase = 'idle';
             setWyckoffStatus('Wyckoff search complete.');
             {
                 const r = (cfStructure.refinement) ||
@@ -3612,7 +3937,10 @@ function runWyckoffStandalone() {
                 logEvent(`Wyckoff search: done \u2014 ${(cfStructure.wyckoffResult || {}).assignment || '?'}` +
                          (Number.isFinite(r.R) ? `, wR(F\u00b2) = ${(r.R * 100).toFixed(2)}%` : ''));
             }
-            rpSnapshotWyckoff(cfStructure, { formula: formula.trim(), spaceGroup: sg });
+            rpSnapshotWyckoff(cfStructure, {
+                formula: formula.trim(), spaceGroup: sg,
+                distanceConstraints: vc.windows
+            });
             updateWyckoffTabState();
             rpRenderWyckoffRun();
             rpSwitchTab('wyckoff');
@@ -3632,7 +3960,10 @@ function runWyckoffStandalone() {
         swarmIterations: wyIterationsValue(),
         swarmRestarts: iv(restEl) || 4,
         minContact: minContEl ? (parseFloat(minContEl.value) || 1.0) : 1.0,
-        distanceConstraints: windowsEl ? parseDistanceConstraints(windowsEl.value.trim()).windows : [],
+        // The validated set from above, not a second parse: re-parsing here
+        // would have quietly re-applied the same silent drop this launcher
+        // just refused to perform.
+        distanceConstraints: vc.windows,
         hklList: cfMapInputs.hklList,
         applyLP: cfMapInputs.applyLP,
         polarization: cfMapInputs.polarization,
@@ -3821,7 +4152,8 @@ function runBuildStructure(quiet, forceWyckoff = false) {
                                  (Number.isFinite(rr.R) ? `, wR(F\u00b2) = ${(rr.R * 100).toFixed(2)}%` : ''));
                         rpSnapshotWyckoff(cfStructure, {
                             formula: (document.getElementById('cf-wyckoff-formula') || {}).value || '',
-                            spaceGroup: sg
+                            spaceGroup: sg,
+                            distanceConstraints: distanceConstraints
                         });
                     } else {
                         rpRenderWyckoffRun();
@@ -3879,8 +4211,27 @@ function runBuildStructure(quiet, forceWyckoff = false) {
             const minContEl = document.getElementById('cf-wyckoff-min-contact');
             const minContact = minContEl ? parseFloat(minContEl.value) : 1.0;
 
+            // Same check as the standalone launcher, for the same reason: the
+            // rules the user can see in the box are the rules the search gets,
+            // or the search does not start.
             const windowsEl = document.getElementById('cf-wyckoff-windows');
-            const distanceConstraints = windowsEl ? parseDistanceConstraints(windowsEl.value.trim()).windows : [];
+            const vcMap = validateDistanceConstraints(windowsEl ? windowsEl.value : '',
+                                                      targetComposition);
+            renderConstraintStatus(vcMap);
+            if (vcMap.errors.length) {
+                const m = `Distance constraints: ${vcMap.errors[0]}`;
+                done();
+                cfSetStructureStatus(m, 'warn');
+                if (forceWyckoff) setWyckoffStatus(m, 'warn');
+                showToast(m, 'error');
+                return;
+            }
+            vcMap.warnings.forEach(w => logEvent(`Distance constraints: ${w}`));
+            const distanceConstraints = vcMap.windows;
+            if (distanceConstraints.length) {
+                describeDistanceConstraints(distanceConstraints)
+                    .forEach(s => logEvent(`  constraint: ${s}`));
+            }
 
             chargeFlipWorker.postMessage({
                 type: 'build-structure',
@@ -6385,9 +6736,17 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
             const file = e.target.files[0];
             if (!file) return;
             const reader = new FileReader();
-            reader.onload = (evt) => {
+            // AS BYTES, NOT AS TEXT.
+            //
+            // .brml and .rasx are ZIP archives. readAsText handed their deflate
+            // streams to DOMParser as if they were XML, which threw, and the
+            // file then fell through to the two-column fallback and failed
+            // there too. Reading the buffer lets the archive be recognised by
+            // its magic bytes and unzipped; everything else is decoded to text
+            // exactly as before.
+            reader.onload = async (evt) => {
                 try {
-                    const rawParsed = detectAndParseFile(file.name, evt.target.result);
+                    const rawParsed = await detectAndParseBuffer(file.name, evt.target.result);
                     if (!rawParsed || !rawParsed.tth || rawParsed.tth.length === 0) throw new Error("No valid data points parsed.");
                     // Sort ascending, drop non-finite and duplicate points.
                     const parsedData = normalizeParsedData(rawParsed, file.name);
@@ -6503,7 +6862,7 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                 }
             };
             reader.onerror = () => alert('Error reading file.');
-            reader.readAsText(file);
+            reader.readAsArrayBuffer(file);
         });
 
 
@@ -6837,6 +7196,17 @@ function rpSnapshotWyckoff(structure, opts) {
                 (structure.wyckoffResult && structure.wyckoffResult.refinement))) || {};
     const tag = Number.isFinite(ref.R) ? `R=${(ref.R * 100).toFixed(1)}%`
                                        : ((opts && opts.formula) || 'no R');
+    // The restraints the search actually ran under, stored ON the structure.
+    //
+    // The panel could read them from opts, but the PDF reporter is handed the
+    // structure alone -- so a report generated from a stored run would have
+    // described a set of coordinates without saying what they were required to
+    // satisfy. A structure found under a 1.35-1.65 A S-O window is a different
+    // claim from the same coordinates found unconstrained, and the report has
+    // to be able to tell them apart.
+    if (structure && opts && Array.isArray(opts.distanceConstraints)) {
+        structure.distanceConstraints = opts.distanceConstraints;
+    }
     const entry = {
         id: rpRunCounter, when,
         label: `#${rpRunCounter} \u00b7 ${tag} \u00b7 ${rpTimestamp(when)}`,
@@ -6891,6 +7261,27 @@ function rpRenderWyckoffRun() {
         Math.abs(x.x - st.sites[i].x) > 5e-5 ||
         Math.abs(x.y - st.sites[i].y) > 5e-5 ||
         Math.abs(x.z - st.sites[i].z) > 5e-5);
+    // The restraints, in words, one per line.
+    //
+    // "S O 4 1.35/1.65" is the syntax the search was given; it is not something
+    // a reader coming to the report later should have to decode. Stated here
+    // because a set of coordinates found under a coordination demand is a
+    // weaker claim than the same coordinates found without one, and the panel
+    // that reports the R factor is where that qualification belongs.
+    const cons = (st.distanceConstraints && st.distanceConstraints.length)
+        ? st.distanceConstraints
+        : ((entry && entry.opts && entry.opts.distanceConstraints) || []);
+    const escC = (s) => String(s).replace(/[&<>]/g, ch =>
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[ch]);
+    const consBlock = cons.length
+        ? `<h3 style="font-size:13px;margin:14px 0 6px 0;">Distance constraints applied</h3>` +
+          `<ul style="margin:0 0 4px 0;padding-left:18px;font-size:12px;` +
+          `color:var(--system-secondary-label);line-height:1.5;">` +
+          describeDistanceConstraints(cons).map(s => `<li>${escC(s)}</li>`).join('') +
+          `</ul>`
+        : `<p style="font-size:12px;color:var(--system-secondary-label);margin:14px 0 0 0;">` +
+          `No distance constraints were applied; only the minimum-contact floor.</p>`;
+
     const searchTable = moved
         ? `<h3 style="font-size:13px;margin:14px 0 6px 0;">Search positions, before refinement</h3>` +
           `<div class="cf-table-scroll"><table class="cf-peak-table">` +
@@ -6942,6 +7333,7 @@ function rpRenderWyckoffRun() {
         `<thead><tr><th>#</th><th>Element</th><th>x</th><th>y</th><th>z</th>` +
         `<th>Wyckoff/Mult</th></tr></thead><tbody>${rows}</tbody></table></div>` +
         searchTable +
+        consBlock +
         // Directly under the coordinates it exports, right-aligned. Rendered
         // here rather than in the header so it cannot be enabled while the
         // table is empty -- it only exists when there are rows.
@@ -7312,6 +7704,15 @@ if (!currentSG && globalThis.SG_ENGINE) {
       <label class="control-label" for="export-format" style="display:block; margin-bottom:6px;">Format</label>
       <select id="export-format" class="control-select" style="width:100%;"></select>
       <p id="export-format-note" class="cf-hint" style="margin:8px 0 16px 0;"></p>
+
+      <!-- Default ON: the calculated columns only exist over the fitted window,
+           so writing the full span means writing a fabricated flat calculation
+           outside it. Off is offered for the two-column formats, where the
+           whole measured scan is often what is wanted. -->
+      <div class="form-row" style="margin: 0 0 16px 0;">
+        <label class="control-label" for="export-limit-range">Limit to the fitted 2&theta; range</label>
+        <input type="checkbox" id="export-limit-range" class="fit-checkbox" checked style="justify-self: start;">
+      </div>
 
       <label class="control-label" for="export-filename" style="display:block; margin-bottom:6px;">File name</label>
       <div class="range-row" style="grid-template-columns: minmax(0,1fr) auto;">

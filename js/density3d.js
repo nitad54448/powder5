@@ -1,5 +1,5 @@
 // density3d.js
-// version 140, 2 august 2026
+// version 157, 16 august 2026
 //
 // Isosurface view of the charge-flipping electron density, drawn with
 // three.js. Companion to the 2D section viewer: same map, same absolute
