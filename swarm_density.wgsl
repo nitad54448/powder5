@@ -94,6 +94,16 @@ var<workgroup> rPen: array<f32, WG>;
 var<workgroup> rWgt: array<f32, WG>;
 var<workgroup> local_rMin: array<f32, 256>;
 
+// Cartesian lengths of the 27 shell translations, indexed (a+1)*9+(b+1)*3+(c+1).
+//
+// Constant for the whole cell, so they are computed once per dispatch rather
+// than re-derived for every atom pair. They exist to let the counting shell be
+// SKIPPED cheaply: an image displaced by t is at least ||t|| - d away, where d
+// is the nearest-image distance already in hand, so one subtract and compare
+// rejects a translation without the matrix multiply and square root that
+// finding its true distance would cost.
+var<workgroup> shellLen: array<f32, 27>;
+
 
 // COUNTING NEIGHBOURS NEEDS EVERY IMAGE, NOT THE NEAREST ONE.
 //
@@ -325,6 +335,12 @@ sWeight = sWeight + zw;
     for (var idx = lid; idx < nElemSq; idx = idx + WG) {
         local_rMin[idx] = staticFloats[t_off + u32(params.rMinOff) + idx];
     }
+    if (lid < 27u) {
+        let sa = i32(lid / 9u) - 1;
+        let sb = i32((lid / 3u) % 3u) - 1;
+        let sc = i32(lid % 3u) - 1;
+        shellLen[lid] = cartLen(vec3<f32>(f32(sa), f32(sb), f32(sc)));
+    }
     workgroupBarrier();
 
     var ruleA: array<u32, MAX_BOND_RULES>;
@@ -389,28 +405,50 @@ sWeight = sWeight + zw;
             }
 
             if (myRules == 0u) { continue; }
+
+            // Computed once per PAIR, not once per rule. Two rules naming the
+            // same A-B pair were each redoing the basis transform below.
+            let qf = fracDelta(pi, pj);
+
             for (var k = 0u; k < nRules; k = k + 1u) {
                 if ((myRules & (1u << k)) == 0u) { continue; }
                 if (ruleB[k] != tj) { continue; }
 
                 let nk = u32(ruleN[k]);
                 let counted = (ruleMode[k] != 0u && nk > 0u);
-                let qf = fracDelta(pi, pj);
 
-                // EVERY IMAGE OF j WITHIN THE SHELL, COUNTED SEPARATELY.
+                // The nearest partner is exactly what cartDist already returns,
+                // so it is taken from d rather than re-derived in the shell.
+                // That keeps the mode-0 test exact even when the shell below
+                // prunes away the distant images.
+                if (j != i) { nearest[k] = min(nearest[k], d); }
+
+                // EVERY IMAGE OF j THAT CAN MATTER, COUNTED SEPARATELY.
                 //
-                // Distances OUTSIDE the window are still offered to the slot
-                // list: the deficit below is graded on how far each of the N
-                // nearest partners misses by, and dropping the far ones would
-                // collapse "partner at 2.5 A, wanted 1.65" and "no partner at
-                // all" onto the same flat penalty, taking the gradient the
-                // search descends with it.
+                // Distances outside the window still enter the slot list: the
+                // deficit is graded on how far each of the N nearest partners
+                // misses by, and dropping the far ones would collapse "partner
+                // at 2.5 A, wanted 1.65" and "no partner at all" onto one flat
+                // penalty, taking the gradient the search descends with it.
+                //
+                // "Can matter" is the cutoff: an image must either reach the
+                // window or beat the worst slot currently held. An image
+                // displaced by t is at least ||t|| - d away, so a translation
+                // whose length exceeds cutoff + d cannot qualify and is
+                // rejected on a subtract, without the matrix multiply and
+                // square root its true distance would cost. In a cell wide
+                // enough for the host to have compiled COUNT_SHELL to 0 this
+                // loop is a single pass; in the thin cells that need the shell
+                // it typically keeps two or three translations out of 27.
+                var cutoff = ruleMax[k];
+                if (counted) { cutoff = max(cutoff, slot[slotOff[k] + nk - 1u]); }
                 for (var sa = -COUNT_SHELL; sa <= COUNT_SHELL; sa = sa + 1) {
                 for (var sb = -COUNT_SHELL; sb <= COUNT_SHELL; sb = sb + 1) {
                 for (var sc = -COUNT_SHELL; sc <= COUNT_SHELL; sc = sc + 1) {
+                    let si = u32((sa + 1) * 9 + (sb + 1) * 3 + (sc + 1));
+                    if (shellLen[si] - d > cutoff) { continue; }
                     let dd = cartLen(qf + vec3<f32>(f32(sa), f32(sb), f32(sc)));
                     if (dd < 1.0e-4) { continue; }   // the atom itself
-                    nearest[k] = min(nearest[k], dd);
                     if (dd >= ruleMin[k] && dd <= ruleMax[k]) {
                         inWindow[k] = inWindow[k] + 1.0;
                     }
@@ -426,6 +464,7 @@ sWeight = sWeight + zw;
                                 } else { break; }
                             }
                             slot[m] = dd;
+                            cutoff = max(ruleMax[k], slot[hi - 1u]);
                         }
                     }
                 }}}

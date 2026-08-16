@@ -417,10 +417,10 @@
             <!-- CHARGE FLIPPING TAB -->
             <div id="tab-panel-charge-flipping" class="tab-content-panel">
                 <div class="control-group">
-                
+                    
                     <p style="font-size: 12px; color: var(--system-secondary-label); margin-bottom: 12px;">
                         Solves the structure from the Pawley-extracted intensities by dual-space Charge Flipping.
-                        The selected space group can be applied inside the iteration: orbits are generated from its real
+                        The selected space group is applied inside the iteration: orbits are generated from its real
                         symmetry operators, systematic absences are held at zero, and symmetry equivalents are
                         constrained to equal |F|. Only reflections that genuinely overlap in 2θ share their intensity.
                     </p>
@@ -439,7 +439,8 @@
                         <label class="control-label" for="cf-iterations"
                                title="Cycles per random start. Logarithmic: the useful range spans three decades and a linear slider spends most of its travel above 5000, where the setting barely matters.">Max Iterations</label>
                         <div class="slider-value-track">
-                            <input type="range" id="cf-iterations" class="custom-slider" min="0" max="1000" step="1" value="767">
+                            <input type="range" id="cf-iterations" class="custom-slider" min="0" max="1000" step="1"
+                                   data-log-min="10" data-log-max="10000" value="767">
                             <span id="cf-iterations-value" class="slider-value-display">2000</span>
                         </div>
 
@@ -599,12 +600,6 @@
                         </div>
                     </div>
 
-
-
-
-
-
-
                     <h2 style="margin-top: 16px;">Structure</h2>
                     <p class="cf-hint" style="margin-bottom: 6px;">
                         Built automatically at the end of every run, or via Wyckoff search: finds the origin shift that
@@ -678,7 +673,8 @@
                         <label class="control-label" for="cf-wyckoff-iterations"
                                title="Steps per chain. Logarithmic: the useful range spans three decades and a linear slider spends most of its travel between 5000 and 10000.">Iterations</label>
                         <div class="slider-value-track">
-                            <input type="range" id="cf-wyckoff-iterations" class="custom-slider" min="0" max="10000" step="1" value="767">
+                            <input type="range" id="cf-wyckoff-iterations" class="custom-slider" min="0" max="1000" step="1"
+                                   data-log-min="10" data-log-max="10000" value="767">
                             <span id="cf-wyckoff-iterations-value" class="slider-value-display">2000</span>
                         </div>
 
@@ -691,7 +687,7 @@
 
                         <label class="control-label" for="cf-wyckoff-min-contact"
                                title="Floor applied to every unlike atom pair. A candidate that breaks it is rejected outright, before and after the coordinate refinement.">Min contact (&Aring;)</label>
-                        <input type="number" id="cf-wyckoff-min-contact" min="0.5" max="4" step="0.05" value="1.1" class="control-input">
+                        <input type="number" id="cf-wyckoff-min-contact" min="0.5" max="4" step="0.05" value="1.0" class="control-input">
                     </div>
 
                     <label class="control-label" for="cf-wyckoff-windows" style="display:block; margin: 12px 0 4px 0;"
@@ -985,7 +981,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 157, 16 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 158, 16 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -994,7 +990,6 @@
     //13 aug, moved the Wyckoff constraint block
     //14 aug, chenged the peak search in CF from interpolation to block integr
     //removed the cctbx dependencies, all data is in /sg and /scatter
-    //16 aug, v 157, corrected the brgl and rigaku zip formats; corrected the Wyckoff search constraints 
 
     document.addEventListener('DOMContentLoaded', async () => {     
     
@@ -1199,6 +1194,11 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
         if (el && out) {
             const sync = () => { out.textContent = String(wyIterationsValue()); };
             el.addEventListener('input', sync);
+            // Seed from the VALUE rather than trusting the position baked into
+            // the markup. 767 happens to be 2000 on a 10-to-10000 track, but
+            // only for exactly that track: state the number that is meant and
+            // let the inverse mapping place the thumb.
+            setLogSliderValue('cf-wyckoff-iterations', wyDefaultIterations());
             sync();
         }
         const mc = document.getElementById('cf-wyckoff-min-contact');
@@ -1879,32 +1879,93 @@ function updateWyckoffHint() {
  *
  * @returns {number} Iterations for the current slider position.
  */
+/**
+ * Value behind a logarithmic slider.
+ *
+ * THE RANGE IS READ FROM THE ELEMENT, NOT ASSUMED.
+ *
+ * This divided the raw position by a hardcoded 1000 and raised 10 to a
+ * hardcoded three decades, so it only agreed with the markup as long as the
+ * markup happened to say min="0" max="1000" and the caller wanted 10 to 10000.
+ * Any drift between the two -- an edited attribute, or a raw iteration count
+ * assigned straight to .value, which the browser then clamps to max -- sends
+ * the position to or past the top, and Math.min(1, p) turns every one of those
+ * into the same answer: the maximum, for a wide band of the track. That is the
+ * reported symptom, and it is unfixable from the mapping alone because by then
+ * the position has already been clamped.
+ *
+ * Reading min, max and the decade endpoints off the element removes the
+ * assumption entirely: the slider carries its own definition, so the markup and
+ * the mapping cannot disagree.
+ *
+ * @param {string} id
+ * @param {number} dflt  returned when the element is missing
+ */
 function logSliderValue(id, dflt) {
     const el = document.getElementById(id);
     if (!el) return dflt;
-    const p = Math.min(1, Math.max(0, (parseFloat(el.value) || 0) / 1000));
-    const raw = 10 * Math.pow(10, 3 * p);
-    // Snap to a readable step: 1 below 100, 10 below 1000, 100 above.
+
+    const pMin = parseFloat(el.min); const pMax = parseFloat(el.max);
+    const lo = parseFloat(el.dataset.logMin); const hi = parseFloat(el.dataset.logMax);
+    if (!Number.isFinite(pMin) || !Number.isFinite(pMax) || pMax <= pMin ||
+        !Number.isFinite(lo) || !Number.isFinite(hi) || lo <= 0 || hi <= lo) {
+        return dflt;
+    }
+
+    const pos = parseFloat(el.value);
+    if (!Number.isFinite(pos)) return dflt;
+    const p = Math.min(1, Math.max(0, (pos - pMin) / (pMax - pMin)));
+    const raw = lo * Math.pow(hi / lo, p);
+
+    // Snap to something a person would type: 1 below 100, 10 below 1000,
+    // 100 above. Applied to the value, not the position, so the number shown
+    // is the number used.
     const step = raw < 100 ? 1 : (raw < 1000 ? 10 : 100);
-    return Math.max(10, Math.min(10000, Math.round(raw / step) * step));
+    return Math.max(lo, Math.min(hi, Math.round(raw / step) * step));
 }
 
 /**
  * Set a log slider from a value rather than a position.
+ *
+ * The inverse of logSliderValue against the same element attributes, so the
+ * two cannot drift apart. Assigning a value straight to el.value instead of
+ * calling this is what puts the position out of range in the first place.
+ *
  * @param {string} id
  * @param {number} value
  */
 function setLogSliderValue(id, value) {
     const el = document.getElementById(id);
     if (!el || !Number.isFinite(value)) return;
-    const v = Math.max(10, Math.min(10000, value));
-    el.value = String(Math.round(1000 * Math.log10(v / 10) / 3));
+
+    const pMin = parseFloat(el.min); const pMax = parseFloat(el.max);
+    const lo = parseFloat(el.dataset.logMin); const hi = parseFloat(el.dataset.logMax);
+    if (!Number.isFinite(pMin) || !Number.isFinite(pMax) || pMax <= pMin ||
+        !Number.isFinite(lo) || !Number.isFinite(hi) || lo <= 0 || hi <= lo) return;
+
+    const v = Math.max(lo, Math.min(hi, value));
+    const p = Math.log(v / lo) / Math.log(hi / lo);
+    el.value = String(Math.round(pMin + p * (pMax - pMin)));
+
+    // Report what the slider will actually READ BACK, not the value asked for:
+    // after snapping those can differ, and showing the request would make the
+    // display disagree with the number the search receives.
     const out = document.getElementById(id + '-value');
-    if (out) out.textContent = String(value);
+    if (out) out.textContent = String(logSliderValue(id, v));
 }
 
+/**
+ * Default iterations for the Wyckoff swarm.
+ *
+ * A function, not a const. The wiring that seeds the slider runs some 700 lines
+ * ABOVE this point inside the same DOMContentLoaded scope, and a `const` there
+ * is still in its temporal dead zone -- the same trap that took out the whole
+ * initialisation chain once already. Function declarations hoist.
+ */
+function wyDefaultIterations() { return 2000; }
+
 /** Iterations for the Wyckoff swarm. */
-function wyIterationsValue() { return logSliderValue('cf-wyckoff-iterations', 2000); }
+function wyIterationsValue() { return logSliderValue('cf-wyckoff-iterations', wyDefaultIterations()); }
 
 /** Cycles per charge-flipping trial. */
 function cfIterationsValue() { return logSliderValue('cf-iterations', 2000); }
