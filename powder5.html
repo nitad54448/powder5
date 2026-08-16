@@ -139,10 +139,10 @@
                 <button class="tab-btn active" data-tab="sample">Sample</button>
                 <button class="tab-btn" data-tab="background">Background</button>
                 <button class="tab-btn" data-tab="profile">Profile</button>
-                <button class="tab-btn" id="tab-btn-charge-flipping" data-tab="charge-flipping" disabled
-                        title="Needs a completed Pawley refinement (Levenberg-Marquardt, or Parallel Tempering with its LM polish).">Charge</button>
-                <button class="tab-btn" id="tab-btn-wyckoff" data-tab="wyckoff" disabled
-                        title="Needs a completed Pawley refinement and a chosen space group. Does not need charge flipping.">Wyckoff</button>
+                <button class="tab-btn" id="tab-btn-charge-flipping" data-tab="charge-flipping"
+                        title="Solve the structure ab initio from the Pawley intensities.">Charge</button>
+                <button class="tab-btn" id="tab-btn-wyckoff" data-tab="wyckoff"
+                        title="Fit atoms on Wyckoff positions directly to the Pawley intensities.">Wyckoff</button>
             </div>
 
             <div class="tab-content-panels">
@@ -469,7 +469,7 @@
                     <div id="cf-estimate" class="cf-hint" style="margin-top: 8px;"></div>
 
 <div class="run-row">
-                    <button id="run-charge-flip-btn" class="btn btn-primary">Run Charge Flipping</button>
+                    <button id="run-charge-flip-btn" class="btn btn-primary" disabled>Run Charge Flipping</button>
                     <button id="cf-cancel-btn" class="btn" disabled>Stop</button>
                 </div>
 
@@ -981,7 +981,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 158, 16 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 159, 16 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1852,6 +1852,7 @@ function updateWyckoffHint() {
     hint.textContent = msg;
     hint.style.color = blocked ? 'var(--system-orange, #c47f1a)' : '';
     run.disabled = blocked;
+    run.title = blocked ? msg : '';
 }
 
 /**
@@ -2096,14 +2097,8 @@ function setWyckoffStatus(text, kind) {
 function updateWyckoffTabState() {
     const btn = document.getElementById('tab-btn-wyckoff');
     if (!btn) return;
-    const problem = cfReadinessProblem();
-    btn.disabled = !!problem;
-    btn.title = problem || 'Fit atoms on Wyckoff positions directly to the Pawley intensities.';
-
-    if (problem && btn.classList.contains('active')) {
-        const fallback = document.querySelector('.tab-btn[data-tab="sample"]');
-        if (fallback) fallback.click();
-    }
+    btn.disabled = false;
+    btn.title = 'Fit atoms on Wyckoff positions directly to the Pawley intensities.';
 }
 
 function updateChargeFlippingTabState() {
@@ -2113,15 +2108,20 @@ function updateChargeFlippingTabState() {
     const btn = document.getElementById('tab-btn-charge-flipping');
     if (!btn) return;
     const problem = cfReadinessProblem();
-    btn.disabled = !!problem;
-    btn.title = problem || 'Solve the structure ab initio from the Pawley intensities.';
+    
+    btn.disabled = false;
+    btn.title = 'Solve the structure ab initio from the Pawley intensities.';
 
-    // If the tab is open and the result it was based on has gone away, fall
-    // back to the Sample tab rather than leaving a stale panel visible.
-    if (problem && btn.classList.contains('active')) {
-        const fallback = document.querySelector('.tab-btn[data-tab="sample"]');
-        if (fallback) fallback.click();
+    const runBtn = document.getElementById('run-charge-flip-btn');
+    if (runBtn) {
+        runBtn.disabled = !!problem || cfRunning;
+        if (problem) {
+            runBtn.title = problem;
+        } else {
+            runBtn.title = '';
+        }
     }
+
     updateChargeFlipEstimate();
 }
 
@@ -2436,10 +2436,15 @@ function cfSetRunning(running) {
     const run = document.getElementById('run-charge-flip-btn');
     const cancel = document.getElementById('cf-cancel-btn');
     const wBtn = document.getElementById('run-wyckoff-btn');
-    if (run) { run.disabled = running; run.textContent = running ? 'Running…' : 'Run Charge Flipping'; }
+    const problem = typeof cfReadinessProblem === 'function' ? cfReadinessProblem() : null;
+    
+    if (run) { 
+        run.disabled = running || !!problem; 
+        run.textContent = running ? 'Running…' : 'Run Charge Flipping'; 
+    }
     if (wBtn) { 
         const formulaEmpty = (document.getElementById('cf-wyckoff-formula') || {}).value?.trim() === '';
-        wBtn.disabled = running || formulaEmpty; 
+        wBtn.disabled = running || formulaEmpty || !!problem; 
         wBtn.textContent = running ? 'Searching...' : 'Search Wyckoff'; 
     }
     if (cancel) cancel.disabled = !running;   // disabled, not hidden: the row keeps its shape
