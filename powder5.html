@@ -981,7 +981,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 159, 16 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 159b, 16 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1164,7 +1164,7 @@
     document.getElementById('cf-section-axis').addEventListener('change', drawChargeFlipSection);
 
 document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
-        runBuildStructure(false, true);
+        runWyckoffStandalone();
     });
     
     const formulaInput = document.getElementById('cf-wyckoff-formula');
@@ -1846,7 +1846,7 @@ function updateWyckoffHint() {
             const sg = sgUsedForFit || currentSG;
             if (!sg) { msg = 'Select a space group first.'; blocked = true; }
             else msg = `Fits ${formula} on Wyckoff positions of ${sg.symbol || sg.number} ` +
-                       `directly to the Pawley intensities. No charge-flipping map needed.`;
+                       `directly to the Pawley intensities.`;
         }
     }
     hint.textContent = msg;
@@ -2776,7 +2776,7 @@ function renderConstraintStatus(v) {
     if (!parts.length && !(v.windows.length)) {
         el.innerHTML = '<span style="color:var(--system-secondary-label);">' +
             'No distance constraints. Format: <code>A B N dmin/dmax</code>, one per line ' +
-            '\u2014 e.g. <code>S O 4 1.35/1.65</code>, or <code>O O - 2.0/</code> for a bare floor.' +
+            'e.g. <code>S O 4 1.35/1.65</code> or <code>O O - 2.0/</code> for a bare floor. See the Help for more details.' +
             '</span>';
         return;
     }
@@ -4038,26 +4038,12 @@ function runWyckoffStandalone() {
     });
 }
 
-function runBuildStructure(quiet, forceWyckoff = false) {
+function runBuildStructure(quiet) {
             if (cfRunning) return;
 
-            // No map? Run the search WITHOUT one. The Wyckoff objective fits
-            // |Fcalc|^2 to the Pawley intensities; charge flipping is only
-            // needed if you want to seed from its sites.
-            if (forceWyckoff && !cfLastResult) { return runWyckoffStandalone(); }
-
             if (!cfLastResult) {
-                // This message used to go only to #cf-structure-status, which
-                // lives in the charge-flipping results panel. Pressing Search
-                // Wyckoff from its own tab therefore looked like it did
-                // NOTHING: the explanation was rendered somewhere the user was
-                // not looking. Put it where the button is, and toast it.
-                const msg = 'The Wyckoff search still scores against the charge-flipping density map, ' +
-                            'so a charge-flipping run is needed first. (The intensity objective, ' +
-                            'which needs no map, is not wired up yet.)';
+                const msg = 'Run charge flipping first \u2014 a solution map is required to build the structure.';
                 cfSetStructureStatus(msg, 'warn');
-                setWyckoffStatus(msg, 'warn');
-                showToast('Run charge flipping first \u2014 the Wyckoff search needs its density map.', 'error');
                 return;
             }
             const sg = sgUsedForFit || currentSG;
@@ -4069,24 +4055,7 @@ function runBuildStructure(quiet, forceWyckoff = false) {
             const got = getSymopsForSetting(sg);
             if (got.error) { cfSetStructureStatus(got.error, 'warn'); return; }
 
-            cfSetStructureStatus(forceWyckoff ? 'Running Wyckoff search…' : 'Building the structure…');
-            if (forceWyckoff) {
-                // Logged here as well as in runWyckoffStandalone: a Wyckoff
-                // search launched while a charge-flipping map happens to exist
-                // comes through THIS function instead, and only the other path
-                // was instrumented -- so the run that most users start never
-                // appeared in the log.
-                const wf = (document.getElementById('cf-wyckoff-formula') || {}).value || '';
-                logEvent(`Wyckoff search: start (${wf.trim() || '?'}, ` +
-                         `${(sg && (sg.symbol || sg.number)) || '?'}, from the CF map)`);
-                setWyckoffStatus('Running Wyckoff search…');
-                const c = document.getElementById('wyckoff-progress-container');
-                if (c) c.classList.remove('hidden');
-                const rb = document.getElementById('run-wyckoff-btn');
-                if (rb) { rb.disabled = true; rb.textContent = 'Searching…'; }
-                const cb = document.getElementById('wyckoff-cancel-btn');
-                if (cb) cb.disabled = false;
-            }
+            cfSetStructureStatus('Building the structure…');
             document.body.style.cursor = 'wait';
             
             cfSetRunning(true);
@@ -4111,17 +4080,6 @@ function runBuildStructure(quiet, forceWyckoff = false) {
                 document.body.style.cursor = 'default';
                 terminateChargeFlipWorker();
                 cfSetRunning(false);
-                // Restore the Wyckoff controls too when the search was launched
-                // from that tab. wySetRunning is not on this path, so without
-                // this the bar stayed up and Search stayed greyed out.
-                if (forceWyckoff) {
-                    const c = document.getElementById('wyckoff-progress-container');
-                    if (c) c.classList.add('hidden');
-                    const rb = document.getElementById('run-wyckoff-btn');
-                    if (rb) { rb.disabled = false; rb.textContent = 'Search Wyckoff'; }
-                    const cb = document.getElementById('wyckoff-cancel-btn');
-                    if (cb) cb.disabled = true;
-                }
                 if (pdfBtn && rpHistory.cf.length > 0) pdfBtn.disabled = false;
             };
 
@@ -4132,60 +4090,6 @@ function runBuildStructure(quiet, forceWyckoff = false) {
             chargeFlipWorker.onmessage = (e) => {
                 const msg = e.data || {};
                 if (msg.type === 'cf-error') { done(); cfSetStructureStatus(msg.message, 'warn'); return; }
-                
-                if (msg.type === 'cf-wyckoff-start') {
-                    if (forceWyckoff) wyckoffProgress(msg);
-                    const bar = document.getElementById('cf-progress-bar');
-                    if (bar) {
-                        bar.style.transition = 'none';
-                        bar.style.width = '0%';
-                        bar.style.backgroundColor = '#17a2b8';
-                        void bar.offsetWidth;
-                    }
-                    const countEl = document.getElementById('cf-iter-count');
-                    if (countEl) countEl.innerText = msg.message;
-
-                    const rFactorEl = document.getElementById('cf-r-factor');
-                    if (rFactorEl) {
-                        if (rFactorEl.previousSibling && rFactorEl.previousSibling.nodeType === 3) {
-                            rFactorEl.previousSibling.textContent = 'Fitness (CC): ';
-                        }
-                        rFactorEl.innerText = 'Initializing...';
-                    }
-                    return;
-                }
-
-                if (msg.type === 'cf-wyckoff-progress') {
-                    // This launcher is reached from the Wyckoff tab whenever a
-                    // map exists, and its bar is the one being watched.
-                    if (forceWyckoff) wyckoffProgress(msg);
-                    const doneFraction = (msg.wave - 1 + (msg.restart - 1 + msg.generation / msg.generations) / msg.restarts) / msg.waves;
-                    const bar = document.getElementById('cf-progress-bar');
-                    if (bar) {
-                        if (msg.generation === 0 && msg.wave === 1 && msg.restart === 1) {
-                            bar.style.transition = 'none';
-                            bar.style.width = '0%';
-                            void bar.offsetWidth;
-                        }
-                        bar.style.transition = 'width 0.1s linear';
-                        bar.style.width = `${Math.min(100, doneFraction * 100)}%`;
-                    }
-
-                    const countEl = document.getElementById('cf-iter-count');
-                    if (countEl) {
-                        const waveText = msg.waves > 1 ? `Wave ${msg.wave}/${msg.waves} · ` : '';
-                        countEl.innerText = `Wyckoff: ${waveText}Restart ${msg.restart}/${msg.restarts} · Gen ${msg.generation}/${msg.generations}`;
-                    }
-
-                    const rFactorEl = document.getElementById('cf-r-factor');
-                    if (rFactorEl) {
-                        if (rFactorEl.previousSibling && rFactorEl.previousSibling.nodeType === 3) {
-                            rFactorEl.previousSibling.textContent = 'Fitness (CC): ';
-                        }
-                        rFactorEl.innerText = Number.isFinite(msg.best) ? msg.best.toFixed(4) : '--';
-                    }
-                    return;
-                }
 
                 if (msg.type === 'cf-info') {
                     showToast(msg.message, 'info');
@@ -4196,34 +4100,9 @@ function runBuildStructure(quiet, forceWyckoff = false) {
                     done();
                     cfStructure = msg.results;
                     cfStructure.spaceGroup = sg;
-                    // A charge-flipping structure has just appeared, so the
-                    // seed option becomes available. updateWyckoffTabState was
-                    // only reachable from updateChargeFlippingTabState, which
-                    // fires when the FIT changes -- never when a CF run ends,
-                    // so the checkbox stayed disabled no matter how many maps
-                    // were solved.
                     updateWyckoffTabState();
-                    // A Wyckoff search launched from a charge-flipping run
-                    // produces a Wyckoff solution and belongs in that history.
-                    // Only the standalone path snapshotted it, so running the
-                    // search with a map present left the Run list empty --
-                    // which also disabled Generate PDF, since that button is
-                    // enabled from the history length.
-                    if (forceWyckoff && cfStructure.sites &&
-                        cfStructure.sites.some(x => x && x.wyckoff)) {
-                        const rr = cfStructure.refinement ||
-                                   (cfStructure.wyckoffResult && cfStructure.wyckoffResult.refinement) || {};
-                        logEvent(`Wyckoff search: done \u2014 ` +
-                                 `${(cfStructure.wyckoffResult || {}).assignment || '?'}` +
-                                 (Number.isFinite(rr.R) ? `, wR(F\u00b2) = ${(rr.R * 100).toFixed(2)}%` : ''));
-                        rpSnapshotWyckoff(cfStructure, {
-                            formula: (document.getElementById('cf-wyckoff-formula') || {}).value || '',
-                            spaceGroup: sg,
-                            distanceConstraints: distanceConstraints
-                        });
-                    } else {
-                        rpRenderWyckoffRun();
-                    }
+                    rpRenderWyckoffRun();
+
                     // The worker returns the operators as xyz strings for the report.
                     // The 3D viewer needs the matrices to expand the asymmetric unit,
                     // so keep the objects that went in.
@@ -4237,13 +4116,9 @@ function runBuildStructure(quiet, forceWyckoff = false) {
                     const entry = rpHistory.cf.find(e => e.result === cfLastResult);
                     if (entry) entry.structure = { results: msg.results, got };
                     
-                    // Attach the structure and Wyckoff metadata directly to the main result object 
+                    // Attach the structure directly to the main result object 
                     // so the PDF reporter can access all the data.
                     cfLastResult.structure = msg.results;
-                    if (forceWyckoff) {
-                        cfLastResult.wyckoffFormula = document.getElementById('cf-wyckoff-formula').value.trim();
-                        cfLastResult.wyckoffZ = document.getElementById('cf-wyckoff-z').value;
-                    }
 
                     if (!quiet) showToast(`Structure built — ${msg.results.sites.length} unique site(s).`, 'success');
                 }
@@ -4252,52 +4127,6 @@ function runBuildStructure(quiet, forceWyckoff = false) {
             // The map is copied because cfLastResult.map is still needed by the
             // section viewer; a transfer would detach it.
             const mapCopy = Float32Array.from(cfLastResult.map);
-            const targetComposition = (forceWyckoff && document.getElementById('cf-wyckoff-formula')) ? document.getElementById('cf-wyckoff-formula').value.trim() : null;
-
-            const zEl = document.getElementById('cf-wyckoff-z');
-            const wyckoffZ = zEl ? parseInt(zEl.value, 10) : NaN;
-
-            const maxSitesEl = document.getElementById('cf-wyckoff-max-sites');
-            const wyckoffMaxSites = maxSitesEl ? parseInt(maxSitesEl.value, 10) : NaN;
-
-            const maxRepeatEl = document.getElementById('cf-wyckoff-max-repeat');
-            const wyckoffMaxRepeat = maxRepeatEl ? parseInt(maxRepeatEl.value, 10) : NaN;
-
-            const chainsEl = document.getElementById('cf-wyckoff-chains');
-            const swarmParticles = chainsEl ? parseInt(chainsEl.value, 10) : 10000;
-
-            const iterEl = document.getElementById('cf-wyckoff-iterations');
-            // Through the log mapping, not the raw slider position: the
-            // control now carries 0..1000 and the value is derived from it.
-            const swarmIterations = wyIterationsValue();
-
-            const restsEl = document.getElementById('cf-wyckoff-restarts');
-            const swarmRestarts = restsEl ? parseInt(restsEl.value, 10) : 4;
-
-            const minContEl = document.getElementById('cf-wyckoff-min-contact');
-            const minContact = minContEl ? parseFloat(minContEl.value) : 1.0;
-
-            // Same check as the standalone launcher, for the same reason: the
-            // rules the user can see in the box are the rules the search gets,
-            // or the search does not start.
-            const windowsEl = document.getElementById('cf-wyckoff-windows');
-            const vcMap = validateDistanceConstraints(windowsEl ? windowsEl.value : '',
-                                                      targetComposition);
-            renderConstraintStatus(vcMap);
-            if (vcMap.errors.length) {
-                const m = `Distance constraints: ${vcMap.errors[0]}`;
-                done();
-                cfSetStructureStatus(m, 'warn');
-                if (forceWyckoff) setWyckoffStatus(m, 'warn');
-                showToast(m, 'error');
-                return;
-            }
-            vcMap.warnings.forEach(w => logEvent(`Distance constraints: ${w}`));
-            const distanceConstraints = vcMap.windows;
-            if (distanceConstraints.length) {
-                describeDistanceConstraints(distanceConstraints)
-                    .forEach(s => logEvent(`  constraint: ${s}`));
-            }
 
             chargeFlipWorker.postMessage({
                 type: 'build-structure',
@@ -4311,16 +4140,6 @@ function runBuildStructure(quiet, forceWyckoff = false) {
                 peakHeightCutoff: 0.04,
                 amplitudeCutoff: 0.05,
                 originCandidates: 12,
-
-                targetComposition: targetComposition,
-                wyckoffZ: Number.isNaN(wyckoffZ) ? null : wyckoffZ,
-                wyckoffMaxSites: Number.isNaN(wyckoffMaxSites) ? null : wyckoffMaxSites,
-                wyckoffMaxRepeat: Number.isNaN(wyckoffMaxRepeat) ? null : wyckoffMaxRepeat,
-                swarmParticles: swarmParticles,
-                swarmIterations: swarmIterations,
-                swarmRestarts: swarmRestarts,
-                minContact: minContact,
-                distanceConstraints: distanceConstraints,
 
                 // The observations for the final coordinate refinement. Without
                 // these the refinement bails out and the reported coordinates
