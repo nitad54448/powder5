@@ -36,6 +36,22 @@
 //    freely among members of one symmetry orbit -- which are required by
 //    symmetry to be equal -- and did nothing at all about real overlaps.
 //
+//  * THE BEST ITERATE IS CHOSEN ON THE GPU (in its own bind group, group 2;
+//    see the declaration for why it cannot live in group 0). v138 copied partials[0..3] back
+//    and mapped it EVERY cycle, purely so the host could decide whether the
+//    R factor had improved and, if so, issue a buffer copy. That is a full
+//    pipeline flush per iteration: at 64^3 the GPU work in one cycle is small
+//    enough that the round-trip latency dominated the whole run. keep_best
+//    and commit_best do the comparison and the snapshot on the device, so the
+//    host never has to see R in order to make progress. It still reads the R
+//    history back for the convergence plot, but in batches, and being a few
+//    iterations behind costs nothing there.
+//
+//  * Orbit LOST ITS target_i FIELD. It was written by the host and read by
+//    nobody: repartition overwrites orbitTarget[] from the calculated
+//    intensities on the first cycle and constrain reads only that. Two
+//    sources of truth for the same quantity, one of them dead.
+//
 //  * NO PER-ITERATION UNIFORM WRITES. Every field of Params is static for a
 //    trial. The flip threshold is computed on the GPU by finalize_moments and
 //    left in partials[0], so the host no longer has to read sigma back,
@@ -51,7 +67,7 @@
 //        [0] delta      - flip threshold, written by finalize_moments
 //        [1] R numerator
 //        [2] R denominator
-//        [3] (spare)
+//        [3] best R so far, initialised to +inf by the host
 //        [4 + 2*w], [5 + 2*w]  - per-workgroup reduction results
 //
 //  orbitIdx[] packs a grid index in bits 0..30 and a "this member stores the
@@ -86,14 +102,14 @@ struct Params {
 @group(0) @binding(1) var<storage, read_write> src      : array<f32>;
 @group(0) @binding(2) var<storage, read_write> dst      : array<f32>;
 @group(0) @binding(3) var<storage, read_write> partials : array<f32>;
+// (the best-iterate grid is declared with the other group-2 resource below)
 
 // A symmetry orbit: `count` consecutive entries of orbitIdx starting at
-// `start`. target_i is the orbit's share of the observed intensity, i.e. the
-// value that sum(|F|^2) over the orbit must be scaled to.
+// `start`. Its share of the observed intensity lives in orbitTarget[g], which
+// repartition writes and constrain reads; the orbit itself carries no copy.
 struct Orbit {
     start    : u32,
     count    : u32,
-    target_i : f32,
 };
 
 // A set of orbits that overlap in 2-theta and were measured as one peak.
@@ -110,11 +126,28 @@ struct Cluster {
 @group(1) @binding(3) var<storage, read>       clusters    : array<Cluster>;
 @group(1) @binding(4) var<storage, read_write> orbitTarget : array<f32>;
 
+// The best iterate so far. Written only by keep_best.
+//
+// IT HAS ITS OWN BIND GROUP, and that is not cosmetic. The per-stage storage
+// buffer limit is validated against the PIPELINE LAYOUT, not against what an
+// entry point actually reads. Group 0 carries three storage buffers and group
+// 1 carries five, so the symmetry pipelines -- which bind both -- already sit
+// exactly on the guaranteed limit of eight. Putting `best` in group 0 made
+// them nine and createPipelineLayout threw, even though symmetrize never
+// touches it. Only keep_best binds group 2, so only keep_best pays for it:
+// 3 + 0 + 1 = 4.
+//
+// Eight is the floor every WebGPU adapter must support. Plenty of hardware
+// reports 16 and we could ask for it in requiredLimits, but that would refuse
+// the device outright on anything older, which is a bad trade for one buffer.
+@group(2) @binding(0) var<storage, read_write> best : array<f32>;
+
 const PI : f32 = 3.141592653589793;
 
 const P_DELTA : u32 = 0u;
 const P_RNUM  : u32 = 1u;
 const P_RDEN  : u32 = 2u;
+const P_BESTR : u32 = 3u;
 const P_BASE  : u32 = 4u;
 
 const IDX_MASK : u32 = 0x7fffffffu;
@@ -430,7 +463,7 @@ fn repartition(@builtin(global_invocation_id) gid3 : vec3<u32>) {
 //  Amplitude constraint.
 //
 //  Members of one orbit are symmetry equivalent, so their amplitudes are
-//  EQUAL: |F| = sqrt(target_i / count). Only the phases survive from the
+//  EQUAL: |F| = sqrt(orbitTarget[g] / count). Only the phases survive from the
 //  flipped density. v137 rescaled the orbit by a single factor, which
 //  preserved whatever amplitude imbalance the flip had introduced -- i.e. it
 //  let the map violate the point group. This does not.
@@ -523,6 +556,44 @@ fn reduce_rfactor(@builtin(global_invocation_id) gid3 : vec3<u32>,
         partials[P_BASE + 2u * wid3.x]      = wg_a[0];
         partials[P_BASE + 2u * wid3.x + 1u] = wg_b[0];
     }
+}
+
+// ===========================================================================
+//  Best-iterate snapshot, on the device.
+//
+//  keep_best copies src -> best when the R factor just written by
+//  finalize_rfactor beats the record in partials[P_BESTR]; commit_best then
+//  updates the record. They are separate dispatches because every keep_best
+//  invocation must see the OLD record -- a single kernel that both compared
+//  and updated would race with itself across workgroups.
+//
+//  Cost is one extra pass over the grid per cycle, against 3*log2(N) passes
+//  for each of the two transforms. That is a few percent, and it buys the
+//  removal of a mapAsync stall per iteration.
+// ===========================================================================
+@compute @workgroup_size(64)
+fn keep_best(@builtin(global_invocation_id) gid3 : vec3<u32>) {
+    let den = partials[P_RDEN];
+    if (!(den > 0.0)) { return; }
+    let r = partials[P_RNUM] / den;
+    if (!(r < partials[P_BESTR])) { return; }
+
+    let total = 2u * P.n * P.n * P.n;
+    let base = gid3.x * COPY_PER_THREAD;
+    if (base >= total) { return; }
+    for (var k = 0u; k < COPY_PER_THREAD; k = k + 1u) {
+        let i = base + k;
+        if (i < total) { best[i] = src[i]; }
+    }
+}
+
+@compute @workgroup_size(1)
+fn commit_best(@builtin(global_invocation_id) gid3 : vec3<u32>) {
+    if (gid3.x != 0u) { return; }
+    let den = partials[P_RDEN];
+    if (!(den > 0.0)) { return; }
+    let r = partials[P_RNUM] / den;
+    if (r < partials[P_BESTR]) { partials[P_BESTR] = r; }
 }
 
 @compute @workgroup_size(64)

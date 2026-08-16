@@ -178,9 +178,12 @@ input[type="text"].sg-search-row input,
 }
 
 #controls-panel {
-    width: 380px;
-    min-width: 320px;
-    max-width: 500px;
+    /* Widened for the fifth tab. At 380px the tab strip had to squeeze five
+       uppercase labels into a row that was laid out for four, and the Wyckoff
+       panel's sliders and the distance-constraint textarea were cramped. */
+    width: 440px;
+    min-width: 380px;
+    max-width: 560px;
     flex-shrink: 0;
     background: var(--bg-panel);
     border-right: 1px solid var(--rule);
@@ -231,7 +234,11 @@ input[type="text"].sg-search-row input,
 }
 
 #drag-handle {
-    width: 1px;
+    /* 1px was a 1px hit target. The visible rule stays hairline -- it is drawn
+       by the ::after below -- but the grab area is now wide enough to find
+       without hunting for it. */
+    width: 7px;
+    margin: 0 -3px;          /* keeps the visual gap unchanged either side */
     cursor: col-resize;
     background: var(--rule);
     flex-shrink: 0;
@@ -570,27 +577,33 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
     margin-bottom: 14px;
     gap: 0;
 }
+/* Matched to .rp-tab in the results panel: same font size and weight, same
+   padding, same active treatment. They are the same kind of control and were
+   drawn two different ways -- uppercase letter-spaced pills on the left,
+   sentence-case tabs on the right. The uppercase + 0.10em tracking was also
+   what made five labels overflow where four had fitted. */
 .tab-btn {
     flex: 1;
-    padding: 6px 10px;
-    background: transparent;
+    appearance: none;
     border: none;
-    color: var(--fg-2);
-    font-weight: 600;
     cursor: pointer;
-    border-radius: var(--r-1);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 12px;
+    border-radius: 6px;
+    color: var(--system-secondary-label, var(--fg-2));
+    background: transparent;
+    white-space: nowrap;
     transition: background 0.12s, color 0.12s;
-    font-size: 11px;
-    letter-spacing: 0.10em;
-    text-transform: uppercase;
-    font-family: inherit;
 }
-.tab-btn:hover { color: var(--fg); background: var(--bg-hover); }
+.tab-btn:hover { color: var(--system-label, var(--fg)); background: var(--bg-hover); }
 .tab-btn.active {
     color: var(--fg);
-    background: var(--bg-stage);
+    background: var(--rule-soft, var(--bg-stage));
     box-shadow: var(--shadow-1);
 }
+.tab-btn:disabled { opacity: 0.4; cursor: default; background: transparent; }
 [data-theme="dark"] .tab-btn.active {
     background: var(--bg-elevated);
 }
@@ -684,8 +697,12 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 /* ---------- Anchor / spline points list ---------- */
 
 .anchor-point-item {
+    /* minmax(0, 1fr), not 1fr. A bare 1fr track is floored at the content's
+       min-width, and a number input carries a default size of ~20 characters,
+       so the row refused to shrink below its natural width and overflowed the
+       panel instead of adapting to it. */
     display: grid;
-    grid-template-columns: 1fr 1fr auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
     gap: 6px;
     align-items: center;
     margin-bottom: 4px;
@@ -694,6 +711,8 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     border: 1px solid var(--rule-soft);
     border-radius: var(--r-1);
 }
+.anchor-point-item .control-input { width: 100%; min-width: 0; box-sizing: border-box; }
+#spline-points-list { box-sizing: border-box; }
 .anchor-point-item span {
     font-size: 12px;
     padding: 0 4px;
@@ -810,12 +829,21 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     border: none;
     padding: 0;
 }
+/* Anything that carries its own internal label must span BOTH columns.
+   The Refinement group is a two-column grid, minmax(96px, auto) then 1fr, and
+   a block left in column 1 widens that column against the `auto` -- which is
+   why dropping the Max Iterations row in unlisted squeezed the Method selector
+   in column 2 down to "Paralle...". */
 .bottom-actions > .control-group > h2,
 .bottom-actions > .control-group > .slider-group,
+.bottom-actions > .control-group > .parameter-grid-2col,
 .bottom-actions > .control-group > #progress-bar-container,
 .bottom-actions > .control-group > .results-grid {
     grid-column: 1 / -1;
 }
+/* The 2-theta range sits like Method does: label left, control right. */
+.bottom-actions > .control-group > .tth-range-label { grid-column: 1; margin-bottom: 0; }
+.bottom-actions > .control-group > .range-row { grid-column: 2; }
 .bottom-actions > .control-group > label[for="algorithm-select"] {
     grid-column: 1;
     margin-bottom: 0;
@@ -1555,8 +1583,13 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
    rather than a scroller. */
 #rp-panel-plot { display: none; }
 #rp-panel-plot.active { display: block; }
-/* The three results panels scroll their content. */
-#rp-panel-lebail, #rp-panel-pawley, #rp-panel-cf { overflow-y: auto; padding: 14px 16px; }
+/* The results panels scroll their content.
+   #rp-panel-wyckoff was missing here, which is the whole reason its heading
+   sat flush against the top-left corner while every other tab had a margin:
+   it was not that the panel was styled differently, it was not styled at all. */
+#rp-panel-lebail, #rp-panel-pawley, #rp-panel-cf, #rp-panel-wyckoff {
+    overflow-y: auto; padding: 14px 16px;
+}
 .rp-results-head {
     display: flex; justify-content: space-between; align-items: flex-start;
     gap: 12px; flex-wrap: wrap; margin-bottom: 10px;
@@ -1681,3 +1714,66 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 .cf-site-legend-empty {
     padding: 4px; font-size: 11px; color: var(--system-secondary-label);
 }
+
+
+/* ---------------------------------------------------------------------------
+   Run + Cancel on one line, and a two-box numeric range.
+   Cancel is DISABLED rather than hidden while idle: hiding it made the row
+   change height every time a run started and stopped, which moved everything
+   below it.
+   --------------------------------------------------------------------------- */
+.run-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+.run-row .btn { flex: 1 1 0; min-width: 0; }
+.run-row .btn:disabled { opacity: 0.45; cursor: default; }
+
+.range-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 6px;
+    align-items: center;
+}
+.range-row .control-input { width: 100%; min-width: 0; box-sizing: border-box; text-align: right; }
+.range-row .range-dash { color: var(--system-secondary-label); font-size: 12px; }
+
+
+/* ---------------------------------------------------------------------------
+   Left panel while a structure-solution run is in progress.
+   The controls are individually disabled by setLeftPanelLocked -- this only
+   makes the state visible. Deliberately NOT pointer-events:none on the whole
+   panel: the Stop button lives inside it and has to stay clickable, and a
+   panel that silently swallows clicks is worse than one that looks disabled.
+   --------------------------------------------------------------------------- */
+#controls-panel.panel-locked {
+    position: relative;
+}
+#controls-panel.panel-locked .control-group,
+#controls-panel.panel-locked .tab-buttons {
+    opacity: 0.55;
+    transition: opacity 0.15s;
+}
+#controls-panel.panel-locked .run-row .btn:not(:disabled) {
+    opacity: 1;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Session log panel.
+   Monospaced and scrollable; the tab-strip flash reuses .rp-tab-flash so a new
+   entry is noticed without stealing focus from whatever is being read.
+   --------------------------------------------------------------------------- */
+#rp-panel-log { overflow-y: auto; padding: 14px 16px; }
+#log-run-body { max-height: calc(100vh - 190px); overflow-y: auto; }
+#log-content { color: var(--fg); line-height: 1.55; }
+#log-content:empty::after {
+    content: 'Nothing logged yet.';
+    color: var(--system-secondary-label);
+    font-style: italic;
+}
+
+/* The export dialog reuses the space-group modal chrome; it only needs a
+   footer rule, which that modal did not have. */
+.sg-modal-footer { border-top: 1px solid var(--system-separator); }

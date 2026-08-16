@@ -444,11 +444,15 @@ blockquote {
             <li><a href="#cf-workflow" class="sub-link">Workflow &amp; Controls</a></li>
             <li><a href="#cf-settings" class="sub-link">Recommended Settings</a></li>
             <li><a href="#cf-reading" class="sub-link">Reading the Solution</a></li>
+            <li><a href="#cf-com-peaks" class="sub-link">3D Center of Mass Peak Picking</a></li>
             <li><a href="#cf-structure" class="sub-link">Building a Structure</a></li>
             <li><a href="#cf-output-fields" class="sub-link">Result Fields</a></li>
             <li><a href="#cf-caveats" class="sub-link">Limitations</a></li>
+            <li><a href="#cf-wyckoff">Wyckoff Search</a></li>
             <li><a href="#strategy">Refinement Strategy</a></li>
             <li><a href="#results">Interpreting Results</a></li>
+            <li><a href="#results-weights" class="sub-link">Weighting &amp; ESDs</a></li>
+            <li><a href="#results-clusters" class="sub-link">Overlap Clusters</a></li>
             <blockquote>
               <li><a href="#results-wh" class="sub-link">Williamson-Hall Analysis</a></li>
             </blockquote>
@@ -464,7 +468,18 @@ blockquote {
                 This document serves as a scientific and technical guide for the <strong>powder5</strong> web application, a tool for the analysis of powder X-ray diffraction (PXRD) data via whole-pattern fitting. This technique, also known as pattern decomposition, is a crucial method in materials science and crystallography for refining structural and microstructural parameters when a complete structural model is either unknown or unnecessary.
             </p>
             <p>
-                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for rigorous, unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and a physically rigorous <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using a monotonic cubic spline interpolation between user-defined points.
+                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for rigorous, unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and a physically rigorous <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using a monotonic cubic spline interpolation between user-defined
+                anchors, which are held fixed during refinement.
+            </p>
+            <p>
+                Two independent routes to a structure are provided, and either can be used without
+                the other. <strong>Charge flipping</strong> is a dual-space method: it solves for a
+                density map with no model at all, and is the right first move when the composition
+                is unknown. The <strong>Wyckoff search</strong> is a direct-space method: it fits
+                atoms on Wyckoff positions of a known composition directly to the extracted
+                intensities, needs no map, and copes far better with light atoms in the presence of
+                heavy ones &mdash; where charge-flipping ripples can be as large as the oxygen
+                peaks you are looking for.
             </p>
         </section>
 
@@ -501,18 +516,40 @@ blockquote {
                 The application is a set of static files with no build step and no server-side
                 component. Every file below must sit in the <strong>same directory</strong>:
             </p>
+            <p>The tree is:</p>
             <table class="param-table">
-                <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+                <thead><tr><th>Path</th><th>Purpose</th></tr></thead>
                 <tbody>
                     <tr><td><code>powder5.html</code></td><td>The application itself.</td></tr>
-                    <tr><td><code>refinement_worker.js</code></td><td>Web Worker that runs the refinement off the UI thread.</td></tr>
-                    <tr><td><code>sg_engine.js</code></td><td>Space-group resolution, reflection conditions, multiplicities.</td></tr>
-                    <tr><td><code>cctbx_space_groups_all_settings_v7.json</code></td><td>Symmetry database for all settings of the 230 groups.</td></tr>
-                    <tr><td><code>chart.umd.min.js</code></td><td>Chart.js.</td></tr>
-                    <tr><td><code>jspdf.umd.min.js</code></td><td>PDF export only.</td></tr>
-                    <tr><td><code>html2canvas.min.js</code></td><td>PDF export only (renders the chart into the PDF).</td></tr>
+                    <tr><td><code>style.css</code></td><td>All styling.</td></tr>
+                    <tr><td><code>charge_flipping.wgsl</code></td><td>WebGPU kernels for the charge-flipping loop.</td></tr>
+                    <tr><td><code>swarm_density.wgsl</code></td><td>Wyckoff swarm kernel scoring against a density map.</td></tr>
+                    <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel scoring |F<sub>calc</sub>|&sup2; against the Pawley intensities. Used when no map is supplied.</td></tr>
+                    <tr><td><code>js/</code></td><td>All application modules &mdash; <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
+                    <tr><td><code>lib/</code></td><td>Vendor bundles: <code>chart.umd.min.js</code>, <code>three.min.js</code>, <code>jspdf.umd.min.js</code>, <code>html2canvas.min.js</code>.</td></tr>
+                    <tr><td><code>sg/</code></td><td>Space-group database (all settings of the 230 groups).</td></tr>
+                    <tr><td><code>scatters/</code></td><td>Tabulated atomic scattering factors, with <code>index.json</code> naming the available tables.</td></tr>
                 </tbody>
             </table>
+            <div class="note">
+                <strong>Zero point in an exported pdCIF.</strong> The dictionary defines its
+                offset as \(2\theta_{\text{calibrated}} = 2\theta_{\text{measured}} +
+                2\theta_{\text{offset}}\), whereas powder5 works with
+                \(\text{zeroShift} = 2\theta_{\text{obs}} - 2\theta_{\text{calc}}\) &mdash; the
+                instrument zero error, positive when the diffractometer reads high. The two are
+                the same quantity with opposite signs, so <code>_pd_calib_2theta_offset</code> is
+                written negated and read back negated. A private
+                <code>_powder5_2theta_zero_shift</code> carries the unconverted value alongside it,
+                so a file this program wrote round-trips exactly whichever tag a reader picks up.
+            </div>
+            <div class="note">
+                <strong>The scattering tables are not optional for structure solution.</strong>
+                If <code>scatters/index.json</code> cannot be read, the Wyckoff search and the
+                coordinate refinement fall back to <em>f</em>&nbsp;=&nbsp;<em>Z</em>, a flat form
+                factor with no angular fall-off. That makes every heavy atom too strong at high
+                angle and no arrangement of atoms can fit the data; a warning is written to the
+                console when it happens.
+            </div>
             <div class="warning-note">
                 <strong>A local web server is required.</strong> Opening the file directly by
                 double-clicking it (a <code>file://</code> URL) will not work: browsers block both
@@ -625,14 +662,47 @@ blockquote {
                     <a href="#strategy">Recommended Refinement Strategy</a>) or after changing a
                     fixed input such as the background points.</li>
             </ol>
+            <div class="note">
+                <strong>The extraction runs to convergence, not for a fixed number of passes.</strong>
+                Each refinement cycle restarts the decomposition from a flat seed &mdash; which
+                keeps the extracted intensities a deterministic function of the current
+                parameters, rather than of the path taken to reach them &mdash; and then iterates
+                until the relative change falls below a tolerance, with a floor of six passes and
+                a cap of twenty-four. A fixed count is either wasteful on a well-separated pattern
+                or short on a heavily overlapped one, and the overlapped case is exactly where
+                being short matters: the profile parameters would otherwise be fitted against
+                intensities that are still moving.
+            </div>
 
-            <h3 id="pawley-method">The Pawley Method</h3>
+<h3 id="pawley-method">The Pawley Method</h3>
             <p>
                 The Pawley method employs a simultaneous, non-iterative approach. It treats the peak height ($I_{hkl}$) of each Bragg reflection as an independent, refinable variable within a single, large-scale least-squares minimization.
             </p>
             <p>
-                This means that all parameters—lattice, profile, and all individual peak heights—are refined concurrently. The background shape is fixed by the user-defined spline points and is not refined.
+                This means that all parameters&mdash;lattice, profile, and all individual peak
+                heights&mdash;are refined concurrently. The background shape is fixed by the
+                user-defined spline anchors and is not refined; see
+                <a href="#parameters-background">Background Modeling</a> for what that costs.
             </p>
+            <p>
+                <strong>Intensities are not bounded below by zero.</strong> An extracted intensity
+                is a measurement of a quantity whose true value is non-negative, but the
+                measurement itself carries noise, and forcing every realisation to be
+                \(\ge 0\) turns a symmetric error into a one-sided one. That bias lands hardest
+                on weak and systematically absent reflections &mdash; exactly the ones a
+                space-group test needs to be honest about. A negative intensity is refined,
+                reported and rendered as a negative contribution to the pattern.
+            </p>
+            <div class="note">
+                <strong>The intensity derivatives are analytic.</strong>
+                \(\partial y_i / \partial I_j\) is the profile of reflection \(j\) at point
+                \(i\) &mdash; exact, and non-zero only inside that reflection's profile window.
+                Each intensity column is therefore stored as a slice covering only the points it
+                touches, and \(J^{T}J\) is accumulated over the <em>intersection</em> of two
+                slices, so two reflections that do not overlap contribute an exact zero without
+                being visited. Profile, cell and zero-point parameters still use finite
+                differences, which is where they genuinely belong.
+            </div>
              <div class="note">
                 <strong>Pawley Initialization:</strong> To provide a better starting point for the refinement, especially for stochastic algorithms, the Pawley method first performs a single, preliminary Le Bail intensity extraction step using the initial user-provided parameters. The extracted peak heights from this step are then used as the starting values for the simultaneous Pawley refinement.
             </div>
@@ -675,8 +745,27 @@ blockquote {
                     raising $\lambda$ against a wall.</li>
                 <li><b>Pawley Mode: Generally the recommended algorithm for Pawley refinements due to stability and efficiency.</b></li>
             </ul>
+            <div class="note">
+                <strong>The normal equations are solved by Cholesky factorisation</strong>, with LU
+                and partial pivoting retained as a fallback. The Marquardt-scaled matrix
+                \(D^{-1}(J^{T}J)D^{-1} + \lambda I\) is symmetric and positive definite by
+                construction; LU ignores both facts, does twice the arithmetic, and &mdash; the
+                part that matters &mdash; returns a finite &ldquo;solution&rdquo; for an
+                indefinite matrix. An indefinite matrix means the normal equations have been
+                corrupted, and the step computed from one points in an arbitrary direction.
+                Cholesky fails on exactly that case, which is what the loop wants: it raises
+                \(\lambda\) and tries again.
+            </div>
+            <div class="note">
+                <strong>Parameters with no effect are dropped, and said so.</strong> A parameter
+                whose Jacobian column is identically zero is excluded from the solve and reported
+                once by name. The test is on the column itself, not on its size relative to other
+                columns: diagonals of \(J^{T}J\) are in different physical units &mdash; counts
+                per &Aring;ngstr&ouml;m for a cell edge, dimensionless for an intensity &mdash; so
+                comparing them against each other says nothing about whether either is determined.
+            </div>
 
-            <h3 id="algorithms-pt">Parallel Tempering (Replica Exchange)</h3>
+<h3 id="algorithms-pt">Parallel Tempering (Replica Exchange)</h3>
             <p>
                 Parallel Tempering, also known as Replica Exchange MCMC, is an advanced stochastic algorithm designed to overcome the slow convergence of traditional search methods on complex landscapes. Instead of a single system, Parallel Tempering simulates multiple copies (or "replicas") of the system simultaneously, each at a different, fixed temperature in a predefined ladder ($T_1 < T_2 < ... < T_N$).
             </p>
@@ -1024,7 +1113,31 @@ blockquote {
                  <li><b>Chart Display:</b> The spline points can be toggled on/off on the chart using the "Show Points on Chart" checkbox. The calculated spline curve is always shown.</li>
              </ul>
              <div class="note">
-                 <strong>Important:</strong> Define the background points carefully <strong>before</strong> starting the Le Bail or Pawley refinement. Since these points are not refined parameters, their positions directly determine the background shape subtracted during the fit. Adjust the points as needed if the initial fit shows poor background modeling.
+                 <strong>Anchors outside the fitted range are removed.</strong> Narrowing the
+                 \(2\theta\) range deletes any anchor that now falls outside it, and a message
+                 says how many went. Leaving them would let a point at 160&deg; go on shaping the
+                 baseline for a fit that stops at 158&deg; &mdash; data explicitly excluded, still
+                 pulling the background under the data that was kept. Widening the range again
+                 does not bring them back; add new ones, or press Auto-points.
+             </div>
+             <div class="warning-note">
+                 <strong>The background is fixed, and this has consequences that appear in the
+                 report.</strong> It is evaluated once before the refinement starts and held
+                 constant for every residual and every Jacobian column. Therefore:
+                 <ul>
+                     <li>No ESD anywhere in the output includes background uncertainty. The
+                         covariance comes from \(J^{T}J\), and the background contributes no
+                         column to \(J\), so every \(\sigma\) is conditional on the anchors
+                         being exactly right.</li>
+                     <li>The anchors are not counted in \(P\), so the degrees of freedom &mdash;
+                         and hence \(\chi^2\) and every ESD scaled by it &mdash; are optimistic
+                         by roughly the number of anchors.</li>
+                     <li>Any error in the anchors is absorbed into the extracted intensities,
+                         because the decomposition works on \(y_{obs} - y_{bkg}\).</li>
+                 </ul>
+                 The statistics block states this explicitly on every run rather than leaving it
+                 as an unstated assumption. Define the anchors carefully <strong>before</strong>
+                 refining.
              </div>
             <h3 id="parameters-profile4">Simple pVoigt</h3>
             <p>
@@ -1483,6 +1596,25 @@ blockquote {
                 <code>charge_flipping_worker.js</code>; if it fails to load or compile,
                 a message says so and the run continues on the CPU rather than failing.
             </div>
+            <div class="note">
+                <strong>Stopping keeps what has finished.</strong> The Stop button ends the run and
+                reports the best of the trials that <em>completed</em>; only the trial still in
+                flight is lost. The run appears in the history labelled <em>stopped</em>.
+            </div>
+            <div class="note">
+                <strong>Sync batching is measured, not assumed.</strong> The GPU path chooses the
+                best iterate on the device and reads the R factor back in batches, so the host is
+                not a bottleneck. How many cycles may be queued before a sync is decided by timing
+                the previous batch: too few and the run is dominated by round-trip latency, too
+                many and the GPU spends seconds in one uninterrupted burst, which is how a driver
+                watchdog decides the device has stopped responding and resets it. The controller
+                starts at one cycle, so the first measurement is safe on any device, and sizes
+                from a decaying worst-case estimate so a device that slows down mid-run &mdash;
+                thermal throttling, another application taking the GPU &mdash; is caught before
+                the next burst rather than after it. A device loss is now detected and reported;
+                previously a reset left a pending read that never settled, and the run hung with
+                no error at all.
+            </div>
 
             <h3 id="cf-settings">Recommended Settings</h3>
             <p>
@@ -1702,6 +1834,26 @@ blockquote {
                 128&sup3;, which is two million cells, takes well under a second.
             </div>
 
+            <h3 id="cf-com-peaks">3D Center of Mass Peak Picking</h3>
+            <div class="note">
+                <strong>The 3D view puts <em>c</em> vertical</strong>, following crystallographic
+                convention, and is lit differently in light and dark mode &mdash; the canvas is
+                transparent and inherits the page, so colours tuned against black wash out against
+                white. The axis letters and cell edges are coloured at build time, so switching
+                theme with a scene already on screen re-lights it but leaves those until the next
+                rebuild.
+            </div>
+            <p>
+                When dealing with heavy scatterers (such as Pb or U) and truncated high-angle diffraction data, Fourier series termination artifacts frequently cause the electron density map to form hollow <strong>"donuts" or rings</strong> rather than ideal 3D Gaussian spheres.
+            </p>
+            <p>
+                To prevent standard 1D parabolic interpolation from erroneously placing atomic coordinates on the rim of these donuts, Powder 5 evaluates candidate peak locations using a <strong>3D Center of Mass (CoM)</strong> calculation over a $5 \times 5 \times 5$ voxel window ($\Delta h, \Delta k, \Delta l \in [-2, 2]$):
+            </p>
+            $$\mathbf{r}_{\text{center}} = \frac{\sum_{i,j,k \in [-2, 2]} \max(0, \rho_{i,j,k}) \cdot \mathbf{d}_{i,j,k}}{\sum_{i,j,k \in [-2, 2]} \max(0, \rho_{i,j,k})}$$
+            <p>
+                By weighting positive density across the entire $5 \times 5 \times 5$ neighborhood, the algorithm geometrically averages out the ring artifact and places the peak coordinate directly in the true center of the atomic site.
+            </p>
+
             <h3 id="cf-structure">Building a Structure in the Space Group</h3>
             <p>
                 This runs automatically at the end of every charge-flipping run, and
@@ -1752,8 +1904,134 @@ blockquote {
                 structure.
             </div>
 
+            <h3 id="cf-wyckoff">Wyckoff Target Composition Search</h3>
+            <p>
+                The Wyckoff search has its <strong>own tab</strong> in the left panel and its own
+                results tab on the right. It is a peer of charge flipping, not a step inside it:
+                it consumes a space group, a cell, a composition and the Pawley intensities, and
+                not one of those comes from a density map. <strong>It does not require a
+                charge-flipping run.</strong>
+            </p>
+            <p>
+                This is direct-space (global-optimisation) structure solution, the family that
+                includes FOX, EXPO, DASH and TOPAS's simulated annealing. It works where charge
+                flipping struggles on powder data because of parameter counting: PbSO<sub>4</sub>
+                in \(Pnma\) has <strong>nine</strong> free positional parameters against a few
+                hundred observations, whereas charge flipping solves for thousands of grid
+                amplitudes and phases from the same data. It has no phase problem, no origin
+                ambiguity, no hand ambiguity and no series-termination ripples &mdash; and because
+                the composition is enforced by construction, it cannot invent an atom where there
+                is nothing to explain it.
+            </p>
+
+            <h4>The objective</h4>
+            <p>
+                A WebGPU swarm (replica-exchange MCMC) places atoms on trial Wyckoff assignments
+                that satisfy the stoichiometry exactly. Each candidate is scored by
+                $$f = \text{CC} - \text{pen}$$
+                where CC is a <strong>weighted Pearson correlation between
+                \(|F_{\text{calc}}|^2\) and the observed intensities</strong>, taken over
+                groups of reflections the powder pattern cannot separate. The observed intensity
+                of a group is \(\sum m |F_o|^2\) and the calculated one is accumulated the same
+                way, so the comparison is made where the measurement actually exists.
+            </p>
+            <p>
+                Pearson rather than a cosine similarity or an R factor: it is scale-free, so there
+                is no scale factor to fit and no scale degeneracy for the swarm to explore;
+                subtracting the means keeps it discriminating, where a cosine similarity is
+                dominated by the large positive offset both vectors share; and it lands in
+                \([0,1]\), the range the clash and bond penalties are tuned against.
+            </p>
+            <p>
+                Scattering factors are the tabulated \(f(s)\) with an overall temperature factor
+                folded in as \(f(s)\exp(-Bs^2/4)\), pre-computed per (reflection, element) on the
+                host. \(B\) is estimated by a <strong>Wilson plot</strong> over resolution shells
+                from the extracted intensities themselves. The Pawley intensities do not lack a
+                temperature factor &mdash; they <em>contain</em> the real one, because they are a
+                measurement &mdash; so the model needs one to reproduce their fall-off.
+            </p>
+
+            <h4>Penalties and hard constraints</h4>
+            <p>
+                Clash, bond-window and coordination penalties are <em>soft</em> and ramped during
+                the search, which is correct while the swarm still needs to move through crowded
+                configurations. They are <em>not</em> how the answer is decided. A candidate whose
+                contacts break the floors is <strong>rejected outright</strong>, and candidates are
+                walked in score order until one passes; if every candidate fails, that is reported
+                rather than swallowed, because it is a statement about the composition, \(Z\), or
+                the floor.
+            </p>
+            <p>
+                The same test is applied <em>after</em> the coordinate refinement. The refinement
+                moves every free coordinate with no contact term at all, so guarding only its
+                input guards nothing: a refinement that breaks a floor is discarded and the search
+                positions are kept, with the reason recorded.
+            </p>
+
+            <h4>Resolution ramp &mdash; and why the running CC is not the final one</h4>
+            <div class="warning-note">
+                The swarm starts on a <strong>subset</strong> of the reflection groups &mdash; as
+                few as a quarter &mdash; and reaches the full set part-way through each restart.
+                The figure shown while a search runs is computed on whatever subset is active, so
+                it reads considerably higher than the final value and is labelled
+                <strong>CC (partial res.)</strong>. Only the full-resolution figure from the
+                closing quench, shown in the results panel as <strong>Search: CC</strong>, is
+                comparable with anything. A running 0.99 alongside a final \(wR\) of 50% is not
+                a contradiction; it usually means the low-order reflections line up and the light
+                atoms are not yet placed.
+            </div>
+
+            <h4>Controls</h4>
+            <table class="param-table">
+                <thead><tr><th>Control</th><th>Description &amp; defaults</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Formula</strong></td><td>Target composition, e.g. <code>PbSO4</code>. Required; the Search button stays disabled and says why until one is entered.</td></tr>
+                    <tr><td><strong>Z</strong></td><td>Formula units per cell. Blank for automatic estimation from the cell volume.</td></tr>
+                    <tr><td><strong>Max sites / elem</strong></td><td>Most distinct Wyckoff positions one element may occupy.</td></tr>
+                    <tr><td><strong>Max reuse / pos</strong></td><td>Most independent atoms sharing one Wyckoff position.</td></tr>
+                    <tr><td><strong>Chains</strong></td><td>Independent trial structures. Capped automatically against the device's storage-buffer and dispatch limits and snapped to a multiple of 64.</td></tr>
+                    <tr><td><strong>Iterations</strong></td><td>Steps per chain (100&ndash;10000, default 2000).</td></tr>
+                    <tr><td><strong>Restarts</strong></td><td>Independent restarts (1&ndash;20, default 4).</td></tr>
+                    <tr><td><strong>Min contact (&Aring;)</strong></td><td>Floor applied to every unlike pair, default 1.0&nbsp;&Aring;.</td></tr>
+                    <tr><td><strong>Distance constraints</strong></td><td><code>ElemA ElemB N dmin/dmax</code>, one per line, e.g. <code>S O 4 1.35/1.65</code>. Sets both the bond-window penalty during the search and the floor used to reject a candidate afterwards.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Final coordinate refinement</h4>
+            <p>
+                The search finishes with a least-squares refinement of the free Wyckoff
+                coordinates against \(|F_{\text{obs}}|^2\), weighted by \(1/\sigma^2\) and
+                re-projecting each atom onto its symmetry element every step. It uses the same
+                scattering factors and the same \(B\) as the search &mdash; if those two ever
+                disagree they are not fitting the same model, and no arrangement of atoms can
+                satisfy both.
+            </p>
+            <p>
+                Both answers are reported: the <strong>search positions</strong> and the
+                <strong>refined positions</strong>, in separate tables, with the second appearing
+                only when the refinement actually moved something. They optimise different
+                quantities, and when they disagree that disagreement is the interesting part. If
+                you intend to run a Rietveld refinement afterwards, the search positions are
+                usually the cleaner starting point.
+            </p>
+            <div class="note">
+                <strong>The free-parameter count is the constrained one.</strong> A \(4c\) site
+                in \(Pnma\) is \((x,\tfrac14,z)\) and contributes 2, an \(8d\) general site
+                contributes 3, and a fixed site such as \(4b\) at \((0,0,\tfrac12)\)
+                contributes 0. Putting atoms on Wyckoff positions <em>is</em> the method, so
+                reporting \(3N\) would understate the constraint that does the work. The count
+                is taken as the rank of each site's projection matrix, which for an idempotent
+                projector is its trace.
+            </div>
+
             <h3 id="cf-output-fields">Result Fields Explained</h3>
-            <p>The Charge Flipping tab reports several quantities. Each is defined below.</p>
+            <p>
+                The Charge Flipping results tab reports the quantities below. The Wyckoff search
+                has <a href="#cf-wyckoff">its own results tab</a>, with its own history selector
+                and its own PDF and CIF exports; it reports an assignment, a free-coordinate count
+                and \(wR(F^2)\), and it has no origin, hand or symmetry correlation to report
+                because the Wyckoff operators fix those by construction.
+            </p>
             <table class="param-table">
                 <thead><tr><th>Field</th><th>Meaning</th></tr></thead>
                 <tbody>
@@ -1770,7 +2048,10 @@ blockquote {
                     <tr><td><strong>Absences forced to zero</strong></td><td>How many grid points were held at \(F = 0\) as systematically absent. Expect roughly half the grid for an \(I\) lattice and three quarters for \(F\); zero for a primitive group with no screws or glides.</td></tr>
                     <tr><td><strong>Overlapping reflections</strong></td><td>How many of the reflection orbits share a measured peak with at least one other, and how many distinct peaks they occupy. If this approaches the total, either the sample really is heavily overlapped or the overlap tolerance is set too wide.</td></tr>
                     <tr><td><strong>Symmetry correlation</strong></td><td>(From the automatic structure build.) The correlation between the map and its symmetrised copy in the chosen space group. This is the primary quality indicator: near 1 means the density genuinely obeys the symmetry; a low value means either non-convergence or a wrong space group.</td></tr>
-                    <tr><td><strong>Origin shift / hand</strong></td><td>(From the automatic structure build.) The translation applied to bring the map onto the space-group origin, and whether the inverted solution was chosen. At \(\lambda = 0\) both are arbitrary and are resolved here against the symmetry. At \(\lambda = 1\) the shift should already be close to zero &mdash; a large shift then means the in-loop symmetrisation and the origin search disagree, which is worth investigating.</td></tr>
+                    <tr><td><strong>Origin shift / hand</strong></td><td>(From the automatic structure build.) The translation applied to bring the map onto the space-group origin, and whether the inverted solution was chosen. At \(\lambda = 0\) both are arbitrary and are resolved here against the symmetry. At \(\lambda = 1\) the shift should already be close to zero &mdash; a large shift then means the in-loop symmetrisation and the origin search disagree, which is worth investigating. <strong>Hand is only shown for a chiral setting.</strong> A centrosymmetric group contains inversion, so a map and its mirror image are the same structure and reporting &ldquo;inverted&rdquo; would invite the reader to wonder what went wrong when nothing did.</td></tr>
+                    <tr><td><strong>Lp model / French-Wilson</strong></td><td>How the intensities handed to the solver were prepared, reported as its own lines rather than buried in a single sentence. French-Wilson replaces every weak reflection with a Bayesian posterior mean using the correct centric or acentric distribution, and needs at least eight reflections carrying a usable \(\sigma\); when it does not apply, the report says <strong>NOT APPLIED</strong> with the reason. A map solved from corrected amplitudes and one solved from raw amplitudes are different results, and which one you have should not depend on a console line.</td></tr>
+                    <tr><td><strong>Clamped to zero</strong></td><td>How many non-positive intensities were forced to zero before solving.</td></tr>
+                    <tr><td><strong>Multiplicity warning</strong></td><td>Present only when the supplied multiplicities disagree with the space-group operators. The observed intensity is \(m \cdot Lp \cdot |F|^2\) and the map divides \(m\) out by spreading it over the orbit, so a disagreement scales every \(|F|\) by the square root of the ratio &mdash; silently, and with nothing else in the output to show it.</td></tr>
                 </tbody>
             </table>
 
@@ -1780,8 +2061,9 @@ blockquote {
                 <tbody>
                     <tr><td><strong>#</strong></td><td>Peak rank by height (1 = strongest).</td></tr>
                     <tr><td><strong>x, y, z</strong></td><td>Fractional coordinates. In the raw peak list these are in \(P1\) with an arbitrary origin; in the built structure they are placed on the space-group origin.</td></tr>
-                    <tr><td><strong>Height</strong></td><td>Peak density relative to the strongest peak (which is set to 1). A rough proxy for atomic number: heavier atoms scatter more and peak higher.</td></tr>
-                    <tr><td><strong>d<sub>min</sub> (&Aring;)</strong></td><td>(Peak list.) Distance to the nearest other peak &mdash; more meaningful than the absolute coordinates, since the origin is arbitrary.</td></tr>
+                    <tr><td><strong>Height</strong></td><td>The map value at the peak, relative to the strongest (set to 1). <strong>It does not rank atoms by atomic number.</strong> It is one voxel: it depends on where the atom falls relative to the grid, on its displacement parameters, and on the series-termination ripples of its neighbours &mdash; and the heaviest atom, having the largest ripples, erodes its own maximum. On a real PbSO<sub>4</sub> solution the sulfur came out at 1.000 and the lead at 0.728.</td></tr>
+                    <tr><td><strong>Charge</strong></td><td>The map <em>integrated</em> over a 0.65&nbsp;&Aring; sphere with a local baseline removed, relative to the largest integral. This is the column that tracks atomic number. Both columns are on an arbitrary scale &mdash; \(F(000)\) is held at zero throughout charge flipping, so the map has zero mean &mdash; and only ratios mean anything. The radius stays below half the shortest bond you expect to resolve, or the integral swallows the neighbours.</td></tr>
+                    <tr><td><strong>Nearest peak (&Aring;)</strong></td><td>(Peak list.) Distance to the closest <em>other</em> peak in the list. Not a resolution limit and not a bond length: it says how isolated each peak is. A value far below any real bond means the peak is a ripple beside a stronger neighbour, not an atom.</td></tr>
                     <tr><td><strong>Mult</strong></td><td>Site multiplicity: how many symmetry-equivalent copies of this site exist in the unit cell. See the note on the asterisk below.</td></tr>
                 </tbody>
             </table>
@@ -1858,6 +2140,19 @@ blockquote {
                         <div class="note">
                 <h4>Technical Note on Calculation Parameters</h4>
                 <p>
+                    <strong>The pattern calculation runs on the CPU, in double precision,
+                    always.</strong> There is one implementation of it, in
+                    <code>profile.js</code>, shared by the on-screen preview and the refinement
+                    worker. An earlier version also carried a WebGPU kernel; it was removed
+                    because it was a second implementation of the same model &mdash; a place for
+                    the two to drift apart, which had already happened once &mdash; and because
+                    it returned single precision into a double-precision pipeline, so every
+                    derivative, every ESD and therefore every refined parameter depended on
+                    whether WebGPU happened to initialise. WebGPU is still used where the
+                    arithmetic is genuinely heavy and the output is not a refined number with an
+                    uncertainty attached: charge flipping and the Wyckoff search.
+                </p>
+                <p>
                     Each reflection is evaluated only within a finite window around its centre,
                     set by <code>CALCULATION_WINDOW_MULTIPLIER</code> (currently 8.0 &times; the
                     peak FWHM, doubled when an asymmetry correction is active). This radius is the
@@ -1902,6 +2197,58 @@ blockquote {
                      where $N$ is the number of data points, $P$ is the number of refined parameters, and $R_{exp}$ is the statistically expected minimum $R_{wp}$.
                 </li>
             </ul>
+
+            <h4 id="results-weights">Weighting, and what an ESD means here</h4>
+            <p>Two different weights appear in the program and they are not interchangeable.</p>
+            <ul>
+                <li><strong>Profile fitting</strong> weights each data point by counting
+                    statistics, \(w_i = 1/\max(y_i, \text{floor})\), the right model for a
+                    measured count.</li>
+                <li><strong>Structure fitting</strong> &mdash; the Wyckoff search and the final
+                    coordinate refinement &mdash; weights each observation by \(1/\sigma^2\)
+                    from the Pawley decomposition. Counting statistics are the <em>wrong</em>
+                    model there: the uncertainty on an extracted intensity comes from the
+                    decomposition, not from how many photons arrived, and for a heavily
+                    overlapped reflection it is far larger than \(\sqrt{I}\). A measured 200
+                    with an ESD of 500 gets weight \(1/200\) under counting statistics and
+                    \(1/500^2\) from its real uncertainty &mdash; three orders of magnitude of
+                    difference in how much a number consistent with anything from &minus;300 to
+                    700 is allowed to say.</li>
+            </ul>
+            <p>
+                The residual reported for a structure is therefore \(wR(F^2)\), the
+                <em>weighted</em> residual actually minimised. An unweighted figure printed next
+                to a weighted refinement describes a fit nobody performed.
+            </p>
+
+            <h4 id="results-clusters">Overlap clusters: which intensities mean anything</h4>
+            <p>
+                Two reflections closer together than their profile width have nearly parallel
+                derivatives. Intensity can move from one to the other with almost no change to
+                the calculated pattern, so the data cannot say how it divides between them: the
+                normal matrix is near-singular in that direction and the diagonal of its inverse
+                blows up. A large ESD there is the fit reporting, correctly, that <em>this
+                reflection's share is undetermined</em> &mdash; not a failed fit, and the peak may
+                look perfect on screen.
+            </p>
+            <p>
+                What <em>is</em> determined is the direction along which the reflections move
+                together, so the report adds an <strong>Overlap Clusters</strong> section giving
+                the cluster total and its ESD. That total uses the full covariance,
+                \(\operatorname{var} = \sum_{ij}\mathrm{cov}[i][j]\), not the sum of the
+                individual variances: the off-diagonal terms are large and negative, and it is
+                that cancellation which makes the sum well determined. Adding variances in
+                quadrature, as if the reflections were independent, gives a hugely pessimistic
+                total and misses the point.
+            </p>
+            <p>
+                K&alpha;<sub>2</sub> is included when deciding what overlaps &mdash; at high angle
+                the satellite is displaced by several FWHM and lands on unrelated reflections,
+                correlating pairs that look well separated in a list of K&alpha;<sub>1</sub>
+                positions. Members whose \(\sigma\) exceeds their intensity are marked with an
+                asterisk. <strong>Use the cluster total, not the individual values, for anything
+                downstream.</strong>
+            </p>
 
             <h4>Calculating Observed Intensities ($I_{obs}$) for Overlapping Peaks</h4>
             <p>
@@ -2140,7 +2487,7 @@ blockquote {
             </div>
         </section>
         <footer id="help-footer">
-            Powder 5, version 147, 08 August 2026
+            Powder 5, version 167
         </footer>
     </main>
 </div>

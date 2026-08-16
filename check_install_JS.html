@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installation Checker</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 20px;
+      line-height: 1.4;
+      max-width: 1100px;
+      margin: auto;
+    }
+    button {
+      font: inherit;
+      padding: 10px 16px;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    .ok { color: #4ec9b0; }
+    .bad { color: #f44747; font-weight: bold; }
+    .info { color: #569cd6; font-weight: bold; }
+    .warn { color: #dcdcaa; }
+    pre { white-space: pre-wrap; word-wrap: break-word; }
+    #status { margin: 14px 0; }
+  </style>
+</head>
+<body>
+  <h2>Installation Checker</h2>
+  <p>
+    Press <b>Load main function</b>. The checker fetches this page again,
+    discovers local file references, and tests whether the referenced files exist.
+    Run this page through a web server, not with <code>file://</code>.
+  </p>
+
+<input type="text" id="targetFile" value="app.html" placeholder="Target file (e.g. app.html)" style="padding: 8px; width: 200px;">
+  <button id="loadBtn" onclick="loadMainFunction()">Load main function</button>
+  <button id="checkBtn" onclick="runCheck()" disabled>Run check again</button>
+
+  <div id="status" class="info">Main function not loaded.</div>
+  <pre id="output"></pre>
+
+<script>
+"use strict";
+
+
+
+let mainFunctionLoaded = false;
+
+function log(message = "", cls = "") {
+  const out = document.getElementById("output");
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = message + "\n";
+  out.appendChild(span);
+}
+
+function clearOutput() {
+  document.getElementById("output").textContent = "";
+}
+function absoluteLocalUrl(reference, baseUrl = window.location.href) {
+  try {
+    const url = new URL(reference, baseUrl);
+
+    // Ignore external URLs and special browser schemes.
+    if (url.origin !== window.location.origin) return null;
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function relativeDisplayName(reference, baseUrl = window.location.href) {
+  try {
+    return new URL(reference, baseUrl).pathname
+      .replace(new URL(baseUrl).pathname.substring(
+        0, new URL(baseUrl).pathname.lastIndexOf("/") + 1
+      ), "") || reference;
+  } catch {
+    return reference;
+  }
+}
+
+async function checkFile(reference, baseUrl = window.location.href, fetchContent = false) {
+  const url = absoluteLocalUrl(reference, baseUrl);
+  if (!url) return { ignored: true };
+
+  try {
+    const method = fetchContent ? "GET" : "HEAD";
+    let response = await fetch(url, {
+      method: method,
+      cache: "no-store"
+    });
+
+    // Some servers don't implement HEAD correctly.
+    if (!response.ok || (method === "HEAD" && response.status === 405)) {
+      response = await fetch(url, {
+        method: "GET",
+        cache: "no-store"
+      });
+    }
+
+    if (!response.ok) {
+      return { exists: false, status: response.status };
+    }
+
+    const length = response.headers.get("content-length");
+    const content = fetchContent ? await response.text() : null;
+    
+    return {
+      exists: true,
+      status: response.status,
+      size: length ? Number(length) : (content ? content.length : null),
+      content: content,
+      url: response.url
+    };
+  } catch (error) {
+    return { exists: false, error: error.message };
+  }
+}
+function extractReferences(html) {
+  const refs = new Set();
+
+  // HTML attributes that normally point to local resources.
+  const attributePatterns = [
+    /<script\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi,
+    /<link\b[^>]*?\bhref\s*=\s*["']([^"']+)["']/gi,
+    /<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi,
+    /<iframe\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi,
+    /<audio\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi,
+    /<video\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi,
+    /<source\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi,
+    /<object\b[^>]*?\bdata\s*=\s*["']([^"']+)["']/gi,
+    /<embed\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi,
+    /<form\b[^>]*?\baction\s*=\s*["']([^"']+)["']/gi
+  ];
+
+  for (const pattern of attributePatterns) {
+    for (const match of html.matchAll(pattern)) {
+      refs.add(match[1]);
+    }
+  }
+
+  // Common JS references. This is intentionally conservative: it looks for
+  // quoted paths that have a file extension rather than treating every string
+  // as a dependency.
+  const jsPatterns = [
+    /\bfetch\s*\(\s*["'`]([^"'`]+)["'`]/g,
+    /\bimport\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g,
+    /\bimport\s+[^;]*?\sfrom\s*["']([^"']+)["']/g,
+    /\bimportScripts\s*\(\s*["']([^"']+)["']/g,
+    /\b(?:src|href|url)\s*[:=]\s*["']([^"']+\.[A-Za-z0-9_-]+)["']/g
+  ];
+
+  for (const pattern of jsPatterns) {
+    for (const match of html.matchAll(pattern)) {
+      refs.add(match[1]);
+    }
+  }
+
+  return [...refs].filter(ref => {
+    if (!ref || ref.startsWith("#")) return false;
+    if (/^(data|blob|javascript|mailto):/i.test(ref)) return false;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(ref)) return false;
+    return true;
+  });
+}
+async function loadMainFunction() {
+  const status = document.getElementById("status");
+  const targetPath = document.getElementById("targetFile").value;
+  status.className = "info";
+  status.textContent = `Loading ${targetPath}...`;
+
+  // Store the target URL globally so runCheck can use it as the base
+  window.targetUrl = new URL(targetPath, window.location.href).href;
+  
+  const response = await fetch(window.targetUrl, { cache: "no-store" });
+
+  if (!response.ok) {
+    status.className = "bad";
+    status.textContent = `Could not load ${targetPath}.`;
+    return;
+  }
+
+  window.mainSource = await response.text();
+  mainFunctionLoaded = true;
+
+  document.getElementById("checkBtn").disabled = false;
+  status.className = "ok";
+  status.textContent = `${targetPath} loaded. Dependencies can now be checked.`;
+
+  await runCheck();
+}
+async function runCheck() {
+  if (!mainFunctionLoaded) return;
+
+  clearOutput();
+  let problems = 0;
+  
+  const bad = (message, depth) => {
+    problems++;
+    log("  ".repeat(depth) + "  [X] " + message, "bad");
+  };
+  const ok = (message, depth) => log("  ".repeat(depth) + "  [ok] " + message, "ok");
+  const warn = (message, depth) => log("  ".repeat(depth) + "  [--] " + message, "warn");
+
+  log("Installation check (Recursive)", "info");
+  log("==================\n");
+  log("1. Scanning for local dependencies and building tree...\n", "info");
+
+const visited = new Set([window.targetUrl]); // Track absolute URLs to prevent loops
+  async function scanNode(sourceText, baseUrl, depth = 0) {
+    const refs = extractReferences(sourceText);
+    
+    if (depth === 0 && !refs.length) {
+      log("No local file references were discovered.", "warn");
+      return;
+    }
+
+    // Deduplicate references at this level
+    const uniqueRefs = [...new Set(refs)];
+
+    for (const ref of uniqueRefs) {
+      const absoluteUrl = absoluteLocalUrl(ref, baseUrl);
+      
+      if (!absoluteUrl) {
+        warn(`${ref} (external/special URL ignored)`, depth);
+        continue;
+      }
+
+      if (visited.has(absoluteUrl)) {
+        warn(`${ref} (already checked)`, depth);
+        continue;
+      }
+      visited.add(absoluteUrl);
+
+      // Only fetch content for text files that could contain further dependencies
+      const shouldFetchContent = /\.(js|html|css|json|mjs)$/i.test(absoluteUrl);
+      const result = await checkFile(ref, baseUrl, shouldFetchContent);
+
+      if (!result.exists) {
+        bad(`${ref} is MISSING${result.status ? ` (HTTP ${result.status})` : ""}`, depth);
+      } else {
+        const size = result.size != null ? ` — ${result.size} bytes` : "";
+        ok(`${ref}${size}`, depth);
+
+        // Recursively search the text of valid files
+        if (result.content) {
+          await scanNode(result.content, result.url, depth + 1);
+        }
+      }
+    }
+  }
+
+await scanNode(window.mainSource, window.targetUrl);
+  log("\n----------------------------------------------------------------------");
+
+  if (problems === 0) {
+    log("Everything discovered by the scanner is present.", "ok");
+  } else {
+    log(`${problems} missing dependency/problem(s) found.`, "bad");
+  }
+}
+</script>
+</body>
+</html>
