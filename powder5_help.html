@@ -451,6 +451,7 @@ blockquote {
             <li><a href="#cf-wyckoff">Wyckoff Search</a></li>
             <li><a href="#wy-objective" class="sub-link">The Objective</a></li>
             <li><a href="#wy-controls" class="sub-link">Controls &amp; Capacities</a></li>
+            <li><a href="#wy-how-many-sites" class="sub-link">How Many Sites</a></li>
             <li><a href="#wy-refinement" class="sub-link">Coordinate Refinement</a></li>
             <li><a href="#strategy">Refinement Strategy</a></li>
             <li><a href="#results">Interpreting Results</a></li>
@@ -2170,14 +2171,14 @@ blockquote {
 
             <div class="note">
                 <strong>Capacities, and what happens when you exceed one.</strong> The search
-                kernel holds at most <strong>16 independent atomic sites</strong> in one
+                kernel holds at most <strong>32 independent atomic sites</strong> in one
                 assignment, <strong>8 distinct elements</strong>, <strong>8 distance
                 rules</strong>, and <strong>16 coordination slots</strong> shared across all
                 rules. These are fixed array sizes, not preferences.
                 <br><br>
                 Read the first two carefully, because neither counts what its name suggests:
                 <ul>
-                    <li><strong>16 sites</strong> counts <em>independent atoms in the asymmetric
+                    <li><strong>32 sites</strong> counts <em>independent atoms in the asymmetric
                         unit</em>, summed over every element &mdash; not Wyckoff <em>letters</em>.
                         A position used three times counts three, because each use is an atom
                         with its own free coordinates.</li>
@@ -2195,20 +2196,21 @@ blockquote {
                 elem</strong> and <strong>Max reuse / pos</strong> bind first: at their default
                 of 4 the enumeration is raised only as far as the composition strictly requires,
                 and for C<sub>60</sub> that yields the single 10&times;24<em>d</em> assignment.
-                Raising both to 16 finds six candidates; raising them past 16 is where the
+                Raising both to 16 finds six candidates; raising them past 32 is where the
                 kernel cap finally starts dropping assignments. If a plausible assignment is
                 missing, check those two sliders before the capacities.
                 <br><br>
                 These four limits belong to the Wyckoff search alone.
                 <a href="#charge-flipping">Charge flipping</a> has no composition, no elements
                 and no Wyckoff positions, so none of them applies to it &mdash; it can return
-                more than 16 sites, and routinely does before the spurious peaks are weeded out.
+                more than 32 sites, and routinely does before the spurious peaks are weeded out.
                 <ul>
-                    <li><em>Sites.</em> Assignments needing more than 16 are dropped during
+                    <li><em>Sites.</em> Assignments needing more than 32 are dropped during
                         enumeration and the count is reported, because an over-wide assignment
                         is one candidate among many. If <em>every</em> assignment needs more,
                         the run stops and says so &mdash; which normally means \(Z\) is too
-                        large for the group.</li>
+                        large for the group. See <a href="#wy-how-many-sites">how many sites a
+                        structure needs</a> for the arithmetic behind that message.</li>
                     <li><em>Elements, rules and slots.</em> The run is refused before it
                         starts, with a message naming the limit. Note that a bare upper bound
                         such as <code>Pb O 0/3.0</code> is applied in <em>both</em> directions
@@ -2237,6 +2239,47 @@ blockquote {
                 <strong>ranking</strong> that chose this candidate over the others, which was
                 made on the same partial figure. Treat a stopped run as a preview of where the
                 search was heading rather than as a finished answer.
+            </div>
+
+            <h3 id="wy-how-many-sites">How many sites a structure needs</h3>
+            <p>
+                Worth checking before a run rather than after, because the answer is one
+                division and it decides whether the search can represent your structure at all:
+            </p>
+            <p style="text-align:center;">
+                \( \text{sites} \ \ge\ \left\lceil \dfrac{\text{atoms per cell}}
+                {\text{largest multiplicity in the group}} \right\rceil \)
+            </p>
+            <p>
+                Atoms per cell is the formula unit times \(Z\), counting hydrogen. The largest
+                multiplicity is the general position, which for a symmorphic group is the group
+                order. Take cimetidine, C<sub>10</sub>H<sub>16</sub>N<sub>6</sub>S with
+                \(Z = 2\) &mdash; 66 atoms per cell:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Group order</th><th>Example</th><th>Sites needed</th><th></th></tr></thead>
+                <tbody>
+                    <tr><td>2</td><td>\(P\bar{1}\), \(P2_1\), \(Pc\)</td><td>33</td><td>beyond the limit</td></tr>
+                    <tr><td>4</td><td>\(P2_1/c\), \(P2_12_12_1\)</td><td>17</td><td>fits</td></tr>
+                    <tr><td>8</td><td>\(Pnma\), \(C2/c\)</td><td>9</td><td>fits easily</td></tr>
+                </tbody>
+            </table>
+            <p>
+                So the same compound is solvable or not depending on the space group, and the
+                cliff is steep: one step down in symmetry doubles the requirement. In
+                \(P2_1/c\) the narrowest assignment cimetidine admits is
+                5&times;4<em>e</em> C, 8&times;4<em>e</em> H, 3&times;4<em>e</em> N and one
+                sulfur on a 2-fold inversion site &mdash; 17 sites. The odd sulfur is what makes
+                66, which is not divisible by 4, work out at all.
+            </p>
+            <div class="warning-note">
+                <strong>Fitting is not the same as solving.</strong> Every extra site adds three
+                free coordinates for the swarm to fit, so 17 sites is around fifty parameters
+                against however many reflections your pattern resolves. A structure that clears
+                the capacity check by a wide margin can still be out of reach of the data, and
+                nothing in the search will tell you which of the two happened. If the reflection
+                count is not comfortably larger than the parameter count, treat a good CC with
+                suspicion and check the \(wR(F^2)\) from the refinement instead.
             </div>
 
             <h3 id="wy-refinement">Final coordinate refinement</h3>

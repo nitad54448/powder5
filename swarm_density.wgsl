@@ -1,50 +1,5 @@
-// swarm_reflection.wgsl
-// Reciprocal-space |Fcalc|^2 fitness for the Wyckoff search.
-//
-// ---------------------------------------------------------------------------
-//  WHAT THIS IS, AND WHY IT IS A SEPARATE FILE
-// ---------------------------------------------------------------------------
-//  swarm_density.wgsl scores a candidate structure by how much CHARGE FLIPPING
-//  DENSITY sits under its atoms. This file scores the same candidate by how
-//  well its calculated intensities match the PAWLEY INTENSITIES. Everything
-//  else -- the RNG, the Wyckoff projection, the symmetry expansion, the
-//  Metropolis step, the bond-rule penalties, the reduction -- is identical and
-//  deliberately kept identical, so the two objectives stay comparable and a
-//  fix to the shared machinery can be applied to both by diffing them.
-//
-//  Two objectives, two files, rather than one file with a mode switch: the
-//  scoring sections share no arithmetic at all, and a `if (mode)` in the
-//  hottest loop in the program would cost both paths for the benefit of
-//  neither.
-//
-//  WHY THE DIRECT-SPACE OBJECTIVE IS WORTH HAVING. The density objective can
-//  only be as good as the map, and on a heavy-atom structure the map is the
-//  weak link: in PbSO4 the lead ripples run at the same amplitude as the
-//  oxygen peaks, so the light atoms are not merely hard to see, they are
-//  underneath the noise floor. This objective never forms a map. It compares
-//  |Fcalc|^2 against |Fobs|^2 directly, so it has no phase problem, no origin
-//  or hand ambiguity, and no ripples -- and because the model carries the
-//  composition, it cannot invent an atom where there is no scattering to
-//  explain it.
-//
-//  It is also better conditioned. PbSO4 in Pnma has eleven free positional
-//  parameters against several hundred observations. Charge flipping solves for
-//  thousands of grid amplitudes and phases from the same data.
-//
-// ---------------------------------------------------------------------------
-//  BINDING 5 IS THE ONLY INTERFACE DIFFERENCE
-// ---------------------------------------------------------------------------
-//  The density kernel binds the map there. This one binds `groupData`, which
-//  the host packs as two regions in one buffer:
-//
-//      [0 .. fTabOff)              per-group metadata, GROUP_STRIDE floats each
-//      [fTabOff .. end)            scattering factors, nRefl * nElem floats
-//
-//  The scattering factors are ALREADY f(s) * exp(-B s^2 / 4), tabulated per
-//  (reflection, element) by swScatteringTable on the host. That is why this
-//  kernel needs no d-spacings, no B, and no form-factor evaluation: the entire
-//  s-dependence has been folded in before the buffer was written.
-// ---------------------------------------------------------------------------
+// swarm_density.wgsl
+// Real-space electron density fitness for Charge Flipping
 
 struct Params {
     o0: vec4<f32>, o1: vec4<f32>, o2: vec4<f32>,
@@ -85,21 +40,13 @@ struct ParticleState {
 @group(0) @binding(2) var<storage, read> genPack: array<u32>;
 @group(0) @binding(3) var<storage, read> staticFloats: array<f32>;
 @group(0) @binding(4) var<storage, read> reflPack: array<u32>;
-// [group metadata | scattering factor table]; see the header.
-@group(0) @binding(5) var<storage, read> groupData: array<f32>;
+@group(0) @binding(5) var<storage, read> densityMap: array<f32>;
 @group(0) @binding(6) var<storage, read_write> mcmcState: array<ParticleState>;
 @group(0) @binding(7) var<uniform> params: Params;
 
 const WG: u32 = 64u;
 const MAX_GEN_ATOMS: u32 = 384u; //__MAX_GEN_ATOMS__
 const MIN_IMAGE_SHELL: i32 = 0;  //__MIN_IMAGE_SHELL__
-// Floats per group in the metadata region.
-//   3 -> start, count, Iobs                  (every group weighted equally)
-//   4 -> start, count, Iobs, weight          (weight is typically 1/sigma^2)
-// Injected by the host exactly like MAX_GEN_ATOMS, so the weighted and
-// unweighted packers can share this kernel. It is a compile-time constant, so
-// the `weight` branch below folds away entirely when it is 3.
-const GROUP_STRIDE: u32 = 3u; //__GROUP_STRIDE__
 const MAX_BOND_RULES: u32 = 8u;
 const RULE_STRIDE: u32 = 6u;
 const MAX_COORD_SLOTS: u32 = 16u;
@@ -183,28 +130,11 @@ var<workgroup> gy: array<f32, MAX_GEN_ATOMS>;
 var<workgroup> gz: array<f32, MAX_GEN_ATOMS>;
 var<workgroup> gT: array<u32, MAX_GEN_ATOMS>;
 
+var<workgroup> rFit: array<f32, WG>;
 var<workgroup> rPen: array<f32, WG>;
-// Accumulators for a WEIGHTED PEARSON CORRELATION between Icalc and Iobs over
-// the active groups. Six partial sums rather than one, because the correlation
-// needs both means and both variances, and each thread only sees the groups it
-// happened to be handed.
-//
-// Pearson rather than a plain cosine similarity, and rather than an R factor:
-//   - It is scale-free, so there is NO SCALE FACTOR to fit. That removes a
-//     parameter, and more importantly removes a degeneracy the swarm would
-//     otherwise have to explore.
-//   - Subtracting the means makes it discriminating. Icalc and Iobs are both
-//     non-negative and share a large positive offset; a cosine similarity is
-//     dominated by that offset and reads high for almost any structure.
-//   - It lands in [0, 1] after clamping, which is the range the bond and
-//     clash penalties below were tuned against. An R factor would have needed
-//     every penalty weight retuned.
-var<workgroup> rSw:  array<f32, WG>;   // sum w
-var<workgroup> rSc:  array<f32, WG>;   // sum w * Icalc
-var<workgroup> rSo:  array<f32, WG>;   // sum w * Iobs
-var<workgroup> rScc: array<f32, WG>;   // sum w * Icalc^2
-var<workgroup> rSoo: array<f32, WG>;   // sum w * Iobs^2
-var<workgroup> rSco: array<f32, WG>;   // sum w * Icalc * Iobs
+// Total scattering weight of the atoms this workgroup summed, so the fitness
+// can be normalised to a weighted mean rather than left as a bare sum.
+var<workgroup> rWgt: array<f32, WG>;
 var<workgroup> local_rMin: array<f32, 64>;         // MAX_ELEM * MAX_ELEM
 
 // Cartesian lengths of the 27 shell translations, indexed (a+1)*9+(b+1)*3+(c+1).
@@ -389,124 +319,92 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     }
     workgroupBarrier();
 
-    // ----------------------------------------------------------------------
-    //  |Fcalc|^2 AGAINST |Fobs|^2, GROUP BY GROUP
+    // Z-WEIGHTED, NORMALISED DENSITY OVERLAP.
     //
-    //  Work is split over GROUPS, not over atoms: one thread owns a whole
-    //  group and walks its reflections serially. Every thread therefore reads
-    //  the full generated cell out of gx/gy/gz/gT, which is a workgroup-memory
-    //  broadcast rather than a gather, and no thread has to combine a partial
-    //  structure factor with another thread's.
+    // This was a bare sum of the interpolated density over every generated
+    // atom, which had three faults that between them produced structures with
+    // no bonds in them at all:
     //
-    //  A "group" is a set of reflections the powder pattern cannot separate.
-    //  The host has already summed their observed intensities into one number,
-    //  so the comparison is made where the measurement actually exists --
-    //  summing the calculated intensities the same way. This is the same
-    //  reason the report prints overlap clusters rather than trusting the
-    //  individual Pawley intensities of a heavily overlapped block.
+    //   - The atom TYPE was loaded into gT and then never consulted, so a
+    //     light atom counted exactly as much as a heavy one. In PbSO4 that
+    //     let 16 oxygens outvote 4 leads 4:1 in an electron density map where
+    //     the lead peak is an order of magnitude taller than an oxygen one.
     //
-    //  Iobs is packed as sum(mult * Fo^2) over the group, so Icalc is
-    //  accumulated as sum(mult * |F|^2) to match it term for term.
-    // ----------------------------------------------------------------------
-    let nElem   = u32(params.nElem);
-    let fTabOff = u32(params.fTabOff);
-    let nGroups = u32(params.nGroupsActive);
-    let nReflTot = u32(params.nRefl);
-    let isCentro = params.centro > 0.5;
+    //   - Nothing normalised the total, so the score grew with the number of
+    //     atoms in the cell and ran 0..nTot. The penalty weights below - 0.05
+    //     per clash, 0.10 per Angstrom - were chosen against a correlation
+    //     coefficient in [0, 1], so against a sum over two dozen atoms they
+    //     were roughly twenty times too weak to overrule anything. A 0.43 A
+    //     Pb-O contact cost about 1.2 against a fitness of order 20.
+    //
+    //   - Coincident atoms each collected the FULL peak height, so stacking
+    //     was positively rewarded.
+    //
+    // Weighting by Z and dividing by the total weight fixes all three: the
+    // result is a weighted mean density per unit scattering power, bounded in
+    // [0, 1] exactly like the correlation the reflection kernel returns, so
+    // the penalties are back on the scale they were tuned for and the two
+    // kernels are directly comparable. zByType sits at offset 0 of the
+    // restraint tables (see buildRestraintTables), so no new binding is
+    // needed to reach it.
+    var sFit: f32 = 0.0;
+    var sWeight: f32 = 0.0;
+    let z_off = u32(params.tablesOff);
+    let N_grid = u32(params.nGroupsActive); 
+    let N_f = f32(N_grid);
 
-    var sw: f32 = 0.0;
-    var sc: f32 = 0.0;
-    var so: f32 = 0.0;
-    var scc: f32 = 0.0;
-    var soo: f32 = 0.0;
-    var sco: f32 = 0.0;
-
-    for (var g = lid; g < nGroups; g = g + WG) {
-        let gb    = g * GROUP_STRIDE;
-        let start = u32(groupData[gb]);
-        let count = u32(groupData[gb + 1u]);
-        let iObs  = groupData[gb + 2u];
-
-        // Compile-time: with GROUP_STRIDE == 3 this whole branch disappears.
-        var wgt: f32 = 1.0;
-        if (GROUP_STRIDE >= 4u) { wgt = groupData[gb + 3u]; }
-        if (!(wgt > 0.0)) { continue; }
-
-        var iCalc: f32 = 0.0;
-        for (var m = 0u; m < count; m = m + 1u) {
-            let r = start + m;
-            if (r >= nReflTot) { break; }
-
-            // hkl is bit-packed ten bits per index, biased by 512 so negative
-            // indices survive. Unpack with a mask, then remove the bias.
-            let pk = reflPack[r * 2u];
-            let h = f32(i32(pk & 0x3FFu) - 512);
-            let k = f32(i32((pk >> 10u) & 0x3FFu) - 512);
-            let l = f32(i32((pk >> 20u) & 0x3FFu) - 512);
-            let mult = f32(reflPack[r * 2u + 1u]);
-
-            let fBase = fTabOff + r * nElem;
-
-            var fr: f32 = 0.0;
-            var fi: f32 = 0.0;
-            if (isCentro) {
-                // The cell contents are closed under inversion through the
-                // origin, so every atom at r has a partner at -r of the same
-                // type and the sine terms cancel exactly. F is real, and the
-                // hottest loop in the program loses half its transcendentals.
-                //
-                // The host TESTS this rather than assuming it from the space
-                // group: a centrosymmetric group whose inversion centre is not
-                // at the origin carries (-I | t) with t nonzero, for which F
-                // is complex.
-                for (var a = 0u; a < nTot; a = a + 1u) {
-                    // Reduce to one turn BEFORE scaling by 2*pi. At h,k,l up to
-                    // +/-511 the unreduced argument reaches ~3200 rad, outside
-                    // the range WGSL guarantees for cos/sin and outside what
-                    // several backends' hardware instructions reduce well.
-                    let q  = h * gx[a] + k * gy[a] + l * gz[a];
-                    let ph = TWO_PI * (q - floor(q));
-                    fr = fr + groupData[fBase + gT[a]] * cos(ph);
-                }
-            } else {
-                for (var a = 0u; a < nTot; a = a + 1u) {
-                    // See the centrosymmetric branch: reduced to one turn
-                    // before scaling, so cos/sin never see a large argument.
-                    let q  = h * gx[a] + k * gy[a] + l * gz[a];
-                    let ph = TWO_PI * (q - floor(q));
-                    let f  = groupData[fBase + gT[a]];
-                    fr = fr + f * cos(ph);
-                    fi = fi + f * sin(ph);
+    for (var gi = lid; gi < nTot; gi = gi + WG) {
+        var fx = gx[gi] * N_f;
+        var fy = gy[gi] * N_f;
+        var fz = gz[gi] * N_f;
+        
+        fx = fx - floor(fx / N_f) * N_f;
+        fy = fy - floor(fy / N_f) * N_f;
+        fz = fz - floor(fz / N_f) * N_f;
+        
+        let ix = u32(fx) % N_grid;
+        let iy = u32(fy) % N_grid;
+        let iz = u32(fz) % N_grid;
+        
+        let tx = fx - floor(fx);
+        let ty = fy - floor(fy);
+        let tz = fz - floor(fz);
+        
+        var acc: f32 = 0.0;
+        for (var dz = 0u; dz < 2u; dz = dz + 1u) {
+            let wz = select(1.0 - tz, tz, dz == 1u);
+            let jz = (iz + dz) % N_grid;
+            for (var dy = 0u; dy < 2u; dy = dy + 1u) {
+                let wy = select(1.0 - ty, ty, dy == 1u);
+                let jy = (iy + dy) % N_grid;
+                for (var dx = 0u; dx < 2u; dx = dx + 1u) {
+                    let wx = select(1.0 - tx, tx, dx == 1u);
+                    let jx = (ix + dx) % N_grid;
+                    let idx = jx + jy * N_grid + jz * N_grid * N_grid;
+                    acc = acc + wx * wy * wz * densityMap[idx];
                 }
             }
-            iCalc = iCalc + mult * (fr * fr + fi * fi);
         }
-
-        sw  = sw  + wgt;
-        sc  = sc  + wgt * iCalc;
-        so  = so  + wgt * iObs;
-        scc = scc + wgt * iCalc * iCalc;
-        soo = soo + wgt * iObs  * iObs;
-        sco = sco + wgt * iCalc * iObs;
+        // Weight by the atom's atomic number. A heavier atom is expected to
+        // sit on a taller peak, and this is what makes the objective say so.
+        let zw = max(staticFloats[z_off + gT[gi]], 1.0);
+        sFit = sFit + zw * acc;
+sWeight = sWeight + zw;
     }
 
     let t_off = u32(params.tablesOff);
-    // nElem (declared with the reflection block above) is the ROW STRIDE of the
-    // r_min table as the host packed it, so it is not clamped; the fill length
-    // is, because local_rMin is MAX_ELEM^2.
+    // nElem is the ROW STRIDE of the r_min table as the host packed it, so it
+    // is not clamped; the fill length is, because local_rMin is MAX_ELEM^2.
+    let nElem   = u32(params.nElem);
     let nElemSq = min(nElem * nElem, MAX_ELEM * MAX_ELEM);
     for (var idx = lid; idx < nElemSq; idx = idx + WG) {
         local_rMin[idx] = staticFloats[t_off + u32(params.rMinOff) + idx];
     }
     if (lid < 27u) {
-        // ta/tb/tc, not sa/sb/sc: `sc` is the running sum(w * Icalc) in this
-        // function's scope. WGSL lets the inner declaration shadow it, so the
-        // old spelling compiled and worked -- and would have stopped working,
-        // silently, the moment either declaration moved.
-        let ta = i32(lid / 9u) - 1;
-        let tb = i32((lid / 3u) % 3u) - 1;
-        let tc = i32(lid % 3u) - 1;
-        shellLen[lid] = cartLen(vec3<f32>(f32(ta), f32(tb), f32(tc)));
+        let sa = i32(lid / 9u) - 1;
+        let sb = i32((lid / 3u) % 3u) - 1;
+        let sc = i32(lid % 3u) - 1;
+        shellLen[lid] = cartLen(vec3<f32>(f32(sa), f32(sb), f32(sc)));
     }
     workgroupBarrier();
 
@@ -692,49 +590,28 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
 
     pen = pen * params.penScale;
 
+    rFit[lid] = sFit; 
     rPen[lid] = pen;
-    rSw[lid]  = sw;
-    rSc[lid]  = sc;
-    rSo[lid]  = so;
-    rScc[lid] = scc;
-    rSoo[lid] = soo;
-    rSco[lid] = sco;
+    rWgt[lid] = sWeight;
     workgroupBarrier();
 
     for (var stride = WG / 2u; stride > 0u; stride = stride >> 1u) {
         if (lid < stride) {
+            rFit[lid] = rFit[lid] + rFit[lid + stride];
             rPen[lid] = rPen[lid] + rPen[lid + stride];
-            rSw[lid]  = rSw[lid]  + rSw[lid + stride];
-            rSc[lid]  = rSc[lid]  + rSc[lid + stride];
-            rSo[lid]  = rSo[lid]  + rSo[lid + stride];
-            rScc[lid] = rScc[lid] + rScc[lid + stride];
-            rSoo[lid] = rSoo[lid] + rSoo[lid + stride];
-            rSco[lid] = rSco[lid] + rSco[lid + stride];
+            rWgt[lid] = rWgt[lid] + rWgt[lid + stride];
         }
         workgroupBarrier();
     }
 
 if (lid == 0u) {
-        // Weighted Pearson correlation between Icalc and Iobs, clamped into
-        // [0, 1] so it occupies the same range the density kernel returns and
-        // the penalty weights below keep their tuning.
-        //
-        // A zero variance on either side means the comparison carries no
-        // information: every group calculated the same intensity (all atoms
-        // stacked on one point, or no atoms at all), or the observations are
-        // flat. Returning 0 there is correct and is what the host expects --
-        // random starting positions legitimately score 0.
-        let wSum = max(rSw[0], 1e-9);
-        let mc = rSc[0] / wSum;
-        let mo = rSo[0] / wSum;
-        let varC = rScc[0] / wSum - mc * mc;
-        let varO = rSoo[0] / wSum - mo * mo;
-        let cov  = rSco[0] / wSum - mc * mo;
-        var cc: f32 = 0.0;
-        let denom = varC * varO;
-        if (denom > 1e-20) {
-            cc = clamp(cov / sqrt(denom), 0.0, 1.0);
-        }
+        // Normalise to a weighted MEAN density, in [0, 1] because the host
+        // scales the map so its maximum is 1. This is the quantity the
+        // penalties are weighted against, and it is comparable between
+        // assignments with different numbers of atoms - a bare sum was not,
+        // and quietly favoured whichever assignment put more atoms in the
+        // cell.
+        let cc = rFit[0] / max(rWgt[0], 1e-9);
         let pen = rPen[0];
         let f_new = cc - pen;
         

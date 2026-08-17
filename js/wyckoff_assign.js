@@ -45,14 +45,17 @@ const SHARKO_WYCKOFF_ASSIGN_VERSION = '1.1.0';
    against somebody else's data rather than an error anyone can see.
 
      WY_MAX_SITES  width of prop_sites: independent Wyckoff sites in ONE
-                   assignment, summed over all elements.
+                   assignment, summed over all elements. Must equal MAX_SITES
+                   in swarm_reflection.wgsl -- the two are checked against each
+                   other only by this file throwing before a dispatch, so
+                   raising one without the other silently truncates instead.
      WY_MAX_ELEM   local_rMin is WY_MAX_ELEM^2 floats of workgroup memory.
      WY_MAX_OPS    genOp is packed into 12 bits. Group orders top out at 192.
      WY_MAX_RULES  MAX_BOND_RULES.
      WY_MAX_COORD_SLOTS  width of the private `slot` array, shared across every
                    counted rule.
    ------------------------------------------------------------------ */
-const WY_MAX_SITES = 16;
+const WY_MAX_SITES = 32;
 const WY_MAX_ELEM = 8;
 const WY_MAX_OPS = 4096;
 const WY_MAX_RULES = 8;
