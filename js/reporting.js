@@ -483,6 +483,30 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                      Math.abs(finalParams.lambda - finalParams.lambda2) > 1e-6);
         const doubletSum = dbl ? (1 + finalParams.ratio) : 1;
 
+        // THE SAME FUNCTION THE pdCIF WRITER USES, keyed by the first hkl
+        // string so the loop below can look each reflection up.
+        //
+        // The arithmetic was inline here and absent from writePdCIF(), which
+        // wrote the raw refined height into _refln_F_squared_meas instead --
+        // 163x to 1562x wrong depending on the reflection. Having one
+        // implementation is the only thing that keeps the report, the PDF and
+        // the CIF telling the same story, since all three now come through
+        // here.
+        const sfByKey = new Map();
+        if (typeof reflectionStructureFactors === 'function') {
+            const sigmaArea = (hkl, widthFactor) => {
+                if (isPawley) {
+                    const sh = esds[`I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`];
+                    return Number.isFinite(sh) ? sh * widthFactor : NaN;
+                }
+                return Number.isFinite(hkl.I_sigma) ? hkl.I_sigma * mainScaleFactor : NaN;
+            };
+            for (const r of reflectionStructureFactors(hklList, finalParams,
+                    { scale: mainScaleFactor, polarisation: reportPol, sigmaArea })) {
+                if (r.hkl && r.hkl.hkl_list) sfByKey.set(r.hkl.hkl_list[0], r);
+            }
+        }
+
         // Le Bail has ONE intensity per reflection: the decomposed
         // observed intensity. Pawley additionally has the refined
         // parameter, which is worth comparing against the observed.
@@ -599,10 +623,11 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                 // printed as such in I_hkl and simply has no square
                 // root -- inventing a zero would hide it.
                 let fo_str = '-';
-                if (Number.isFinite(lpVal) && lpVal > 0 && total_calc_area > 0) {
-                    const fsq = total_calc_area / (mult * lpVal * doubletSum);
-                    if (isFinite(fsq) && fsq > 0) fo_str = Math.sqrt(fsq).toFixed(3);
-                }
+                const sfRow = sfByKey.get(hkl.hkl_list[0]);
+                const fsq = sfRow ? sfRow.Fsq
+                                  : (Number.isFinite(lpVal) && lpVal > 0
+                                     ? total_calc_area / (mult * lpVal * doubletSum) : NaN);
+                if (Number.isFinite(fsq) && fsq > 0) fo_str = Math.sqrt(fsq).toFixed(3);
 
                 if (Math.abs(i_obs) > 0.01 || total_calc_area > 0.01) {
                     const row = [

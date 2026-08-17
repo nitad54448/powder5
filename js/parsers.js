@@ -182,11 +182,27 @@ const detectAndParseBuffer = async (fileName, buffer) => {
                     test: (name, content) => name.endsWith('.cif') ||
                                              /\bdata_/.test(content) &&
                                              /_pd_(meas|proc)_/.test(content),
-                    parser: (content) => {
-                        const r = parsePdCifFile(content);
-                        return { tth: r.tth, intensity: r.intensity,
-                                 wavelength: r.wavelength, zeroShift: r.zeroShift };
-                    }
+                    // RETURNED WHOLE, NOT WHITELISTED.
+                    //
+                    // This used to rebuild the result as
+                    //     { tth, intensity, wavelength, zeroShift }
+                    // which silently discarded everything else the reader had
+                    // extracted -- the cell, the space group, the Ka2
+                    // wavelength and its ratio, the profile function and its
+                    // parameters, the polarisation model. A pdCIF written by
+                    // this program therefore round-tripped its pattern, its
+                    // wavelength and its zero point, and threw away the entire
+                    // refinement that had produced them, with nothing anywhere
+                    // reporting a loss.
+                    //
+                    // A whitelist here is the wrong shape of code: it has to be
+                    // edited every time the reader learns a new tag, and the
+                    // failure when someone forgets is invisible. parsePdCifFile
+                    // already returns exactly the fields it means to return, so
+                    // this hands them on untouched. normalizeParsedData() below
+                    // spreads the object rather than rebuilding it, so they
+                    // survive the rest of the way.
+                    parser: (content) => parsePdCifFile(content)
                 },
                 { // XRDML
                     test: (name, content) => name.endsWith('.xrdml') || (content.includes('<?xml') && content.includes('<xrdMeasurement')),

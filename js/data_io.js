@@ -34,6 +34,13 @@
  * @property {object} [spaceGroup]              { symbol, number }.
  * @property {object[]} [hklList]               Reflections with intensities.
  * @property {object} [stats]                   Figures of merit.
+ * @property {object} [esds]                    Parameter esds, keyed as the
+ *                                              report keys them ("I_(h,k,l)").
+ *                                              Without it the reflection esds
+ *                                              in a Pawley pdCIF are "?".
+ * @property {number} [scaleFactor]             Intensity scale of the fit.
+ * @property {object} [polarisationUi]           { mode, monoTth, fraction } as
+ *                                              set in the control panel.
  * @property {string} [sourceName]              Original data file name.
  */
 
@@ -267,9 +274,68 @@ function writePdCIF(b) {
                '');
     }
     if (Number.isFinite(p.lambda)) {
-        L.push('_diffrn_radiation_wavelength    ' + p.lambda.toFixed(6),
-               "_diffrn_radiation_probe         x-ray",
-               '');
+        // THE LOOP FORM, ALWAYS -- because the reflection loop below writes
+        // _pd_refln_wavelength_id and that has to refer to something. With the
+        // scalar tag there was no wavelength list for the id to index, which
+        // made the file quietly self-inconsistent.
+        //
+        // It is also the only way to state a Ka1/Ka2 pair. The dictionary's
+        // _wt is a relative weight, so the Ka2 row carries the ratio directly
+        // and no private tag is needed: ratio = wt(2) / wt(1). Neither was
+        // written before, so a doublet measurement exported as if it were
+        // monochromatic -- and read back as one.
+        const dbl = (p.ratio > 1e-6 && p.lambda2 > 1e-6 &&
+                     Math.abs(p.lambda - p.lambda2) > 1e-6);
+        L.push('loop_',
+               '    _diffrn_radiation_wavelength_id',
+               '    _diffrn_radiation_wavelength',
+               '    _diffrn_radiation_wavelength_wt',
+               '  1  ' + p.lambda.toFixed(6) + '  1.0');
+        if (dbl) L.push('  2  ' + p.lambda2.toFixed(6) + '  ' + ioNum(p.ratio, 5));
+        L.push('', "_diffrn_radiation_probe         x-ray", '');
+    }
+
+    // ---- the profile model, in private tags -------------------------------
+    //
+    // The pdCIF dictionary has _pd_proc_ls_profile_function as free text and
+    // nothing at all for Caglioti terms, Lorentzian broadening, asymmetry or
+    // Stephens coefficients. They are therefore written under a _powder5_
+    // prefix, which is what a private extension prefix is for and what GSAS and
+    // TOPAS both do with the same problem.
+    //
+    // Without them a powder5 pdCIF could not reproduce its own fit: reading one
+    // back restored the pattern and lost the model that described it.
+    {
+        // Everything already carried by a standard tag above, plus the
+        // non-numeric bookkeeping that would not survive a toFixed().
+        const STANDARD = new Set(['a', 'b', 'c', 'alpha', 'beta', 'gamma',
+                                  'lambda', 'lambda2', 'ratio', 'zeroShift',
+                                  'profileType', 'system', 'polarization',
+                                  '__invalidFields']);
+        const keys = Object.keys(p).filter(
+            k => !STANDARD.has(k) && !k.startsWith('__') && Number.isFinite(p[k])).sort();
+        if (p.profileType || keys.length) {
+            L.push('# The profile model. Private tags: the dictionary has no items for these.');
+            if (p.profileType) {
+                L.push('_powder5_profile_type           ' + esc(p.profileType));
+            }
+            // The polarisation model, which decides Lp and therefore every
+            // |F|^2 in the reflection loop below. Taken from the three controls
+            // verbatim rather than from params.polarization, whose internal key
+            // names are not something this writer should have to know.
+            const pol = b.polarisationUi || {};
+            if (pol.mode) L.push('_powder5_pol_mode               ' + esc(pol.mode));
+            if (Number.isFinite(pol.monoTth)) {
+                L.push('_powder5_pol_mono_2theta        ' + ioNum(pol.monoTth, 4));
+            }
+            if (Number.isFinite(pol.fraction)) {
+                L.push('_powder5_pol_fraction           ' + ioNum(pol.fraction, 4));
+            }
+            for (const k of keys) {
+                L.push(('_powder5_param_' + k).padEnd(32) + ioNum(p[k], 6));
+            }
+            L.push('');
+        }
     }
     if (b.stats) {
         if (Number.isFinite(b.stats.rwp))  L.push('_pd_proc_ls_prof_wR_factor      ' + (b.stats.rwp / 100).toFixed(5));
@@ -332,10 +398,49 @@ function writePdCIF(b) {
     L.push('');
 
     // ---- the reflections --------------------------------------------------
+    //
+    // _refln_F_squared_meas MEANS |F|^2, so it gets |F|^2.
+    //
+    // This loop used to write ioNum(r.intensity, 3) -- the raw refined peak
+    // height -- into that tag, and '?' into the esd for every reflection,
+    // because r.sigma is a field nothing ever sets. The result disagreed with
+    // the same program's own report by 163x to 1562x depending on the
+    // reflection. reflectionStructureFactors() is now the single source of the
+    // conversion and the report reads it too, so the two cannot drift apart
+    // again.
     const refl = (b.hklList || []).filter(
         r => r && Number.isFinite(r.h_orig) && Number.isFinite(r.intensity));
     if (refl.length) {
-        L.push('loop_',
+        // The esd of the fitted HEIGHT. Pawley heights are least-squares
+        // parameters and carry a covariance entry; Le Bail heights are not, but
+        // the extraction propagates counting statistics into hkl.I_sigma.
+        // reflectionStructureFactors() converts height -> area -> |F|^2.
+        const esds = b.esds || null;
+        const sigmaArea = (hkl, widthFactor) => {
+            if (esds) {
+                const key = `I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`;
+                const sh = esds[key];
+                if (Number.isFinite(sh)) return sh * widthFactor;
+            }
+            if (Number.isFinite(hkl.I_sigma)) {
+                return hkl.I_sigma * (Number.isFinite(b.scaleFactor) ? b.scaleFactor : 1);
+            }
+            return NaN;
+        };
+        const sf = reflectionStructureFactors(refl, b.params, {
+            scale: Number.isFinite(b.scaleFactor) ? b.scaleFactor : 1,
+            sigmaArea
+        });
+
+        L.push('# |F|^2 = I(area) / ( m * Lp * (1 + I2/I1) ), on an arbitrary scale.',
+               '#   m  is the powder multiplicity, Lp the Lorentz-polarisation factor at the',
+               '#   corrected angle, and the last term removes the Ka2 contribution to the',
+               '#   fitted area (it is 1 when the Ka2/Ka1 ratio is 0).',
+               '# A NEGATIVE value is a real measurement, not an error: the refined intensity',
+               '#   of a weak reflection can fall below zero when the background runs above',
+               '#   the data. It is written with its esd so that it can be treated properly',
+               '#   rather than silently replaced by nothing.',
+               'loop_',
                '    _refln_index_h',
                '    _refln_index_k',
                '    _refln_index_l',
@@ -343,15 +448,112 @@ function writePdCIF(b) {
                '    _pd_refln_wavelength_id',
                '    _refln_F_squared_meas',
                '    _refln_F_squared_sigma');
-        for (const r of refl) {
-            L.push(['  ' + r.h_orig, r.k_orig, r.l_orig,
+        for (const r of sf) {
+            // A reflection whose |F|^2 could not be formed at all (no Lp, no
+            // profile area) is '?', which is different from a negative value
+            // and has to stay different.
+            L.push(['  ' + r.h, r.k, r.l,
                     ioNum(r.d, 5), 1,
-                    ioNum(r.intensity, 3),
-                    Number.isFinite(r.sigma) ? ioNum(r.sigma, 3) : '?'].join('  '));
+                    Number.isFinite(r.Fsq) ? r.Fsq.toFixed(4) : '?',
+                    Number.isFinite(r.Fsq_sigma) ? r.Fsq_sigma.toFixed(4) : '?'].join('  '));
         }
         L.push('');
     }
     return L.join('\n') + '\n';
+}
+
+/**
+ * Observed structure factors from refined peak intensities.
+ *
+ * THE ONLY PLACE THIS ARITHMETIC EXISTS. It used to live inline in
+ * generateReportContent() while writePdCIF() wrote the raw refined parameter
+ * into _refln_F_squared_meas, and the two disagreed by a factor that ranged
+ * from 163 to 1562 across a single pattern. Four separate steps were missing
+ * from the CIF, three of them reflection-dependent, so no scale factor could
+ * have reconciled them:
+ *
+ *   1. hkl.intensity is a peak HEIGHT, not an integrated area. The refinement
+ *      parameterises the height; integratedPeakArea() supplies the profile
+ *      integral that converts one into the other, and that integral grows with
+ *      2theta as the peak broadens.
+ *   2. m, the powder multiplicity, varies from 1 to 8 between neighbouring
+ *      reflections for reasons that are pure lattice geometry.
+ *   3. Lp, the Lorentz-polarisation factor, spans a factor of four over a
+ *      twenty-degree window and an order of magnitude over a full pattern.
+ *   4. (1 + I2/I1), because the fitted area is the sum over the Ka1/Ka2 pair.
+ *      The only constant of the four, and 1 exactly when ratio is 0.
+ *
+ *   |F|^2 = area / ( m * Lp * (1 + I2/I1) )
+ *
+ * The overall scale is arbitrary and cancels out of everything downstream, so
+ * `scale` only matters for reproducing a particular report's numbers.
+ *
+ * NEGATIVE VALUES ARE RETURNED, NOT CLAMPED. A weak reflection whose refined
+ * intensity came out below zero is a real measurement -- the background ran
+ * above the data there -- and CIF accepts a negative _refln_F_squared_meas.
+ * Clamping to zero would assert a measurement nobody made, and dropping the
+ * row would bias the set towards positive noise. The caller decides what to do
+ * with it; the report has no square root to print, a CIF reader with the esd
+ * beside it can apply a French-Wilson correction.
+ *
+ * @param {object[]} hklList
+ * @param {object} params        refined profile/cell parameters
+ * @param {object} [opts]
+ * @param {number} [opts.scale]         intensity scale factor (default 1)
+ * @param {object} [opts.polarisation]  model from polarizationFromParams()
+ * @param {function} [opts.sigmaArea]   (hkl, widthFactor) -> sigma(area), or NaN
+ * @returns {object[]} one entry per reflection, in input order
+ */
+function reflectionStructureFactors(hklList, params, opts = {}) {
+    const p = params || {};
+    const scale = Number.isFinite(opts.scale) ? opts.scale : 1;
+    const pol = opts.polarisation
+        || (typeof polarizationFromParams === 'function' ? polarizationFromParams(p) : null);
+
+    // 1 unless there really is a second wavelength with a non-zero weight.
+    // The same guard as everywhere else in powder5, so ratio = 0 disables it
+    // exactly rather than approximately.
+    const dbl = (p.ratio > 1e-6 && p.lambda2 > 1e-6 &&
+                 Math.abs(p.lambda - p.lambda2) > 1e-6);
+    const doubletSum = dbl ? (1 + p.ratio) : 1;
+
+    return (hklList || []).map(hkl => {
+        const out = {
+            hkl, h: hkl.h_orig, k: hkl.k_orig, l: hkl.l_orig, d: hkl.d,
+            tthCorr: NaN, m: 1, lp: NaN, area: NaN,
+            Fsq: NaN, Fsq_sigma: NaN, doubletSum
+        };
+        if (!hkl || !Number.isFinite(hkl.tth)) return out;
+
+        // Lp is evaluated at the CORRECTED angle, where the peak actually
+        // sits. Using the ideal Bragg angle would put Lp out of step with the
+        // position reported beside it.
+        let tthCorr = hkl.tth + (p.zeroShift || 0);
+        try {
+            if (typeof calculatePeakShift === 'function') tthCorr += calculatePeakShift(hkl.tth, p);
+        } catch { /* a shift model that cannot evaluate here leaves the angle alone */ }
+        out.tthCorr = tthCorr;
+
+        out.m = (Number.isFinite(hkl.multiplicity) && hkl.multiplicity > 0) ? hkl.multiplicity : 1;
+        out.lp = (typeof lorentzPolarization === 'function') ? lorentzPolarization(tthCorr, pol) : NaN;
+        out.area = (typeof integratedPeakArea === 'function')
+            ? integratedPeakArea(hkl, p, scale) : NaN;
+
+        if (!Number.isFinite(out.lp) || !(out.lp > 0) || !Number.isFinite(out.area)) return out;
+
+        const denom = out.m * out.lp * doubletSum;
+        out.Fsq = out.area / denom;
+
+        if (typeof opts.sigmaArea === 'function') {
+            // Area = Height * widthFactor, so sigma(Area) = sigma(Height) * widthFactor.
+            const h = hkl.intensity || 0;
+            const widthFactor = Math.abs(h) > 1e-9 ? (out.area / h) : 0;
+            const sa = opts.sigmaArea(hkl, widthFactor);
+            // Linear in the same denominator: no square root, no sign question.
+            if (Number.isFinite(sa)) out.Fsq_sigma = Math.abs(sa) / denom;
+        }
+        return out;
+    });
 }
 
 /**
@@ -383,8 +585,18 @@ function exportPattern(formatId, bundle) {
  * Standard uncertainties in parentheses are stripped: "1234(12)" is a value of
  * 1234, not a parse error.
  *
+ * Everything the writer states is read back, not just the profile: the cell,
+ * the space group, both wavelengths with the Ka2 ratio, the zero point and the
+ * profile model. A file that describes a refinement and a reader that returns
+ * only two columns of numbers meant a powder5 pdCIF could not restore the fit
+ * it came from -- and the loss was silent, because the tags were all there.
+ *
  * @param {string} content
- * @returns {{tth: number[], intensity: number[], wavelength: number|null}}
+ * @returns {{tth: number[], intensity: number[], wavelength: number|null,
+ *            wavelength2: number|null, ratio21: number|null,
+ *            zeroShift: number|null, cell: object|null,
+ *            spaceGroup: object|null, profileType: string|null,
+ *            profileParams: object, polarisation: object|null}}
  */
 function parsePdCifFile(content) {
     const lines = content.split(/\r?\n/);
@@ -398,12 +610,38 @@ function parsePdCifFile(content) {
     // ---- scalars we care about -------------------------------------------
     let wavelength = null, rangeMin = NaN, rangeMax = NaN, rangeInc = NaN;
     let zeroShift = null, cifOffset = null;
+    let wavelength2 = null, ratio21 = null;
+    const cell = {};
+    const sgIn = { symbol: null, number: null };
+    let profileType = null;
+    const profileParams = {};
+    const polarisation = { mode: null, monoTth: NaN, fraction: NaN };
+    // Quoted CIF strings arrive with their delimiters attached.
+    const unq = (v) => v.replace(/^['"]|['"]$/g, '').trim();
+    const CELL_TAG = {
+        '_cell_length_a': 'a', '_cell_length_b': 'b', '_cell_length_c': 'c',
+        '_cell_angle_alpha': 'alpha', '_cell_angle_beta': 'beta', '_cell_angle_gamma': 'gamma'
+    };
     for (const raw of lines) {
         const s = raw.trim();
         const m = s.match(/^(_[\w.\-\[\]]+)\s+(.*)$/);
         if (!m) continue;
         const tag = m[1].toLowerCase(), val = m[2].trim();
-        if (tag === '_diffrn_radiation_wavelength' && Number.isFinite(num(val))) wavelength = num(val);
+        if (CELL_TAG[tag] && Number.isFinite(num(val))) cell[CELL_TAG[tag]] = num(val);
+        // Both the modern and the deprecated spellings: files in the wild use
+        // either, and rejecting the old one would fail on most of them.
+        else if ((tag === '_space_group_name_h-m_alt' || tag === '_symmetry_space_group_name_h-m')
+                 && unq(val) && unq(val) !== '?') sgIn.symbol = unq(val);
+        else if ((tag === '_space_group_it_number' || tag === '_symmetry_int_tables_number')
+                 && Number.isFinite(num(val))) sgIn.number = num(val);
+        else if (tag === '_powder5_profile_type') profileType = unq(val) || null;
+        else if (tag === '_powder5_pol_mode') polarisation.mode = unq(val) || null;
+        else if (tag === '_powder5_pol_mono_2theta') polarisation.monoTth = num(val);
+        else if (tag === '_powder5_pol_fraction') polarisation.fraction = num(val);
+        else if (tag.startsWith('_powder5_param_') && Number.isFinite(num(val))) {
+            profileParams[m[1].slice('_powder5_param_'.length)] = num(val);
+        }
+        else if (tag === '_diffrn_radiation_wavelength' && Number.isFinite(num(val))) wavelength = num(val);
         else if (tag === '_pd_meas_2theta_range_min') rangeMin = num(val);
         else if (tag === '_pd_meas_2theta_range_max') rangeMax = num(val);
         else if (tag === '_pd_meas_2theta_range_inc') rangeInc = num(val);
@@ -416,6 +654,54 @@ function parsePdCifFile(content) {
         else if (tag === '_powder5_2theta_zero_shift' && Number.isFinite(num(val))) zeroShift = num(val);
         else if (tag === '_pd_calib_2theta_offset' && Number.isFinite(num(val)) &&
                  cifOffset === null) cifOffset = num(val);
+    }
+
+    // ---- the wavelength loop, if the file uses one ------------------------
+    //
+    // Scanned separately from the profile loop because it comes first and is
+    // tiny. A file written by this program always uses the loop form (the
+    // reflection loop refers to a wavelength id), and the loop is the only
+    // place a Ka2 component can be stated at all.
+    {
+        let j = 0;
+        while (j < lines.length) {
+            if (lines[j].trim().toLowerCase() !== 'loop_') { j++; continue; }
+            j++;
+            const tags = [];
+            while (j < lines.length && lines[j].trim().startsWith('_')) {
+                tags.push(lines[j].trim().toLowerCase()); j++;
+            }
+            const iW = tags.indexOf('_diffrn_radiation_wavelength');
+            if (iW < 0) continue;
+            const iId = tags.indexOf('_diffrn_radiation_wavelength_id');
+            const iWt = tags.indexOf('_diffrn_radiation_wavelength_wt');
+            const rows = [];
+            while (j < lines.length) {
+                const t = lines[j].trim();
+                if (t === '' || t.startsWith('_') || t.startsWith('#') ||
+                    t.toLowerCase() === 'loop_' || t.toLowerCase().startsWith('data_')) break;
+                const tok = t.split(/\s+/);
+                if (tok.length >= tags.length) {
+                    rows.push({ id: iId >= 0 ? String(tok[iId]) : String(rows.length + 1),
+                                lam: num(tok[iW]),
+                                wt: iWt >= 0 ? num(tok[iWt]) : 1 });
+                }
+                j++;
+            }
+            const good = rows.filter(r => Number.isFinite(r.lam));
+            if (!good.length) continue;
+            // Sorted by id so "1" is the primary line whatever order it was
+            // written in; the weights are relative to that one.
+            good.sort((x, y) => String(x.id).localeCompare(String(y.id), undefined, { numeric: true }));
+            wavelength = good[0].lam;
+            if (good.length > 1) {
+                wavelength2 = good[1].lam;
+                const w1 = Number.isFinite(good[0].wt) && good[0].wt !== 0 ? good[0].wt : 1;
+                const w2 = Number.isFinite(good[1].wt) ? good[1].wt : NaN;
+                if (Number.isFinite(w2)) ratio21 = w2 / w1;
+            }
+            break;
+        }
     }
 
     // ---- find the profile loop -------------------------------------------
@@ -474,7 +760,19 @@ function parsePdCifFile(content) {
     // The private tag has priority; otherwise convert the dictionary's offset.
     if (zeroShift === null && cifOffset !== null) zeroShift = -cifOffset;
 
-    return { tth, intensity, wavelength, zeroShift };
+    return {
+        tth, intensity, wavelength, zeroShift,
+        wavelength2, ratio21,
+        // Only handed back when the cell is actually complete enough to use.
+        // A partial cell applied to the controls would leave a mix of this
+        // file's edges and the previous sample's.
+        cell: Number.isFinite(cell.a) ? cell : null,
+        spaceGroup: (sgIn.symbol || Number.isFinite(sgIn.number)) ? sgIn : null,
+        profileType,
+        profileParams,
+        polarisation: (polarisation.mode || Number.isFinite(polarisation.monoTth) ||
+                       Number.isFinite(polarisation.fraction)) ? polarisation : null
+    };
 }
 
 // ---------------------------------------------------------------------------

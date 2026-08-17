@@ -389,6 +389,34 @@ function findSystematicAbsences(N, symops, centring) {
             if (!byRot.has(key)) byRot.set(key, { r: op.r, ts: [] });
             byRot.get(key).ts.push(op.t);
         }
+        // CENTRING TRANSLATIONS, WHETHER OR NOT THE OPERATOR LIST CARRIES THEM.
+        //
+        // The absence test is "some (R, t) with hR = h has h.t non-integral",
+        // and a centring vector has R = I, so it fixes every h. If the database
+        // lists the full group these are already present and the extra entries
+        // are redundant duplicates that change no answer. If it lists only the
+        // primitive coset representatives and reports the centring letter
+        // separately -- which some settings do -- then without this the F and I
+        // absences are never found, and most of the reciprocal grid is left
+        // free to break the lattice. `centring` was consulted only in the
+        // no-symops branch below, so that case was silently unhandled.
+        const cvecs = CENTRING_VECTORS[String(centring || 'P').toUpperCase()] || [];
+        if (cvecs.length) {
+            const frac = v => { const f = v - Math.floor(v); return Math.round(f * 5040) % 5040; };
+            const keyOf = t => `${frac(t[0])},${frac(t[1])},${frac(t[2])}`;
+            for (const grp of byRot.values()) {
+                const seen = new Set(grp.ts.map(keyOf));
+                for (const c of cvecs) {
+                    for (const t0 of [...grp.ts]) {
+                        const t = [t0[0] + c[0], t0[1] + c[1], t0[2] + c[2]];
+                        const k = keyOf(t);
+                        if (seen.has(k)) continue;
+                        seen.add(k);
+                        grp.ts.push(t);
+                    }
+                }
+            }
+        }
         rots = [...byRot.values()];
     } else {
         const vecs = CENTRING_VECTORS[String(centring || 'P').toUpperCase()] || [];
@@ -1037,6 +1065,26 @@ function runChargeFlippingCPU(job) {
         return { error: `No reflection fits a ${N}x${N}x${N} grid. The largest index in the fit is ${model.maxIndexSeen}, which needs a grid of at least ${model.minGridForAll}.` };
     }
 
+    // WEAK-REFLECTION PHASE FLIP (Oszlanyi & Suto 2005), same as the GPU path.
+    //
+    // Implemented here as well ON PURPOSE. A parameter that changes the answer
+    // on one backend and not the other means the same input gives two
+    // different structures depending on whether the machine has a usable GPU,
+    // and nothing on screen would say which one you got.
+    //
+    // The cut is a percentile of the observed orbit intensities rather than a
+    // fixed number, so it means the same thing on any dataset, and it is taken
+    // from the INITIAL targets - repartition rewrites `target` every cycle, so
+    // a threshold recomputed from it would drift with the solution.
+    const weakFraction = Number.isFinite(job.weakFraction) ? job.weakFraction : 0;
+    let weakI = 0;
+    if (weakFraction > 0 && model.nOrbits > 1) {
+        const sortedI = Float64Array.from(model.orbitTargetI).sort();
+        const kW = Math.min(sortedI.length - 1,
+                            Math.max(0, Math.floor(weakFraction * sortedI.length)));
+        weakI = sortedI[kW];
+    }
+
     const rand = mulberry32(job.seed ^ 0x9e3779b9);
     const init = modelInitialGrid(model, N, job.seed);
 
@@ -1154,7 +1202,24 @@ function runChargeFlippingCPU(job) {
         for (let g = 0; g < model.nOrbits; g++) {
             const start = oStart[g], count = oCount[g];
             if (count === 0) continue;
-            const amp = Math.sqrt(Math.max(0, target[g]) / count);
+            const tgt = Math.max(0, target[g]);
+
+            if (weakI > 0 && tgt < weakI) {
+                // Weak: keep |Fcalc| and advance the phase by +pi/2 instead of
+                // imposing |Fobs|. A member holding the Friedel mate stores
+                // conj(F), and conj(i*F) is -i*conj(F), so the rotation has the
+                // opposite sense there.
+                for (let i = 0; i < count; i++) {
+                    const word = idx[start + i];
+                    const j = word & 0x7fffffff;
+                    const a = re[j], b = im[j];
+                    if (word & 0x80000000) { re[j] =  b; im[j] = -a; }
+                    else                   { re[j] = -b; im[j] =  a; }
+                }
+                continue;
+            }
+
+            const amp = Math.sqrt(tgt / count);
             for (let i = 0; i < count; i++) {
                 const j = idx[start + i] & 0x7fffffff;
                 // PERF: Math.hypot is ~16x slower than the naive form (measured,
@@ -1212,6 +1277,7 @@ function runChargeFlippingCPU(job) {
         map: bestRho, gridSize: N, peaks, rHistory, bestR, bestIter,
         finalR: rHistory[maxIter - 1], seed: job.seed, cell,
         volume: cellVolume(cell), backend: 'cpu', symLambda: lambda,
+        weakFraction, weakI,
         reflections: modelReport(model)
     };
 }
@@ -1237,8 +1303,24 @@ async function runChargeFlipping(job) {
     return runChargeFlippingCPU(job);
 }
 
+// Set by a 'cancel-wyckoff' message, read by runWyckoffSearch through the
+// shouldStop callback at every generation and restart boundary.
+//
+// A CO-OPERATIVE STOP, NOT worker.terminate(). Terminating threw away the
+// answer: the swarm keeps a per-assignment global best that is already the
+// structure the user wants, and killing the thread discarded it along with
+// everything else. The search loop yields at each replica-exchange sweep, so a
+// message posted while it runs is delivered within a fraction of a second.
+let wyckoffStopRequested = false;
+
 globalThis.onmessage = async function (e) {
     const job = e.data || {};
+
+    // Handled before the dispatch below, and without awaiting anything: this
+    // arrives WHILE a search is running, so it must not fall through into the
+    // job switch and must not itself yield.
+    if (job.type === 'cancel-wyckoff') { wyckoffStopRequested = true; return; }
+
     try {
         if (job.type === 'run-charge-flipping') {
             const out = await runChargeFlipping(job);
@@ -1279,11 +1361,13 @@ if (job.type === 'build-structure') {
                 postMessage({ type: 'cf-error', message: 'A target composition is required for a Wyckoff search.' });
                 return;
             }
-            const N = job.gridSize || 32;
-            const res = await runWyckoffDensityFit(null, N, job.cell, symops, job);
+            wyckoffStopRequested = false;
+            const res = await runWyckoffFromIntensities(job.cell, symops, job);
             if (res.error) { postMessage({ type: 'cf-error', message: res.error }); return; }
             if (!res.sites || !res.sites.length) {
-                postMessage({ type: 'cf-error', message: 'The Wyckoff search produced no sites.' });
+                postMessage({ type: 'cf-error', message: res.stopped
+                    ? 'Stopped before any assignment produced a finite score, so there is nothing to show.'
+                    : 'The Wyckoff search produced no sites.' });
                 return;
             }
             postMessage({
@@ -1301,7 +1385,12 @@ if (job.type === 'build-structure') {
                     map: null, gridSize: null,
                     originShift: null, hand: null,
                     symmetryCorrelation: null, originScore: null,
-                    source: 'wyckoff'
+                    source: 'wyckoff',
+                    // True when the user stopped it. The sites are the best the
+                    // search had reached, which is a real answer and not an
+                    // error -- but it has not been through the final quench, so
+                    // the caller says so rather than presenting it as complete.
+                    stopped: !!res.stopped
                 }
             });
             return;
@@ -1575,6 +1664,41 @@ async function runChargeFlippingGPU(job) {
         return { error: `No reflection fits a ${N}x${N}x${N} grid. Largest index ${model.maxIndexSeen} needs at least ${model.minGridForAll}.` };
     }
 
+    // ----------------------------------------------------------------------
+    //  WEAK-REFLECTION PHASE FLIP (Oszlanyi & Suto 2005).
+    //
+    //  The kernel's default iteration is the 2004 method: flip the density
+    //  below a threshold, then impose |Fobs| on every reflection. The 2005
+    //  refinement leaves the WEAKEST reflections' amplitudes free and advances
+    //  their phases by pi/2 instead, which is what breaks the uniform-density
+    //  stagnation the pure 2004 iteration falls into.
+    //
+    //  It matters more on powder data than on single-crystal data: the weak
+    //  reflections are exactly the ones whose intensity the Pawley fit split
+    //  most arbitrarily between overlapping lines, so forcing the map to
+    //  reproduce them is forcing it to reproduce an artefact.
+    //
+    //  Driven by the Weak Fraction slider in the Charge tab; 0 disables the
+    //  branch and reproduces the 2004 method exactly. The cut is taken as that
+    //  percentile of the observed orbit intensities rather than as a fixed
+    //  number, so it means the same thing on any dataset.
+    //
+    //  runChargeFlippingCPU implements the SAME branch off the SAME field, so
+    //  the two backends do not disagree about what the setting does.
+    // ----------------------------------------------------------------------
+    const weakFraction = Number.isFinite(job.weakFraction) ? job.weakFraction : 0;
+    let weakI = 0;
+    if (weakFraction > 0 && model.nOrbits > 1) {
+        // Float64Array, matching runChargeFlippingCPU exactly. Sorting the same
+        // values at f32 instead moved the cut by one orbit in about one case in
+        // four hundred -- negligible physically, and precisely the kind of
+        // backend-dependent difference this field exists to avoid.
+        const sorted = Float64Array.from(model.orbitTargetI).sort();
+        const k = Math.min(sorted.length - 1,
+                           Math.max(0, Math.floor(weakFraction * sorted.length)));
+        weakI = sorted[k];
+    }
+
     const pl = await cfGetPipelines(device);
 
     // -----------------------------------------------------------------------
@@ -1703,7 +1827,7 @@ async function runChargeFlippingGPU(job) {
         pv.setUint32(o + 40, job.seed >>> 0, true);
         pv.setUint32(o + 44, wgFull, true);
         pv.setUint32(o + 48, wgCluster, true);
-        pv.setUint32(o + 52, 0, true);
+        pv.setFloat32(o + 52, weakI, true);   // weak_i; 0 disables the branch
         pv.setUint32(o + 56, 0, true);
         pv.setUint32(o + 60, 0, true);
     };
@@ -1977,6 +2101,7 @@ async function runChargeFlippingGPU(job) {
         finalR: rHistory[maxIter - 1], seed: job.seed, cell,
         volume: cellVolume(cell), backend: 'gpu', symLambda: lambda,
         syncBatch: rBatch, msPerIteration: lastBatchMs > 0 ? lastBatchMs / Math.max(1, rBatch) : null,
+        weakFraction, weakI,
         reflections: modelReport(model)
     };
 
@@ -2311,24 +2436,34 @@ async function buildStructure(job) {
     for (let i = 0; i < N3; i++) if (sym[i] > peak) peak = sym[i];
     if (peak > 0) for (let i = 0; i < N3; i++) sym[i] /= peak;
 
-    let sites = [];
-    let rawPeakCount = 0;
-    let wyckoffResult = null;
-
+    // ------------------------------------------------------------------
+    //  CHARGE FLIPPING AND THE WYCKOFF SEARCH ARE INDEPENDENT METHODS.
+    //
+    //  This function is the charge-flipping one and it ends at a peak list.
+    //  It used to branch: given a targetComposition it abandoned peak picking
+    //  and ran the Wyckoff swarm against `sym`, the map it had just built.
+    //
+    //  That branch is gone, and the field is refused rather than ignored, so
+    //  the coupling cannot come back by accident. Two methods that agree are
+    //  evidence only if neither saw the other's answer; a Wyckoff search fed
+    //  the charge-flipping map is not an independent check on charge flipping,
+    //  it is a refinement of it. Post a "wyckoff-search" job for the other
+    //  method - it reads |Fobs|^2 from the Pawley fit and never sees a map.
+    // ------------------------------------------------------------------
     if (job.targetComposition) {
-        // Execute the Replica-Exchange Monte Carlo swarm against the converged density map
-        wyckoffResult = await runWyckoffDensityFit(sym, N, cell, symops, job);
-        sites = wyckoffResult.sites || [];
-        rawPeakCount = sites.length;
-    } else {
-        const rawPeaks = findPeaks(sym, N, cell, {
-            minSeparation: job.minPeakSeparation,
-            maxPeaks: job.maxPeaks ?? 60,
-            heightCutoff: job.peakHeightCutoff ?? 0.04
-        });
-        rawPeakCount = rawPeaks.length;
-        sites = reduceToAsymmetricUnit(rawPeaks, symops, cell, job.minPeakSeparation * 0.6);
+        return { error: 'build-structure does not run a Wyckoff search. Charge flipping and ' +
+                        'the Wyckoff search are independent methods and must not share a ' +
+                        'solution: post a "wyckoff-search" job instead, which fits |Fobs|^2 ' +
+                        'directly and never sees this map.' };
     }
+
+    const rawPeaks = findPeaks(sym, N, cell, {
+        minSeparation: job.minPeakSeparation,
+        maxPeaks: job.maxPeaks ?? 60,
+        heightCutoff: job.peakHeightCutoff ?? 0.04
+    });
+    const rawPeakCount = rawPeaks.length;
+    const sites = reduceToAsymmetricUnit(rawPeaks, symops, cell, job.minPeakSeparation * 0.6);
 
     return {
         map: sym,
@@ -2343,7 +2478,7 @@ async function buildStructure(job) {
         nOps: symops.length,
         symops: symops.map(o => o.xyz).filter(Boolean),
         cell,
-        wyckoffResult
+        source: 'charge-flipping'
     };
 }
 
@@ -2506,7 +2641,14 @@ function cfObservationsFromHkl(job, symops) {
     });
 }
 
-async function runWyckoffDensityFit(densityMap, N, cell, symops, job) {
+/**
+ * The Wyckoff search. Space group + cell + composition + |Fobs|^2, and nothing
+ * else - in particular no electron-density map, by design.
+ *
+ * There is deliberately no map parameter. Its output is a site list and a
+ * CIF; it is not a stage of charge flipping and does not consume one.
+ */
+async function runWyckoffFromIntensities(cell, symops, job) {
 
     const formula = job.targetComposition;
     if (!formula) return { sites: [] };
@@ -2521,12 +2663,13 @@ async function runWyckoffDensityFit(densityMap, N, cell, symops, job) {
         return { sites: [] }; 
     }
 
-    // WHICH OBJECTIVE. With a map, score by density overlap; without one,
-    // score |Fcalc|^2 against the Pawley intensities. The Wyckoff search does
-    // not NEED a map -- it needs a space group, a composition, and the
-    // observations, all of which come from the Pawley fit -- so the mapless
-    // path is the general one and the density path is the special case.
-    const shaderFile = densityMap ? '../swarm_density.wgsl' : '../swarm_reflection.wgsl';
+    // ONE OBJECTIVE: |Fcalc|^2 against the Pawley intensities. There is no
+    // density alternative: scoring a trial by point-sampling a map is both the
+    // coupling this method must not have and a biased functional in its own
+    // right, since a Z-weighted point sample ranks a heavy atom BELOW a light
+    // one -- the heavy atom's own series-termination ripples dig a trough under
+    // it (the effect integrateSphere() was written for).
+    const shaderFile = '../swarm_reflection.wgsl';
     const shaderResp = await fetch(shaderFile);
     if (!shaderResp.ok) throw new Error(shaderFile + ' could not be loaded.');
     const swarmShaderSrc = await shaderResp.text();
@@ -2535,7 +2678,7 @@ async function runWyckoffDensityFit(densityMap, N, cell, symops, job) {
     // normalises them itself and estimates the Wilson B from them, so they are
     // handed over unprocessed rather than pre-reduced.
     let rawRows = [];
-    if (!densityMap) {
+    {
         rawRows = cfRawObservationRows(job);
         if (!rawRows.length) {
             return { sites: [], error: 'No usable Pawley intensities for the Wyckoff search.' };
@@ -2604,8 +2747,11 @@ async function runWyckoffDensityFit(densityMap, N, cell, symops, job) {
             radiation: job.radiation || 'xray',
             polarisationK: polarizationK((job.polarization !== undefined && job.polarization !== null)
                                           ? job.polarization : job.monochromatorTth),
-            densityMap: densityMap,
-            gridSize: N,
+            // No gridSize. It described the edge of the density grid, which
+            // runWyckoffSearch read only in its density mode; with that mode
+            // gone the option has no meaning, and the local N it referred to
+            // went with the map parameter -- so this line was a ReferenceError
+            // waiting for the first run.
             formula, 
             Z: Z,
             maxSitesPerElement: job.wyckoffMaxSites || undefined,
@@ -2630,7 +2776,7 @@ onLog: m => console.log('[CF Wyckoff Swarm]', m),
                     best: p.best 
                 });
             },
-            shouldStop: () => false
+            shouldStop: () => wyckoffStopRequested
         });
 } catch (e) {
         console.error('Wyckoff Density Fit failed during execution:', e);
@@ -2736,24 +2882,23 @@ if (out && out.candidates && out.candidates.length > 0) {
         }
 
         // ------------------------------------------------------------------
-        // FINAL COORDINATE REFINEMENT, AGAINST THE DATA RATHER THAN THE MAP.
+        // FINAL COORDINATE REFINEMENT.
         //
-        // Everything above scored structures by the density underneath them,
-        // sampled from an N^3 grid by trilinear interpolation - and a
-        // multilinear interpolant takes its maximum over a cell AT A VERTEX,
-        // so an atom sitting on real density is pulled onto a grid node and
-        // pinned there. The coordinates arriving here are quantised to 1/N,
-        // about 0.26 A at N = 32 and 0.13 A at N = 64. Raising N halves the
-        // error and costs eight times the memory; it does not remove the
-        // bias, because the interpolant has the same shape at every N.
+        // The search above scores |Fcalc|^2 against the Pawley intensities as
+        // a correlation, which is scale-free and insensitive to a uniform
+        // error but says nothing about how well any INDIVIDUAL reflection is
+        // reproduced. This step refines the free coordinates against |Fo|^2 by
+        // least squares, with every site re-projected onto its Wyckoff
+        // position at each step, and reports wR(F^2) -- a figure the
+        // correlation cannot give.
         //
-        // The map was only ever a device for getting out of the phase
-        // problem. The measurement is the Pawley intensity list, so the last
-        // step drops the grid entirely and refines the free coordinates
-        // against |Fo|^2 by least squares, with every site re-projected onto
-        // its Wyckoff position at each step. Failure here is not fatal: the
-        // unrefined coordinates are still the answer the map gave, so the
-        // reason is recorded and the pipeline carries on.
+        // (This preamble used to describe grid quantisation from trilinear
+        // sampling of a density map. That objective is gone: this route never
+        // sees a map, so its coordinates were never quantised to 1/N.)
+        //
+        // Failure here is not fatal: the unrefined coordinates are still the
+        // answer the search gave, so the reason is recorded and the pipeline
+        // carries on.
         // ------------------------------------------------------------------
         // THE SEARCH RESULT, before the refinement is allowed to touch it.
         //
@@ -2819,7 +2964,7 @@ if (out && out.candidates && out.candidates.length > 0) {
 
                     if (contactBreak) {
                         // Not a `return`: this runs inside the try block of
-                        // runWyckoffDensityFit, and returning here would skip
+                        // runWyckoffFromIntensities, and returning here would skip
                         // the site formatting and hand back an empty result.
                         console.warn(`[CF refine] Refinement rejected: it produced ` +
                             `${contactBreak.a}-${contactBreak.b} at ${contactBreak.d.toFixed(2)} A ` +
@@ -2909,7 +3054,12 @@ if (out && out.candidates && out.candidates.length > 0) {
             // between sites and between runs.
             // No map, no map density. Reporting 0 would read as "sits on
             // nothing" rather than "was never measured".
-            const mapDensity = densityMap ? sampleGrid(densityMap, N, s.x, s.y, s.z) : null;
+            // NO MAP ON THIS ROUTE, SO NO MAP DENSITY. Explicitly null rather
+            // than absent: the site table can then show "not applicable"
+            // instead of a number the method never had access to. Filling this
+            // in would mean handing the Wyckoff search the charge-flipping map
+            // to score itself against, which is the coupling being removed.
+            const mapDensity = null;
 
             // Nearest neighbours, as measured - not as assumed. Nothing here
             // asks what coordination the site OUGHT to have; it reports what
@@ -2975,6 +3125,10 @@ if (out && out.candidates && out.candidates.length > 0) {
 
         return {
             sites: formattedSites,
+            // Carried out of runWyckoffSearch so the message handler can label
+            // the result. The search returns its per-assignment global bests
+            // whether or not it ran to term, so a stopped run still has sites.
+            stopped: !!(out && out.stopped),
             assignment: best.assignment,
             candidates: out.candidates,
             refinement,

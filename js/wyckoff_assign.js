@@ -25,6 +25,39 @@
    plus projectSites(), which is what keeps the PSO inside the subspace.
    ------------------------------------------------------------------ */
 
+/**
+ * Module version.
+ *
+ * It was in module.exports and defined nowhere. The browser never runs that
+ * block so nothing showed; under Node it is a ReferenceError at load, which
+ * means the unit tests these exports exist for could not require the module.
+ */
+const SHARKO_WYCKOFF_ASSIGN_VERSION = '1.1.0';
+
+/* ------------------------------------------------------------------
+   KERNEL CAPACITIES.
+
+   These are compile-time array bounds in swarm_reflection.wgsl, not
+   preferences, and this file is where they are
+   enforced because this file is what builds the tables that would overrun
+   them. WGSL does not trap an out-of-range index - it clamps it - so every
+   one of these overflows produces a plausible-looking structure scored
+   against somebody else's data rather than an error anyone can see.
+
+     WY_MAX_SITES  width of prop_sites: independent Wyckoff sites in ONE
+                   assignment, summed over all elements.
+     WY_MAX_ELEM   local_rMin is WY_MAX_ELEM^2 floats of workgroup memory.
+     WY_MAX_OPS    genOp is packed into 12 bits. Group orders top out at 192.
+     WY_MAX_RULES  MAX_BOND_RULES.
+     WY_MAX_COORD_SLOTS  width of the private `slot` array, shared across every
+                   counted rule.
+   ------------------------------------------------------------------ */
+const WY_MAX_SITES = 16;
+const WY_MAX_ELEM = 8;
+const WY_MAX_OPS = 4096;
+const WY_MAX_RULES = 8;
+const WY_MAX_COORD_SLOTS = 16;
+
 /* ------------------------------------------------------------------ */
 /*  Wyckoff position helpers                                           */
 /* ------------------------------------------------------------------ */
@@ -182,7 +215,12 @@ function multisetsSummingTo(positions, target, opts) {
 const _SS_GENERIC = [0.1357913, 0.2468135, 0.3579246];
 
 function siteStabilizer(w, symOps) {
-    if (w._stab && w._stabN === (symOps || []).length) return w._stab;
+    // Cached on the position object, keyed on the IDENTITY of the operator
+    // list rather than on its length. Two settings of the same group have the
+    // same number of operators and different operators, so a length key would
+    // hand the second setting the first one's stabiliser - and the stabiliser
+    // is what decides whether a site can host a tetrahedron.
+    if (w._stab && w._stabOps === symOps) return w._stab;
     const p = projectOnto(w, _SS_GENERIC[0], _SS_GENERIC[1], _SS_GENERIC[2],
                           new Float64Array(3));
     const near = (a, b) => {
@@ -200,7 +238,7 @@ function siteStabilizer(w, symOps) {
         ];
         if (near(q[0], p[0]) && near(q[1], p[1]) && near(q[2], p[2])) stab.push(op);
     }
-    w._stab = stab; w._stabN = (symOps || []).length;
+    w._stab = stab; w._stabOps = symOps;
     return stab;
 }
 
@@ -326,6 +364,18 @@ function enumerateAssignments(wyckoff, demand, options = {}) {
         maxTotal: options.maxTotal ?? 4000
     };
 
+    // Sites in ONE assignment, across every element. maxSites above is the
+    // per-element cap and says nothing about the total: PbSO4 in P1 needs
+    // 4 + 4 + 16 = 24 sites with a per-element cap of 16, which is inside
+    // every cap here and outside what the kernel can hold.
+    //
+    // Filtered during enumeration rather than rejected afterwards, because an
+    // over-wide assignment is one candidate among many and dropping it should
+    // cost that candidate, not the run. How many were dropped is returned so
+    // the caller can say so instead of the list quietly being shorter.
+    const maxTotalSites = Number.isFinite(options.maxTotalSites)
+        ? options.maxTotalSites : WY_MAX_SITES;
+
     // Largest multiplicity first: the recursion then hits complete solutions
     // early and the maxPerElement cap truncates the tail of many-small-sites
     // combinations rather than the head of plausible ones.
@@ -394,9 +444,11 @@ function enumerateAssignments(wyckoff, demand, options = {}) {
     wyckoff.forEach((w, i) => { if (wyckoffFreedom(w) === 0) fixedOnly.add(i); });
 
     const assignments = [];
+    let droppedTooManySites = 0;
     const cur = new Array(demand.length);
-    const rec = (e, usedFixed) => {
+    const rec = (e, usedFixed, used) => {
         if (assignments.length >= opts.maxTotal) return;
+        if (used > maxTotalSites) { droppedTooManySites++; return; }
         if (e === demand.length) {
             const sites = [];
             for (let k = 0; k < demand.length; k++) {
@@ -420,14 +472,30 @@ function enumerateAssignments(wyckoff, demand, options = {}) {
                 if (usedFixed.has(wIdx)) { clash = true; break; }
                 usedFixed.add(wIdx); added.push(wIdx);
             }
-            if (!clash) { cur[e] = combo; rec(e + 1, usedFixed); }
+            if (!clash) { cur[e] = combo; rec(e + 1, usedFixed, used + combo.length); }
             for (const wIdx of added) usedFixed.delete(wIdx);
             if (assignments.length >= opts.maxTotal) return;
         }
     };
-    rec(0, new Set());
+    rec(0, new Set(), 0);
+
+    if (!assignments.length && droppedTooManySites) {
+        return { assignments: [], siteSymmetryExcluded: excluded,
+                 droppedTooManySites, error:
+            `Every Wyckoff assignment for this composition needs more than ` +
+            `${maxTotalSites} independent sites, which is the most the search ` +
+            `kernel holds. This normally means Z is too large for the group: ` +
+            `the multiplicities available cannot cover ` +
+            `${demand.map(d => d.element + d.count).join(' ')} in fewer sites. ` +
+            `Lower Z, or choose a higher-symmetry setting.` };
+    }
 
     return { assignments, truncated: assignments.length >= opts.maxTotal,
+             // How many valid assignments were skipped for exceeding the
+             // kernel's site limit. Reported rather than silent: an
+             // enumeration that returns 19 of 35 candidates and says nothing
+             // is indistinguishable from one that found 19.
+             droppedTooManySites,
              // The site-symmetry rejections, so the caller can say what was
              // ruled out and why. Silence here would be indistinguishable
              // from the filter not running.
@@ -480,7 +548,7 @@ function rankAssignments(assignments, ctx) {
 /* ------------------------------------------------------------------ */
 
 /**
- * Packs every assignment into the flat buffers swarm_cc.wgsl expects.
+ * Packs every assignment into the flat buffers swarm_reflection.wgsl expects.
  *
  * The crucial invariant: the total number of atoms generated in the cell is
  * the same for every assignment, because the composition is fixed. That makes
@@ -517,9 +585,31 @@ function buildAssignmentTables(assignments, symOpCount, demand) {
             const cosets = Array.isArray(s.w.coset_ops) && s.w.coset_ops.length
                 ? s.w.coset_ops
                 : null;
+            // THE FALLBACK IS ONLY VALID FOR A GENERAL POSITION.
+            //
+            // `k % symOpCount` for k = 0..multiplicity-1 enumerates operators
+            // 0, 1, 2, ... in database order. For a general position that IS
+            // the whole group and the orbit is right. For a SPECIAL position
+            // the multiplicity is smaller than the group order, so this takes
+            // the first few operators as listed - which are not a transversal
+            // of the stabiliser and do not generate the position's orbit. The
+            // atoms come out in the wrong places, several of them coincident,
+            // and the only trace was a warning in a log.
+            //
+            // A structure that cannot be represented is a failure, not a
+            // caveat - the same rule the genPack width check below follows.
+            if (!cosets && s.w.multiplicity !== symOpCount) {
+                throw new Error(
+                    `Wyckoff position ${s.w.multiplicity}${s.w.letter} has no coset_ops in the ` +
+                    `space-group database, and it is a special position (multiplicity ` +
+                    `${s.w.multiplicity} against a group order of ${symOpCount}), so its orbit ` +
+                    `cannot be reconstructed from the operator order. Regenerate the database ` +
+                    `with cctbx_Harko_v1.py.`);
+            }
             if (!cosets) {
-                warnings.push(`Wyckoff ${s.w.letter} has no coset_ops in the database - ` +
-                              `re-run the generator with the Wyckoff patch.`);
+                warnings.push(`Wyckoff ${s.w.multiplicity}${s.w.letter} has no coset_ops in the ` +
+                              `database; using the full operator list, which is correct for a ` +
+                              `general position only. Re-run the generator with the Wyckoff patch.`);
             }
             const ops = cosets || Array.from({ length: s.w.multiplicity }, (_, k) => k % symOpCount);
             for (const op of ops) {
@@ -553,31 +643,44 @@ function buildAssignmentTables(assignments, symOpCount, demand) {
     for (const d of demand) { sz += d.z * d.count; sz2 += d.z * d.z * d.count; }
     const normW = Math.max(1e-6, 0.5 * (sz * sz - sz2));
 
-    // Bit-packed for the kernel: site | op << 8 | type << 20. WebGPU
-    // guarantees only eight storage buffers per stage and the previous kernel
-    // already used all eight, so three per-atom u32 fields have to travel as
-    // one. The field widths are checked rather than assumed - 256 sites, 4096
-    // operators (order_z tops out at 192) and 16 elements are all far beyond
-    // any real problem, but silently truncating one would corrupt the atom
-    // list in a way that looks like a bad structure rather than a bug.
-    // The check THROWS. It used to push a warning and break out of the loop,
-    // which left genPack filled with zeros from the offending index onward -
-    // every remaining atom becomes site 0, operator 0, element 0. That is the
-    // exact silent corruption the comment above says it is guarding against:
-    // the run completes, the correlation is meaningless, and the only trace is
-    // a line in a log nobody reads. A structure that cannot be represented is
-    // a failure, not a caveat.
+    // CAPACITIES FIRST, PACKING SECOND.
+    //
+    // The bit layout (site | op << 8 | type << 20) has room for 256 sites and
+    // 16 elements, and the field widths are NOT the binding constraint - the
+    // kernel's workgroup arrays are. prop_sites holds WY_MAX_SITES entries and
+    // local_rMin holds WY_MAX_ELEM^2, and exceeding either is not a truncation
+    // the packing can detect: the values fit the bits perfectly and go on to
+    // index past the end of a workgroup array, which WGSL clamps in silence.
+    //
+    // So the limits checked here are the kernel's, not the packing's, and they
+    // are checked ONCE up front rather than per atom - the old loop tested
+    // 256/4096/16 on every one of nA * nTot entries to catch a condition that
+    // is a property of the tables as a whole.
+    if (maxSites > WY_MAX_SITES) {
+        throw new Error(
+            `The widest assignment needs ${maxSites} independent Wyckoff sites; the search ` +
+            `kernel holds ${WY_MAX_SITES} (the width of prop_sites). Lower Z, lower the ` +
+            `per-element site cap, or raise MAX_SITES in swarm_reflection.wgsl ` +
+            `together with the prop_sites array.`);
+    }
+    if (demand.length > WY_MAX_ELEM) {
+        throw new Error(
+            `${demand.length} distinct elements; the search kernel holds ${WY_MAX_ELEM} ` +
+            `(local_rMin is MAX_ELEM^2). Simplify the composition, or raise MAX_ELEM in ` +
+            `swarm_reflection.wgsl together with local_rMin.`);
+    }
+    if (symOpCount > WY_MAX_OPS) {
+        throw new Error(
+            `${symOpCount} symmetry operators; genOp is packed 12 bits wide, so ${WY_MAX_OPS} ` +
+            `is the ceiling. No crystallographic group reaches this.`);
+    }
+
+    // Bit-packed for the kernel: site | op << 8 | type << 20. WebGPU guarantees
+    // only eight storage buffers per stage and this kernel uses all eight, so
+    // three per-atom u32 fields have to travel as one.
     const genPack = new Uint32Array(nA * nTot);
     for (let i = 0; i < genPack.length; i++) {
-        const s = genSite[i], o = genOp[i], t = genType[i];
-        if (s > 0xFF || o > 0xFFF || t > 0xF) {
-            throw new Error(
-                `Cannot pack the generated-atom table: site ${s} (limit 255), operator ${o} ` +
-                `(limit 4095), element ${t} (limit 15) exceeds the kernel's field widths. ` +
-                `This needs ${maxSites} sites and ${symOpCount} operators over ` +
-                `${demand.length} element(s) - reduce Z or the number of elements.`);
-        }
-        genPack[i] = s | (o << 8) | (t << 20);
+        genPack[i] = genSite[i] | (genOp[i] << 8) | (genType[i] << 20);
     }
 
     return { nTot, maxSites, genSite, genOp, genZ, genType, genPack,
@@ -718,15 +821,32 @@ function buildRestraintTables(demand, windows = [], options = {}) {
             rules.push([b, a, dmin ?? 0, dmax ?? Infinity, 0, MODE.none]);
         }
     }
-    if (rules.length > 8) problems.push(`${rules.length} distance rules; the kernel holds 8.`);
+    // BOTH OF THESE THROW. They used to be advisory strings on `problems`,
+    // which the caller passes to say() - a line in a log - while the return
+    // value quietly truncated `nRules` to 8 and left the slot overflow to the
+    // kernel, where it wraps onto another rule's distances.
+    //
+    // A restraint the user typed and the search did not apply is the worst
+    // possible failure mode here: it costs a full run, the answer looks
+    // reasonable, and the structure violates a constraint the report will
+    // then correctly say is violated - which reads as a bad structure rather
+    // than a dropped rule.
+    if (rules.length > WY_MAX_RULES) {
+        throw new Error(
+            `${rules.length} distance rules were generated from ${windows.length} constraint(s); ` +
+            `the search kernel holds ${WY_MAX_RULES}. Note that a bare upper bound is emitted ` +
+            `BOTH ways round unless bothWays is false, so it costs two rules. Drop a constraint, ` +
+            `or set bothWays: false on a directed one.`);
+    }
     // The kernel keeps the N nearest partners of every counted rule so the
     // coordination penalty can be charged by distance rather than by count.
-    // Those slots are a fixed private array, so the total is bounded.
-    const MAX_COORD_SLOTS = 16;
+    // Those slots are a fixed private array shared across all rules.
     const slotsNeeded = rules.reduce((n, r) => n + (r[5] !== MODE.none ? r[4] : 0), 0);
-    if (slotsNeeded > MAX_COORD_SLOTS) {
-        problems.push(`The coordination numbers add up to ${slotsNeeded} neighbours; the kernel ` +
-                      `tracks ${MAX_COORD_SLOTS}. Drop a constraint or lower a coordination number.`);
+    if (slotsNeeded > WY_MAX_COORD_SLOTS) {
+        throw new Error(
+            `The coordination numbers add up to ${slotsNeeded} neighbour slots; the search ` +
+            `kernel tracks ${WY_MAX_COORD_SLOTS} in total across every rule. Drop a ` +
+            `constraint, or lower a coordination number.`);
     }
 
     const rMinOff = zByType.length;
@@ -746,7 +866,7 @@ function buildRestraintTables(demand, windows = [], options = {}) {
     for (let i = 0; i < rMin.length; i++) maxDistance = Math.max(maxDistance, rMin[i]);
     for (const r of rules) if (Number.isFinite(r[3])) maxDistance = Math.max(maxDistance, r[3]);
 
-    return { tables, rMinOff, ruleOff, nRules: Math.min(rules.length, 8), nElem,
+    return { tables, rMinOff, ruleOff, nRules: rules.length, nElem,
              ruleStride: RULE_STRIDE, maxDistance, problems,
              // The resolved floors, so the post-search filter can reject on
              // exactly what the search enforced. They used to disagree: the
@@ -827,7 +947,13 @@ function weightedAssign(ids, numParticles, minPer, weights) {
     const order = ids.map((_, k) => k).sort((a, b) => w[b] - w[a]);
     let assigned = counts.reduce((x, y) => x + y, 0), oi = 0;
     while (assigned < numParticles) { counts[order[oi++ % order.length]]++; assigned++; }
-    while (assigned > numParticles) {
+    // The bounded form. The arithmetic above cannot overshoot today
+    // (floorEach * n + surplus == numParticles exactly), but the loop's exit
+    // depends on some count being greater than 1 - so if every count were 1 and
+    // the sum were still too large, this spun forever and the tab froze with no
+    // error. `guard` makes that a wrong allocation instead of a hang.
+    let guard = order.length * 4 + 8;
+    while (assigned > numParticles && guard-- > 0) {
         const k = order[order.length - 1 - (oi++ % order.length)];
         if (counts[k] > 1) { counts[k]--; assigned--; }
     }
@@ -892,12 +1018,22 @@ function pruneAssignments(ids, best, keepFraction = 0.5, minKeep = 4) {
  */
 function parseFormula(formula, Z = 1) {
     const counts = {};
+    // UNPARSEABLE CHARACTERS ARE AN ERROR, NOT A SKIP.
+    //
+    // The old loop did `if (!m) { i++; continue; }`, so anything the element
+    // pattern did not match was silently discarded. "pbso4" - a perfectly
+    // ordinary thing to type - matched nothing until the O4 and returned a
+    // composition of four oxygens, which then enumerated, searched, and
+    // reported a structure. Nothing anywhere said the formula had not been
+    // understood.
+    const junk = [];
     const parse = (s, mult) => {
         let i = 0;
         while (i < s.length) {
             if (s[i] === '(') {
                 let depth = 1, j = i + 1;
                 while (j < s.length && depth) { if (s[j] === '(') depth++; if (s[j] === ')') depth--; j++; }
+                if (depth) { junk.push('unclosed "("'); return; }
                 const inner = s.slice(i + 1, j - 1);
                 const m = /^(\d+(?:\.\d+)?)/.exec(s.slice(j));
                 const n = m ? parseFloat(m[1]) : 1;
@@ -906,14 +1042,22 @@ function parseFormula(formula, Z = 1) {
                 continue;
             }
             const m = /^([A-Z][a-z]?)(\d+(?:\.\d+)?)?/.exec(s.slice(i));
-            if (!m) { i++; continue; }
+            if (!m) { junk.push(s[i]); i++; continue; }
             const el = m[1].toUpperCase();
             counts[el] = (counts[el] || 0) + mult * (m[2] ? parseFloat(m[2]) : 1);
             i += m[0].length;
         }
     };
-    parse(formula.replace(/\s+/g, ''), Z);
-    return Object.entries(counts).map(([element, count]) => ({ element, count }));
+    parse(String(formula || '').replace(/\s+/g, ''), Z);
+    if (junk.length) {
+        throw new Error(
+            `Could not read the formula "${formula}": ${[...new Set(junk)].map(c => `"${c}"`).join(', ')} ` +
+            `is not an element symbol. Element symbols start with a capital letter - ` +
+            `"PbSO4", not "pbso4" or "PBSO4".`);
+    }
+    const out = Object.entries(counts).map(([element, count]) => ({ element, count }));
+    if (!out.length) throw new Error(`The formula "${formula}" names no elements.`);
+    return out;
 }
 
 /**
@@ -948,6 +1092,7 @@ function suggestZ(cellVolume, atomsPerFormula, symOpCount) {
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { SHARKO_WYCKOFF_ASSIGN_VERSION,
+        WY_MAX_SITES, WY_MAX_ELEM, WY_MAX_OPS, WY_MAX_RULES, WY_MAX_COORD_SLOTS,
         wyckoffFreedom, wyckoffProjector, projectOnto, wyckoffShift,
         siteStabilizer, siteHasInversion, coordinationCompatible,
         enumerateAssignments, rankAssignments, buildAssignmentTables,

@@ -463,6 +463,12 @@
 
                         <label class="control-label" title="Reflections closer together than this in 2θ are treated as one measured peak, and their intensities are re-partitioned each cycle in proportion to the calculated values. Symmetry equivalents are NOT affected — they are constrained to equal |F|.">Overlap (°2θ)</label>
                         <input type="number" id="cf-overlap-tol" step="0.01" min="0" class="control-input">
+
+                        <label class="control-label" for="cf-weak-fraction" title="The weakest this fraction of reflections keep their CALCULATED amplitude and have their phase advanced by 90° each cycle, instead of being forced onto |Fobs| (Oszlányi &amp; Sütő 2005). Their measured intensity is then used only for the knowledge that they are weak — which on powder data is the honest reading, because a weak reflection's share of an overlapped peak is close to a guess. 0 disables it and reproduces the 2004 algorithm. The published range is broad, so scan it rather than tuning it: if 0.15 and 0.20 differ much, that difference is trial-to-trial noise.">Weak Fraction</label>
+                        <div class="slider-value-track">
+                            <input type="range" id="cf-weak-fraction" class="custom-slider" min="0" max="0.33" step="0.01" value="0.15">
+                            <span id="cf-weak-fraction-value" class="slider-value-display">0.15</span>
+                        </div>
                     </div>
 
                     <div id="cf-sym-status" class="cf-hint" style="margin-top: 8px;"></div>
@@ -502,7 +508,7 @@
                     <div class="cf-table-scroll">
                         <table class="cf-peak-table" id="cf-peak-table">
                             <thead>
-                                <tr><th>#</th><th>x</th><th>y</th><th>z</th><th>Height</th><th title="Distance from this peak to the nearest OTHER peak in the list. A value near a real bond length suggests two genuine neighbouring atoms; a very small one means the peak is a ripple beside a stronger neighbour rather than an atom of its own.">Nearest peak (Å)</th></tr>
+                                <tr><th>#</th><th>x</th><th>y</th><th>z</th><th title="The value of the single tallest voxel of this peak, against the tallest peak in the map. This does NOT rank atoms by atomic number: it depends on where the atom falls relative to the grid, on its displacement parameters, and on the series-termination ripples of its neighbours, and a heavy atom erodes its own maximum with its own ripples. Use the Charge column to identify heavy atoms.">Height</th><th title="The density INTEGRATED over a fixed sphere around this peak, against the largest integral in the map. This is the column that ranks atoms by electron count, because a volume integral is insensitive to grid placement, to displacement parameters and to ripples. On PbSO4, Height puts sulfur above lead; Charge does not.">Charge</th><th title="Distance from this peak to the nearest OTHER peak in the list. A value near a real bond length suggests two genuine neighbouring atoms; a very small one means the peak is a ripple beside a stronger neighbour rather than an atom of its own.">Nearest peak (Å)</th></tr>
                             </thead>
                             <tbody></tbody>
                         </table>
@@ -981,7 +987,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 159b, 16 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 161, 17 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1004,6 +1010,11 @@
         document.getElementById('cf-min-sep').value = CF_DEFAULTS.peakMerge;
         document.getElementById('cf-sym-lambda').value = CF_DEFAULTS.symLambda;
         document.getElementById('cf-overlap-tol').value = CF_DEFAULTS.overlapTolTth;
+        // ?? rather than a bare read: CF_DEFAULTS lives in constants.js and may
+        // predate this control, and an undefined here would put the slider at
+        // its minimum (0) and silently turn the feature off.
+        document.getElementById('cf-weak-fraction').value =
+            (CF_DEFAULTS.weakFraction ?? 0.15);
     }
 
     try {
@@ -1139,17 +1150,33 @@
 
     const wyCancel = document.getElementById('wyckoff-cancel-btn');
     if (wyCancel) wyCancel.addEventListener('click', () => {
-        // Terminate rather than co-operatively stop: the swarm runs entirely
-        // inside one worker call and never yields to check a flag, so there is
-        // nothing to poll. Terminating also guarantees the cursor and the run
-        // state are restored, which a co-operative stop did not.
+        // ASK THE SEARCH TO STOP; DO NOT KILL IT.
+        //
+        // This used to call terminateChargeFlipWorker() outright, which threw
+        // away the answer. The swarm keeps a per-assignment global best that IS
+        // the structure found so far, and runWyckoffSearch already returns it
+        // on a co-operative stop -- shouldStop() was simply hardwired to false.
+        // Stopping now finishes the run early and reports what it had.
+        if (!chargeFlipWorker) return;
         wyckoffCancelled = true;
-        terminateChargeFlipWorker();
-        wySetRunning(false);
-        document.body.style.cursor = '';
-        wyckoffPhase = 'idle';
-        setWyckoffStatus('Search cancelled.', 'warn');
-        showToast('Wyckoff search cancelled.', 'info');
+        wyCancel.disabled = true;
+        setWyckoffStatus('Stopping\u2026 returning the best structure found so far.');
+        chargeFlipWorker.postMessage({ type: 'cancel-wyckoff' });
+
+        // Safety net for a worker that is wedged rather than searching. The
+        // identity check is the test for "did it answer": done() nulls
+        // chargeFlipWorker, so if this one is still current the request went
+        // unanswered and killing it is the only way out.
+        const stuck = chargeFlipWorker;
+        setTimeout(() => {
+            if (chargeFlipWorker !== stuck) return;
+            terminateChargeFlipWorker();
+            wySetRunning(false);
+            document.body.style.cursor = '';
+            wyckoffPhase = 'idle';
+            setWyckoffStatus('Search stopped, but the worker did not answer in time, ' +
+                             'so no partial structure could be recovered.', 'warn');
+        }, 20000);
     });
 
     // The Wyckoff panel exports the SAME structure object -- exportStructureCIF
@@ -1308,7 +1335,8 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
             dest.appendChild(group);
         }
     })();
-    ['cf-grid-size', 'cf-iterations', 'cf-trials', 'cf-sym-lambda', 'cf-overlap-tol'].forEach(id =>
+    ['cf-grid-size', 'cf-iterations', 'cf-trials', 'cf-sym-lambda', 'cf-overlap-tol',
+     'cf-weak-fraction'].forEach(id =>
         document.getElementById(id).addEventListener('input', updateChargeFlipEstimate));
 
     // The two charge-flipping sliders show their own value.
@@ -1324,6 +1352,17 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
         if (tr && trOut) {
             const sync = () => { trOut.textContent = tr.value; };
             tr.addEventListener('input', sync); sync();
+        }
+        const wf = document.getElementById('cf-weak-fraction');
+        const wfOut = document.getElementById('cf-weak-fraction-value');
+        if (wf && wfOut) {
+            // "off" rather than "0.00": the slider's floor is not a small
+            // amount of perturbation, it is the 2004 algorithm.
+            const sync = () => {
+                const v = parseFloat(wf.value) || 0;
+                wfOut.textContent = v > 0 ? v.toFixed(2) : 'off';
+            };
+            wf.addEventListener('input', sync); sync();
         }
     }
    
@@ -1428,43 +1467,6 @@ function cfMillsRatio(t) {
     }
     const t2 = t * t;
     return -t * (1 + 1 / t2 - 2 / (t2 * t2));
-}
-
-function cfPosteriorAcentric(E, sigma, Sigma) {
-    const mu = E - sigma * sigma / Sigma;
-    const t = mu / sigma;
-    return sigma * (t + cfMillsRatio(t));
-}
-
-function cfPosteriorCentric(E, sigma, Sigma) {
-    // Midpoint rule, which also keeps the J^(-1/2) singularity at the origin
-    // off the abscissa. The Gaussian factor confines the mass to within a few
-    // sigma of max(0, E), so integrating to E + 8σ captures it; the step has
-    // to resolve the narrower of the two scales or the quadrature quietly
-    // undersamples the peak and reports a low mean. The log-weights are
-    // shifted by their maximum before exponentiating, or a strongly negative
-    // E underflows every term to zero.
-    const hi = Math.max(E + 8 * sigma, 8 * sigma);
-    if (!(hi > 0)) return 0;
-    const scale = Math.max(1e-12, Math.min(sigma, Sigma));
-    const n = Math.min(20000, Math.max(400, Math.ceil(hi / (scale / 8))));
-    const h = hi / n;
-    let maxLog = -Infinity;
-    const logw = new Float64Array(n);
-    for (let i = 0; i < n; i++) {
-        const J = (i + 0.5) * h;
-        const lw = -0.5 * Math.log(J) - J / (2 * Sigma)
-                 - (E - J) * (E - J) / (2 * sigma * sigma);
-        logw[i] = lw;
-        if (lw > maxLog) maxLog = lw;
-    }
-    let num = 0, den = 0;
-    for (let i = 0; i < n; i++) {
-        const w = Math.exp(logw[i] - maxLog);
-        num += w * (i + 0.5) * h;
-        den += w;
-    }
-    return den > 0 ? num / den : Math.max(0, E);
 }
 
 // A reflection is centric when some symmetry operation maps h onto -h. With no
@@ -2307,6 +2309,27 @@ function buildExportBundle(opts) {
         spaceGroup: sgUsedForFit || currentSG || null,
         hklList: fr.hklList || null,
         stats: fr.statistics || fr.stats || null,
+        // WITHOUT THESE TWO THE REFLECTION ESDS IN A PAWLEY pdCIF ARE ALL "?".
+        //
+        // A Pawley intensity is a least-squares parameter, so its uncertainty
+        // lives in the covariance matrix rather than on the reflection, and the
+        // scale factor is what turns a fitted height into the area the esd
+        // belongs to. Both are on fitResults already; the bundle just never
+        // carried them, so the writer had nothing to work from. A Le Bail run
+        // does not need them -- its uncertainties are on hkl.I_sigma.
+        esds: (typeof intensityEsdsFromCovariance === 'function' && fr.JtJ)
+            ? intensityEsdsFromCovariance(fr) : null,
+        scaleFactor: (fr.statistics && fr.statistics.scaleFactor)
+            || (fr.stats && fr.stats.scaleFactor) || 1,
+        // The three polarisation controls, read straight off the panel. Lp -- and
+        // therefore every |F|^2 in an exported pdCIF -- depends on them, so a
+        // file that omits them cannot be checked against, or reloaded into, the
+        // model that produced it.
+        polarisationUi: {
+            mode: (document.getElementById('polarization-mode') || {}).value || null,
+            monoTth: parseFloat((document.getElementById('mono-2theta') || {}).value),
+            fraction: parseFloat((document.getElementById('pol-fraction') || {}).value)
+        },
         sourceName: (controls.fileName && controls.fileName.dataset.file) || 'pattern'
     };
 }
@@ -2488,6 +2511,12 @@ function cfSetRunning(running) {
  */
 function startChargeFlipWorker() {
     if (!chargeFlipWorker) chargeFlipWorker = new Worker('js/charge_flipping_worker.js');
+    // A REUSED worker still carries the previous launcher's handlers, which
+    // close over a different `done()` and a different status line. Clearing
+    // them here means the caller's assignments are the only ones live, instead
+    // of a stale onerror from a finished run firing into a new one.
+    chargeFlipWorker.onmessage = null;
+    chargeFlipWorker.onerror = null;
     return chargeFlipWorker;
 }
 
@@ -2593,8 +2622,8 @@ function parseDistanceConstraints(text) {
 /**
  * Kernel limits the distance restraints are packed against.
  *
- * These are compile-time array bounds in swarm_density.wgsl and
- * swarm_reflection.wgsl, not preferences. The shader clamps the rule count with
+ * These are compile-time array bounds in swarm_reflection.wgsl, not
+ * preferences. The shader clamps the rule count with
  * min(), and indexes one shared coordination-slot array across all rules, so
  * exceeding either bound does NOT fail -- it silently drops rules, or lets one
  * rule's neighbour slots run into the next one's. Both are checked on the host
@@ -2673,7 +2702,7 @@ function describeDistanceConstraints(windows) {
  * @returns {{windows: object[], errors: string[], warnings: string[]}}
  */
 function validateDistanceConstraints(text, formula) {
-    // Compile-time array bounds in swarm_density.wgsl and swarm_reflection.wgsl.
+    // Compile-time array bounds in swarm_reflection.wgsl.
     // See the note above on why these are local rather than shared.
     const WY_MAX_BOND_RULES = 8;    // MAX_BOND_RULES
     const WY_MAX_COORD_SLOTS = 16;  // MAX_COORD_SLOTS
@@ -2706,9 +2735,25 @@ function validateDistanceConstraints(text, formula) {
         }
     }
 
-    if (r.windows.length > WY_MAX_BOND_RULES) {
-        errors.push(`${r.windows.length} rules given, but the kernel holds ${WY_MAX_BOND_RULES}. ` +
-                    `The extra ones would be dropped without being applied.`);
+    // COUNT RULES, NOT WINDOWS.
+    //
+    // buildRestraintTables mirrors a bare upper bound into both directions, so
+    // one typed line can cost two rules; a line carrying only a dmin costs none
+    // at all, because it is expressed entirely in the rMin floor. Counting
+    // windows made this live check disagree with the builder -- which now
+    // REFUSES to run rather than silently dropping the surplus, so five
+    // constraints could pass here and then fail at launch.
+    const ruleCount = r.windows.reduce((n, w) => {
+        const hasCount = Number.isFinite(w.count) && w.count > 0;
+        if (!hasCount && !Number.isFinite(w.dmax)) return n;
+        const mirrored = !hasCount && w.bothWays !== false &&
+                         String(w.a).toUpperCase() !== String(w.b).toUpperCase();
+        return n + (mirrored ? 2 : 1);
+    }, 0);
+    if (ruleCount > WY_MAX_BOND_RULES) {
+        errors.push(`These ${r.windows.length} constraint(s) generate ${ruleCount} rules, but ` +
+                    `the kernel holds ${WY_MAX_BOND_RULES}. A bare upper bound counts twice ` +
+                    `because it is applied in both directions.`);
     }
 
     // Only rules that state a count consume neighbour slots; see slotOff[] in
@@ -2927,6 +2972,11 @@ const gridSize   = parseInt(document.getElementById('cf-grid-size').value, 10);
  
  const symLambda  = parseFloat(document.getElementById('cf-sym-lambda').value);
     const overlapTol = parseFloat(document.getElementById('cf-overlap-tol').value);
+    // Clamped to the slider's own range, because a value can also arrive from a
+    // restored session or a hand-edited attribute. A fraction outside [0, 1]
+    // would index past the end of the sorted intensity array in both backends.
+    const weakFraction = Math.min(0.33, Math.max(0,
+        parseFloat(document.getElementById('cf-weak-fraction').value) || 0));
 
     const p = fitResults.params;
     const sgForCF = sgUsedForFit || currentSG || null;
@@ -3061,7 +3111,11 @@ document.getElementById('cf-progress-container').classList.remove('hidden');
 seed: (Date.now() + trialIndex * 7919) >>> 0,
             minPeakSeparation: minSep,
             maxPeaks: 40,
-            peakHeightCutoff: 0.04
+            peakHeightCutoff: 0.04,
+            // Read by BOTH backends. runChargeFlippingGPU and
+            // runChargeFlippingCPU implement the same branch off this field, so
+            // a machine without WebGPU produces the same structure as one with.
+            weakFraction
         });
     };
 
@@ -3261,7 +3315,13 @@ function renderChargeFlipResults(res, opts) {
                         : '')],
         ['Overlapping reflections', `${ref.overlapped} of ${ref.orbits} in ${ref.clusters} peak(s)`],
         ['Weak intensities', opts.intensityNote || '—'],
-        ['Compute', res.backend === 'gpu' ? 'WebGPU' : 'CPU']
+        ['Compute', res.backend === 'gpu' ? 'WebGPU' : 'CPU'],
+        // Stated in the summary because it changes the algorithm, not just its
+        // speed: a run at 0 and a run at 0.15 are the 2004 and 2005 methods and
+        // are not comparable as trials of one thing.
+        ['Weak fraction', Number.isFinite(res.weakFraction) && res.weakFraction > 0
+            ? `${(res.weakFraction * 100).toFixed(0)}% of reflections (π/2 phase shift)`
+            : 'off — |Fobs| imposed on every reflection']
     ];
     document.getElementById('cf-summary').innerHTML =
         rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -3315,10 +3375,16 @@ function renderChargeFlipResults(res, opts) {
             const d = cfFracDistance(G, pk.x - q.x, pk.y - q.y, pk.z - q.z);
             if (d < dmin) dmin = d;
         }
+        // The CHARGE column is the one to read when the question is "which of
+        // these is the heavy atom". integrateSphere() has been computing it in
+        // the worker all along and nothing displayed it, so the only number on
+        // screen was Height -- which on PbSO4 puts sulfur at 1.000 and lead at
+        // 0.728, against an electron ratio of 16:82.
         return `<tr><td>${pk.rank}</td><td>${pk.x.toFixed(4)}</td><td>${pk.y.toFixed(4)}</td>` +
-               `<td>${pk.z.toFixed(4)}</td><td>${pk.relative.toFixed(3)}</td>` +
+               `<td>${pk.z.toFixed(4)}</td><td>${cfFormatRelative(pk.relative)}</td>` +
+               `<td>${cfFormatRelative(pk.chargeRel)}</td>` +
                `<td>${Number.isFinite(dmin) ? dmin.toFixed(2) : '–'}</td></tr>`;
-    }).join('') || '<tr><td colspan="6">No peak above the cutoff.</td></tr>';
+    }).join('') || '<tr><td colspan="7">No peak above the cutoff.</td></tr>';
 
     // Section viewer
     const slider = document.getElementById('cf-section-slider');
@@ -3581,6 +3647,35 @@ function cfExpandedSitePositions(mapKind) {
 //  Density3D.siteColor(), never from a copy kept here, so the swatch and the
 //  sphere cannot drift apart.
 // ---------------------------------------------------------------------------
+// `relative` IS ALLOWED TO BE null, AND EVERY READER HAS TO SAY SO.
+//
+// The Wyckoff route sets it to null on purpose: a site whose mapDensity is not
+// finite, or a run whose tallest fitted site has no height, has no meaningful
+// ranking against the other sites. That is not an error - it is the single
+// most diagnostic thing the table can tell you, because a null here means the
+// site sits on NO density at all and was placed by composition and the
+// restraint penalties alone. The peak-picking route never produces null, which
+// is why this went unnoticed until a Wyckoff structure was loaded into the
+// same legend.
+//
+// Formatting it in one place means the table, the legend, the tooltip and the
+// CSV cannot disagree about what "no height" looks like.
+// The Wyckoff/Mult cell. `s.wyckoff || (s.multiplicity + ...)` printed the
+// STRING "undefined" when neither field was set, and an empty cell when
+// multiplicity was an empty string - both of which read as "this site has no
+// multiplicity" rather than "this route did not record one".
+function cfFormatWyckoff(s) {
+    if (s.wyckoff) return String(s.wyckoff);
+    if (Number.isFinite(s.multiplicity)) {
+        return `${s.multiplicity}${s.special ? '*' : ''}`;
+    }
+    return '\u2013';
+}
+
+function cfFormatRelative(v, digits = 3) {
+    return Number.isFinite(v) ? v.toFixed(digits) : '\u2013';   // en dash
+}
+
 function cfSiteSwatchColor(rank) {
     if (typeof Density3D !== 'undefined' && typeof Density3D.siteColor === 'function') {
         return Density3D.siteColor(rank);
@@ -3640,7 +3735,7 @@ function cfRenderSiteLegend() {
             ? Density3D.hasSiteColorOverride(st.rank) : false;
         return `<div class="cf-site-row${off ? ' is-hidden' : ''}" data-rank="${st.rank}" role="checkbox"`
              + ` tabindex="0" aria-checked="${off ? 'false' : 'true'}"`
-             + ` title="Site ${st.rank}: height ${st.relative.toFixed(3)}, multiplicity ${mult}`
+             + ` title="Site ${st.rank}: height ${cfFormatRelative(st.relative)}, multiplicity ${mult}`
              + ` at (${st.x.toFixed(3)}, ${st.y.toFixed(3)}, ${st.z.toFixed(3)}). Click to `
              + `${off ? 'show' : 'hide'} it.">`
              + `<span class="cf-site-rank">${st.rank}</span>`
@@ -3650,7 +3745,7 @@ function cfRenderSiteLegend() {
              + ` title="Colour of site ${st.rank}`
              + `${customColor ? ' (changed from the default)' : ''}`
              + ` - click to change it.">`
-             + `<span class="cf-site-height">${st.relative.toFixed(3)}</span>`
+             + `<span class="cf-site-height">${cfFormatRelative(st.relative)}</span>`
              + `<span class="cf-site-mult">&times;${mult}</span>`
              + `<span class="cf-site-eye">${off ? '&#9679;' : '&#9673;'}</span>`
              + `</div>`;
@@ -3821,7 +3916,7 @@ function exportChargeFlipPeaks() {
         `rank,x,y,z,relative_height`
     ];
     for (const p of cfLastResult.peaks) {
-        lines.push(`${p.rank},${p.x.toFixed(5)},${p.y.toFixed(5)},${p.z.toFixed(5)},${p.relative.toFixed(4)}`);
+        lines.push(`${p.rank},${p.x.toFixed(5)},${p.y.toFixed(5)},${p.z.toFixed(5)},${cfFormatRelative(p.relative, 4)}`);
     }
     downloadTextFile(lines.join('\n'), 'charge_flipping_peaks.csv');
 }
@@ -3936,7 +4031,23 @@ function runWyckoffStandalone() {
     }
 
     const p = fitResults.params || {};
-    const cell = { a: p.a, b: p.b, c: p.c, alpha: p.alpha, beta: p.beta, gamma: p.gamma };
+    // fullCellFromParams, NOT the raw parameter object.
+    //
+    // The lattice UI only creates inputs for the FREE parameters of the crystal
+    // system, so p.b and p.c do not exist after a cubic refinement and p.b does
+    // not exist after a tetragonal, hexagonal, trigonal or rhombohedral one.
+    // Reading them directly handed the worker undefined edges, which reach the
+    // metric tensor as NaN and make every distance in the search NaN. This is
+    // the same call runChargeFlipping already makes, for the same reason -- the
+    // standalone launcher simply never got the fix.
+    const wySystem = (sg && sg.system) || p.system || 'triclinic';
+    const cell = fullCellFromParams(p, wySystem);
+    if (!cell) {
+        const m = `The refined cell is not usable for a Wyckoff search ` +
+                  `(a = ${p.a}, b = ${p.b}, c = ${p.c}, ${wySystem}).`;
+        setWyckoffStatus(m, 'warn'); showToast(m, 'error');
+        return;
+    }
 
     // THE CONSTRAINTS ARE CHECKED BEFORE THE RUN, NOT DISCARDED.
     //
@@ -3981,6 +4092,19 @@ function runWyckoffStandalone() {
         document.body.style.cursor = '';
         terminateChargeFlipWorker();
     };
+    // WITHOUT THIS A WORKER CRASH LOCKS THE UI PERMANENTLY. wySetRunning(true)
+    // has already disabled the left panel and set a wait cursor; nothing else
+    // in this function runs if the worker dies, so done() is never called and a
+    // page reload is the only way back. runBuildStructure() below sets one; the
+    // Wyckoff launcher did not. Assigned before postMessage so a failure during
+    // worker startup is caught as well.
+    chargeFlipWorker.onerror = (ev) => {
+        done();
+        const m = 'Wyckoff worker crashed: ' + ((ev && ev.message) || 'unknown error');
+        wyckoffPhase = 'idle';
+        setWyckoffStatus(m, 'warn');
+        showToast(m, 'error');
+    };
     chargeFlipWorker.onmessage = (e) => {
         const msg = e.data;
         if (msg.type === 'cf-error') {
@@ -3996,11 +4120,28 @@ function runWyckoffStandalone() {
             cfStructure = msg.results;
             cfStructure.spaceGroup = sg;
             wyckoffPhase = 'idle';
-            setWyckoffStatus('Wyckoff search complete.');
+            // A STOPPED RUN IS A RESULT, NOT A FAILURE -- and not a complete
+            // run either. These sites are the search's best so far and have not
+            // been through the final quench, so they are shown, and labelled.
+            if (msg.results && msg.results.stopped) {
+                // WHAT A STOP ACTUALLY SKIPS is the closing full-resolution
+                // quench inside the swarm -- not the coordinate refinement,
+                // which runs afterwards in the worker and is unaffected. Saying
+                // "no final refinement pass" contradicted the wR(F2) and the
+                // Refined positions table sitting on the results page.
+                setWyckoffStatus('Stopped early \u2014 showing the best structure found so far. ' +
+                                 'The closing full-resolution pass was skipped, so the search CC ' +
+                                 'and the choice between candidates are provisional. The ' +
+                                 'coordinate refinement did run.', 'warn');
+                showToast('Stopped \u2014 best structure so far is shown.', 'info');
+            } else {
+                setWyckoffStatus('Wyckoff search complete.');
+            }
             {
                 const r = (cfStructure.refinement) ||
                           (cfStructure.wyckoffResult && cfStructure.wyckoffResult.refinement) || {};
-                logEvent(`Wyckoff search: done \u2014 ${(cfStructure.wyckoffResult || {}).assignment || '?'}` +
+                logEvent(`Wyckoff search: ${msg.results && msg.results.stopped ? 'stopped' : 'done'}` +
+                         ` \u2014 ${(cfStructure.wyckoffResult || {}).assignment || '?'}` +
                          (Number.isFinite(r.R) ? `, wR(F\u00b2) = ${(r.R * 100).toFixed(2)}%` : ''));
             }
             rpSnapshotWyckoff(cfStructure, {
@@ -4239,19 +4380,21 @@ function renderStructure(st, got) {
     // about one grid spacing is the map's quantisation being taken out, and a
     // much larger one means the map and the intensities disagree about that
     // site.
-    // The worker nests it: buildStructure returns { ..., wyckoffResult }, and
-    // the coordinate refinement is computed inside runWyckoffDensityFit, so it
-    // arrives at st.wyckoffResult.refinement. Reading st.refinement found
-    // undefined every time and reported "the coordinate refinement did not
-    // run" even on runs where it had run and converged.
+    // A charge-flipping structure has no refinement; a Wyckoff one nests it at
+    // st.wyckoffResult.refinement, because it is computed inside
+    // runWyckoffFromIntensities rather than by the message handler. Reading
+    // st.refinement alone found undefined and reported "the coordinate
+    // refinement did not run" on runs where it had run and converged.
     const ref = st.refinement ||
                 (st.wyckoffResult && st.wyckoffResult.refinement) || {};
     document.querySelector('#cf-site-table thead').innerHTML =
-        `<tr><th>#</th><th>Element</th><th>x</th><th>y</th><th>z</th><th>Wyckoff/Mult</th></tr>`;
+        `<tr><th>#</th><th>Element</th><th>x</th><th>y</th><th>z</th>` +
+        `<th title="Density integrated over a fixed sphere around the site, against the largest in the map. This ranks sites by electron count; peak HEIGHT does not.">Charge</th>` +
+        `<th>Wyckoff/Mult</th></tr>`;
     document.querySelector('#cf-site-table tbody').innerHTML = st.sites.map(s =>
         `<tr><td>${s.rank}</td><td>${s.element || '?'}</td><td>${s.x.toFixed(4)}</td><td>${s.y.toFixed(4)}</td>` +
-        `<td>${s.z.toFixed(4)}</td><td>${s.wyckoff || (s.multiplicity + (s.special ? '*' : ''))}</td></tr>`
-    ).join('') || '<tr><td colspan="6">No site above the cutoff.</td></tr>';
+        `<td>${s.z.toFixed(4)}</td><td>${cfFormatRelative(s.chargeRel)}</td><td>${cfFormatWyckoff(s)}</td></tr>`
+    ).join('') || '<tr><td colspan="7">No site above the cutoff.</td></tr>';
 
     // The figure of merit for the STRUCTURE, stated once, above the sites.
     {
@@ -6616,6 +6759,120 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
             debouncedBackgroundUpdate();
         });
 
+        /**
+         * Push the metadata out of a pdCIF into the control panel.
+         *
+         * Every step is guarded and reports what it did, because a file that
+         * quietly changes the space group is worse than one that changes
+         * nothing: the next fit would run against a model the user never chose.
+         */
+        function applyPdCifMetadata(pd) {
+            if (!pd) return;
+            const said = [];
+
+            // 1. Space group. Rebuilds the lattice inputs, so it goes first.
+            if (pd.spaceGroup && globalThis.SG_ENGINE) {
+                try {
+                    const want = String(pd.spaceGroup.symbol || '').replace(/\s+/g, '');
+                    let rec = null;
+                    if (Number.isFinite(pd.spaceGroup.number)) {
+                        const settings = SG_ENGINE.listSettings(pd.spaceGroup.number) || [];
+                        // Match the SETTING, not just the number: 62 also returns
+                        // Pmnb, Pbnm, Pcmn, Pmcn and Pnam, and picking the wrong
+                        // one gives a different set of absences from the same cell.
+                        rec = settings.find(r => String(r.symbol || '').replace(/\s+/g, '') === want)
+                           || settings.find(r => String(r.standard_symbol || '').replace(/\s+/g, '') === want)
+                           || settings[0] || null;
+                    }
+                    if (rec) {
+                        handleSpaceGroupApplied(rec);
+                        said.push(`space group ${rec.symbol} (No. ${rec.number})`);
+                    } else if (want) {
+                        said.push(`space group "${pd.spaceGroup.symbol}" not found in the database`);
+                    }
+                } catch (e) { said.push('space group could not be applied: ' + e.message); }
+            }
+
+            // 2. Cell, into whichever boxes the system above just created.
+            if (pd.cell) {
+                let n = 0;
+                document.querySelectorAll('#lattice-parameters-container input[type="number"]')
+                    .forEach(input => {
+                        if (!input.id.startsWith('lattice-param-')) return;
+                        const name = input.id.replace('lattice-param-', '');
+                        if (Number.isFinite(pd.cell[name])) {
+                            input.value = pd.cell[name].toFixed(5); n++;
+                        }
+                    });
+                if (n) said.push(`${n} lattice parameter(s)`);
+            }
+
+            // 3. Wavelengths. lambda2 and the ratio are written even when the
+            //    file has no second wavelength -- absent means monochromatic,
+            //    not "keep the previous sample's doublet", which would apply a
+            //    Ka2 component to data that has none.
+            if (Number.isFinite(pd.wavelength) && controls.wavelength) {
+                controls.wavelength.value = pd.wavelength.toFixed(5);
+                said.push(`lambda1 = ${pd.wavelength.toFixed(5)} A`);
+            }
+            if (controls.wavelength2 && controls.ratio21) {
+                if (Number.isFinite(pd.wavelength2) && Number.isFinite(pd.ratio21)) {
+                    controls.wavelength2.value = pd.wavelength2.toFixed(5);
+                    controls.ratio21.value = String(+pd.ratio21.toFixed(5));
+                    said.push(`lambda2 = ${pd.wavelength2.toFixed(5)} A, I2/I1 = ${+pd.ratio21.toFixed(5)}`);
+                } else if (pd.cell || Number.isFinite(pd.wavelength)) {
+                    controls.wavelength2.value = Number.isFinite(pd.wavelength)
+                        ? pd.wavelength.toFixed(5) : controls.wavelength.value;
+                    controls.ratio21.value = '0';
+                    said.push('no Ka2 component (ratio set to 0)');
+                }
+            }
+
+            // 4. Profile model. The type first, because it decides which
+            //    parameter boxes exist, exactly as the space group does for the
+            //    lattice.
+            if (pd.profileType && controls.profileSelect) {
+                const opt = [...controls.profileSelect.options].find(o => o.value === pd.profileType);
+                if (opt) {
+                    controls.profileSelect.value = pd.profileType;
+                    controls.profileSelect.dispatchEvent(new Event('change'));
+                    said.push(`profile ${pd.profileType}`);
+                }
+            }
+            if (pd.profileParams && Object.keys(pd.profileParams).length) {
+                let n = 0;
+                for (const [k, v] of Object.entries(pd.profileParams)) {
+                    // getAllParams() reads controls.param<Name>; the element id
+                    // is the same name lower-cased with a "param-" prefix.
+                    const el = document.getElementById('param-' + k.toLowerCase());
+                    if (el && Number.isFinite(v)) { el.value = String(v); n++; }
+                }
+                if (n) said.push(`${n} profile parameter(s)`);
+            }
+            // 5. Polarisation. Addressed by element id: these three are not in
+            //    the `controls` map, they are read by getPolarizationSettings()
+            //    straight from the DOM.
+            if (pd.polarisation) {
+                const sel = document.getElementById('polarization-mode');
+                const mono = document.getElementById('mono-2theta');
+                const frac = document.getElementById('pol-fraction');
+                // The numbers first, then the mode, because changing the mode
+                // fires the handler that shows or hides the two rows -- and a
+                // hidden row still has to hold the right value, since Lp reads
+                // it either way.
+                if (mono && Number.isFinite(pd.polarisation.monoTth)) mono.value = String(pd.polarisation.monoTth);
+                if (frac && Number.isFinite(pd.polarisation.fraction)) frac.value = String(pd.polarisation.fraction);
+                if (sel && pd.polarisation.mode &&
+                    [...sel.options].some(o => o.value === pd.polarisation.mode)) {
+                    sel.value = pd.polarisation.mode;
+                    sel.dispatchEvent(new Event('change'));
+                    said.push(`polarisation ${pd.polarisation.mode}`);
+                }
+            }
+
+            if (said.length) logEvent('Read from file: ' + said.join('; ') + '.');
+        }
+
         // 4. Main File Input: Clears the ENTIRE cache and sets up the application
         controls.fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
@@ -6639,7 +6896,23 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                     // *** CLEAR THE ENTIRE CACHE ON NEW FILE LOAD ***
                     hklIndexCache = {}; 
                     
-                    if (parsedData.wavelength) controls.wavelength.value = parsedData.wavelength.toFixed(5);
+                    // ---- METADATA THE FILE CARRIES, APPLIED IN DEPENDENCY ORDER ----
+                    //
+                    // A powder5 pdCIF states the cell, the space group, both
+                    // wavelengths, the Ka2 ratio, the zero and the profile
+                    // model. None of it was read: parsePdCifFile() returned two
+                    // columns and a wavelength, and everything else in the file
+                    // was ignored. Loading a pdCIF this program had written
+                    // therefore restored the pattern and silently discarded the
+                    // refinement that described it.
+                    //
+                    // ORDER MATTERS. The space group has to be applied first,
+                    // because it rebuilds the lattice inputs -- the panel only
+                    // creates boxes for the FREE parameters of the crystal
+                    // system, so writing `a` before the system is known can
+                    // write into a box that is about to be destroyed, or find no
+                    // box at all.
+                    applyPdCifMetadata(parsedData);
 
                     // A zero point carried by the file replaces the box.
                     //
@@ -6825,7 +7098,15 @@ function rpClearAllRuns() {
     cfSetRunning(false);
     cfCancelled = false;
 
-    ['lebail', 'pawley', 'cf'].forEach(mode => {
+    // ALL FOUR MODES. rpHistory is declared with a wyckoff bucket and this list
+    // did not name it, so loading a new pattern cleared the Le Bail, Pawley and
+    // charge-flipping histories and left the Wyckoff one standing -- a solved
+    // structure from the previous sample, still selectable, still rendered, and
+    // still exportable to CIF against a cell that no longer applied.
+    //
+    // Derived from rpHistory rather than written out again, so a fifth bucket
+    // cannot be added without being cleared.
+    Object.keys(rpHistory).forEach(mode => {
         rpHistory[mode].length = 0;
         rpSelected[mode] = null;
         rpRefreshRunSelect(mode);
@@ -6846,8 +7127,23 @@ function rpClearAllRuns() {
         if (body) body.innerHTML = `<p class="rp-empty">${text}</p>`;
     });
     rpRenderCFRun();
+    // Its own renderer, for the same reason as the charge-flipping one: with an
+    // empty history it falls back to the placeholder and disables the PDF
+    // button. It has to run AFTER cfResetState() clears cfStructure, since it
+    // falls back to that when no history entry is selected -- so it is called
+    // again below rather than here.
 
     cfResetState();
+    // After cfResetState(), not before: rpRenderWyckoffRun() falls back to
+    // cfStructure when no history entry is selected, so rendering it first
+    // would redraw the previous sample's structure from the very variable that
+    // is about to be nulled.
+    rpRenderWyckoffRun();
+
+    // The Wyckoff control panel keeps state of its own, outside the history.
+    wyckoffPhase = 'idle';
+    if (typeof setWyckoffStatus === 'function') setWyckoffStatus('–');
+
     rpSwitchTab('plot');
 }
 
@@ -7203,10 +7499,25 @@ function rpRenderWyckoffRun() {
         // SUBSET of the groups -- as few as a quarter of them early on -- so it
         // reads much higher than the final value, and comparing it against wR
         // compares two different datasets.
+        //
+        // ON A STOPPED RUN THERE WAS NO QUENCH, so the figure carries whatever
+        // resolution the ramp had reached when the search was interrupted.
+        // Calling that "at full resolution" was simply false, and it is the
+        // number a reader would use to decide whether the solution is any good.
+        (wy.stopped
+            ? `<p class="cf-hint" style="font-size:12px;margin-bottom:6px;">` +
+              `<b>Stopped before the closing full-resolution pass.</b> The coordinates and the ` +
+              `refinement below are real; the search CC and the ranking that chose this ` +
+              `candidate over the others are provisional.</p>`
+            : '') +
         `<p style="font-size:12px;color:var(--system-secondary-label);">` +
         (Number.isFinite(wy.searchCC)
-            ? `<b>Search:</b> CC = ${wy.searchCC.toFixed(4)} at full resolution ` +
-              `(the running value during a search is on a reduced set of reflections and reads higher).<br>`
+            ? `<b>Search:</b> CC = ${wy.searchCC.toFixed(4)}` +
+              (wy.stopped
+                ? ` on the reflection subset the resolution ramp had reached when the run was ` +
+                  `stopped \u2014 <b>not</b> a full-resolution figure, and not comparable with wR.<br>`
+                : ` at full resolution ` +
+                  `(the running value during a search is on a reduced set of reflections and reads higher).<br>`)
             : '') +
         `<b>Refinement:</b> ${fom}<br>` +
         `Weighted on 1/sigma&sup2; from the Pawley decomposition, with tabulated scattering factors` +

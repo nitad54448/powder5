@@ -38,7 +38,7 @@ const SW_WG = 64;
 // per-particle best-ever cache that lets the CPU batch several generations
 // of dispatches between readbacks without losing a chain's best discovery
 // to a later, worse Metropolis accept. Must match ParticleState in
-// swarm_density.wgsl exactly.
+// swarm_reflection.wgsl exactly.
 const SW_STATE_STRIDE = 48;
 
 /* ------------------------------------------------------------------
@@ -455,7 +455,7 @@ function rampedGroupCount(nGroups, generation, maxGen, startFrac = 0.25, fullBy 
  *
  * @param {Object} o
  *   device            GPUDevice (already requested by the caller)
- *   ccShaderSource    text of swarm_cc.wgsl
+ *   ccShaderSource    text of swarm_reflection.wgsl
  *   setting           one entry from sg/<n>.json settings[]
  *   cell              {a,b,c,alpha,beta,gamma}
  *   reflections       parsed rows, whatever columns the file had
@@ -528,7 +528,7 @@ async function runWyckoffSearch(o) {
     let overallB = 0;
     let ff = null;
 
-    if (!o.densityMap) {
+    {
         const rotations = (o.setting.sym_ops || []).map(op => op.r);
         obs = normaliseObservations(o.reflections, {
             rotations, wavelength: o.wavelength, radiation: o.radiation,
@@ -557,8 +557,6 @@ async function runWyckoffSearch(o) {
             overallB = wil.B;
             say(`Overall B = ${overallB.toFixed(2)}${wil.ok ? ` (Wilson, ${wil.shells} shells)` : ''}.`);
         }
-    } else {
-        say('Running in Real-Space Charge Flipping mode: bypassing reflection normalization.');
     }
 
     /* ---- 4. Assignments ---- */
@@ -602,6 +600,18 @@ async function runWyckoffSearch(o) {
     }
     let assignments = en.assignments;
     if (!assignments.length) throw new Error('No Wyckoff assignment matches this composition.');
+    // The enumeration drops assignments that need more independent sites than
+    // the kernel can hold, and stops at maxTotal. Both are legitimate, and both
+    // make the candidate list shorter than the combinatorics -- so both are
+    // said out loud rather than leaving the count unexplained.
+    if (en.droppedTooManySites) {
+        say(`${en.droppedTooManySites} assignment(s) skipped: they need more than ` +
+            `${WY_MAX_SITES} independent sites, which is the most the search kernel holds.`);
+    }
+    if (en.truncated) {
+        say(`The enumeration hit its ${en.assignments.length}-assignment ceiling; ` +
+            `plausible assignments beyond it were not searched.`);
+    }
 
     // Reduced basis, so every distance in this run - the pre-search ranking
     // here, and the kernel's contact tests below - uses the same, correct,
@@ -621,7 +631,7 @@ async function runWyckoffSearch(o) {
     let refl = { reflPack: new Uint32Array(0), groupMeta: new Float32Array(0), groupD: new Float32Array(0), nRefl: 0, nGroups: 0, groupStride: 3 };
     let ftab = { table: new Float32Array(0), missing: [] };
     
-    if (!o.densityMap) {
+    {
         refl = swPackReflections(obs.rows, { overlapTol: o.overlapTol });
         refl.problems.forEach(say);
         say(`${refl.nGroups} reflection group(s), ${refl.overlapped} containing overlaps.`);
@@ -725,12 +735,7 @@ const S = GPUBufferUsage.STORAGE;
     const bufGen   = swBuffer(device, T.genPack, S);
     const bufRefl  = swBuffer(device, refl.reflPack, S);
     
-    let bufGroup;
-    if (o.densityMap) {
-        bufGroup = swBuffer(device, o.densityMap, S);
-    } else {
-        bufGroup = swBuffer(device, groupData, S);
-    }
+    const bufGroup = swBuffer(device, groupData, S);
     
     const symLen = symPacked.length;
     const tabLen = restraints.tables.length;
@@ -761,10 +766,17 @@ const S = GPUBufferUsage.STORAGE;
     const bestPen = new Float32Array(numParticles);
     const tempOf = new Float32Array(numParticles);
     let acceptRate = NaN, swapRate = NaN;
+    // MCMC dispatches since the last syncStateToGPU(). The kernel's per-chain
+    // `accepted` counter is zeroed by that sync, so the denominator of the
+    // acceptance rate is the number of proposals made in the same window --
+    // which is exactly this. Without it acceptRate was declared, reported to
+    // the UI on every progress message, and never assigned: NaN for the whole
+    // run, so "are the chains moving at all" had no answer.
+    let mcmcSinceSync = 0;
 
     // bufPos holds CURRENT coordinates in its first half and the GPU's
     // BEST-EVER coordinates per chain in its second half (see
-    // swarm_density.wgsl). Doubling it is what lets the search go many
+    // swarm_reflection.wgsl). Doubling it is what lets the search go many
     // generations between CPU readbacks without silently losing a structure
     // a chain later moved away from.
     const bufPosBytes = totalCoordFloats * 2 * 4;
@@ -889,8 +901,7 @@ const S = GPUBufferUsage.STORAGE;
             `with the correlation instead of swamping it.`);
     }
     params[PARAM.penScale] = SW_DEFAULTS.penRampStart;
-    
-    params[PARAM.nGroupsActive] = o.densityMap ? o.gridSize : refl.nGroups;
+    params[PARAM.nGroupsActive] = refl.nGroups;
     
     params[PARAM.centro] = hasInversionAtOrigin(o.setting.sym_ops) ? 1 : 0;
     if (params[PARAM.centro]) {
@@ -916,9 +927,7 @@ const S = GPUBufferUsage.STORAGE;
         { binding: 7, resource: { buffer: bufParams } }
     ];
     
-    if (!o.densityMap) {
-        bindEntries.push({ binding: 4, resource: { buffer: bufRefl } });
-    }
+    bindEntries.push({ binding: 4, resource: { buffer: bufRefl } });
 
     const bind = device.createBindGroup({
         layout: pipeline.getBindGroupLayout(0),
@@ -935,6 +944,7 @@ const S = GPUBufferUsage.STORAGE;
          * params/bufPos writes ahead of each stays correctly sequenced.
          */
         function dispatchCoords(coords, isMCMC = false) {
+            if (isMCMC) mcmcSinceSync++;
             params[PARAM.pad0] = isMCMC ? 1.0 : 0.0;
             device.queue.writeBuffer(bufParams, 0, params);
             if (coords) device.queue.writeBuffer(bufPos, 0, coords);
@@ -999,17 +1009,24 @@ const S = GPUBufferUsage.STORAGE;
             positions.set(posF32.subarray(0, totalCoordFloats));
             bestPositions.set(posF32.subarray(totalCoordFloats, totalCoordFloats * 2));
 
-            const stateF32 = new Float32Array(bufStateRead.getMappedRange());
+            const range = bufStateRead.getMappedRange();
+            const stateF32 = new Float32Array(range);
+            const stateU32r = new Uint32Array(range);
             const S32 = SW_STATE_STRIDE / 4;
+            let accepted = 0;
             for (let i = 0; i < numParticles; i++) {
                 const b = i * S32;
                 curFit[i]   = stateF32[b + 0];
                 curCC[i]    = stateF32[b + 1];
                 curPen[i]   = stateF32[b + 2];
                 stepSize[i] = stateF32[b + 3];
+                accepted   += stateU32r[b + 6];
                 bestFit[i]  = stateF32[b + 8];
                 bestCC[i]   = stateF32[b + 9];
                 bestPen[i]  = stateF32[b + 10];
+            }
+            if (mcmcSinceSync > 0) {
+                acceptRate = accepted / (numParticles * mcmcSinceSync);
             }
 
             bufPosRead.unmap();
@@ -1259,8 +1276,9 @@ const S = GPUBufferUsage.STORAGE;
             const before = new Float32Array(assignments.length);
             live.forEach(A => { before[A] = gBestCC[A]; });
 
-            // If we are evaluating CF density, pass the gridSize, otherwise use refl.nGroups
-            params[PARAM.nGroupsActive] = o.densityMap ? o.gridSize : refl.nGroups;
+            // The quench scores every candidate at FULL resolution, so the
+            // ramp is over and the whole group list is in play.
+            params[PARAM.nGroupsActive] = refl.nGroups;
             const scale = SW_DEFAULTS.penRampEnd;
             params[PARAM.penScale] = scale;
 
@@ -1345,14 +1363,7 @@ const S = GPUBufferUsage.STORAGE;
                                 'WGSL validation errors.');
             }
             if (hi - lo < 1e-9) {
-            // A sparse CF density map will naturally score 0.0 for random starting positions.
-            // Allow the swarm to proceed; the hot chains will explore until they hit density.
-            if (o.densityMap) {
-                say(`Generation 0 fitness spread is uniform (${hi.toFixed(6)}). This is expected for sparse real-space density maps. Chains will explore until they find density peaks.`);
-                return;
-            }
-
-            throw new Error(`Every chain scored exactly ${hi.toFixed(6)}. The kernel is not ` +
+                throw new Error(`Every chain scored exactly ${hi.toFixed(6)}. The kernel is not ` +
                             `discriminating between structures, so any ranking would be the ` +
                             `enumeration order rather than a result. Check the console for ` +
                             `WGSL errors and that the reflection buffers are non-empty ` +
@@ -1417,6 +1428,9 @@ let needCurrentEval = true, firstEval = (wi === 0);
             }
             device.queue.writeBuffer(bufState, 0, stateData);
             device.queue.writeBuffer(bufPos, 0, positions);
+            // The kernel's accept counters were just zeroed, so the window the
+            // acceptance rate is measured over restarts here too.
+            mcmcSinceSync = 0;
         };
         syncStateToGPU();
 
@@ -1435,15 +1449,10 @@ let needCurrentEval = true, firstEval = (wi === 0);
             const rampLevel = Math.min(SW_DEFAULTS.rampSteps - 1,
                 Math.floor(t * SW_DEFAULTS.rampSteps));
                 
-            if (o.densityMap) {
-                params[PARAM.nGroupsActive] = o.gridSize;
-                if (rampLevel !== lastRampLevel) { lastRampLevel = rampLevel; }
-            } else {
-                params[PARAM.nGroupsActive] = rampedGroupCount(
-                    refl.nGroups, rampLevel, SW_DEFAULTS.rampSteps - 1,
-                    o.rampStart ?? SW_DEFAULTS.rampStart, o.rampFull ?? SW_DEFAULTS.rampFull);
-                if (rampLevel !== lastRampLevel) { lastRampLevel = rampLevel; needCurrentEval = true; }
-            }
+            params[PARAM.nGroupsActive] = rampedGroupCount(
+                refl.nGroups, rampLevel, SW_DEFAULTS.rampSteps - 1,
+                o.rampStart ?? SW_DEFAULTS.rampStart, o.rampFull ?? SW_DEFAULTS.rampFull);
+            if (rampLevel !== lastRampLevel) { lastRampLevel = rampLevel; needCurrentEval = true; }
 
             const scale = SW_DEFAULTS.penRampStart +
                 t * (SW_DEFAULTS.penRampEnd - SW_DEFAULTS.penRampStart);

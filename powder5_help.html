@@ -449,9 +449,13 @@ blockquote {
             <li><a href="#cf-output-fields" class="sub-link">Result Fields</a></li>
             <li><a href="#cf-caveats" class="sub-link">Limitations</a></li>
             <li><a href="#cf-wyckoff">Wyckoff Search</a></li>
+            <li><a href="#wy-objective" class="sub-link">The Objective</a></li>
+            <li><a href="#wy-controls" class="sub-link">Controls &amp; Capacities</a></li>
+            <li><a href="#wy-refinement" class="sub-link">Coordinate Refinement</a></li>
             <li><a href="#strategy">Refinement Strategy</a></li>
             <li><a href="#results">Interpreting Results</a></li>
             <li><a href="#results-weights" class="sub-link">Weighting &amp; ESDs</a></li>
+            <li><a href="#results-chi2-low" class="sub-link">Low &chi;&sup2;</a></li>
             <li><a href="#results-clusters" class="sub-link">Overlap Clusters</a></li>
             <blockquote>
               <li><a href="#results-wh" class="sub-link">Williamson-Hall Analysis</a></li>
@@ -491,17 +495,25 @@ blockquote {
                 Analysis commences with the loading of a powder diffraction data file. The application is designed to automatically parse numerous common ASCII-based file formats from major instrument manufacturers and standard crystallographic software.
             </p>
             <ul>
-                <li><b>Supported Formats:</b> Built-in parsers are included for Bruker (<code>.brml</code>, <code>.uxd</code>), PANalytical (<code>.xrdml</code>), Rigaku (<code>.ras</code>), Philips (<code>.udf</code>, <code>.rd</code>, <code>.sd</code>), GSAS (<code>.esd</code>, <code>.gsa</code>, <code>.std</code>, <code>.xra</code>), and Jade (<code>.mdi</code>). Format detection is by content first and file extension second, so a correctly formatted file will usually be recognised even if it has been renamed.</li>
+                <li><b>Supported Formats:</b> Built-in parsers are included for Bruker (<code>.brml</code>, <code>.uxd</code>), PANalytical (<code>.xrdml</code>), Rigaku (<code>.ras</code>, <code>.rasx</code>), Philips (<code>.udf</code>, <code>.rd</code>, <code>.sd</code>), GSAS (<code>.esd</code>, <code>.gsa</code>, <code>.std</code>, <code>.xra</code>), and Jade (<code>.mdi</code>). Format detection is by content first and file extension second, so a correctly formatted file will usually be recognised even if it has been renamed.</li>
                 <li><b>Scientific notation</b> (<code>1.5E+03</code>, <code>1.2e4</code>) is accepted in the intensity or 2&theta; column.</li>
                 <li><b>Ordering:</b> data stored in descending 2&theta; is detected and sorted ascending on load. Duplicated 2&theta; values and non-finite points are removed, with a note in the browser console.</li>
                 <li><b>Generic Data:</b> Standard two-column ASCII files (<code>.xy</code>, <code>.csv</code>, <code>.txt</code>, <code>.dat</code>, <code>.asc</code> etc.) containing $2\theta$ and intensity values are also supported. The parser accommodates space, comma, or semicolon delimiters. Comment lines prefixed with <code>#</code>, <code>!</code>, <code>;</code> or <code>//</code> are ignored, as are non-numeric header lines.</li>
                 <li><b>Metadata Parsing:</b> For many instrument-specific formats, instrument parameters such as the X-ray wavelength for Kα1 are read from the file's metadata and used to populate the relevant fields in the user interface. It is incumbent upon the user to verify the correctness of these automatically populated values.</li>
             </ul>
+            <div class="note">
+                <strong>Zipped formats: Rigaku <code>.rasx</code> and Bruker <code>.brml</code>.</strong>
+                Both are ZIP archives rather than plain text, and both are read by unzipping them
+                and parsing the pattern out of the archive &mdash; no conversion step is needed.
+                The file is read as bytes and identified by its magic number, so an archive is
+                recognised as one whatever it has been renamed to.
+            </div>
             <div class="warning-note">
-                <strong>Rigaku <code>.rasx</code>:</strong> this format is a ZIP archive rather than plain
-                text, and is <em>not</em> currently readable. Export to <code>.ras</code> or to a
-                two-column ASCII file instead. Attempting to load one gives a clear parse error
-                rather than silently producing wrong data.
+                These two formats are the only ones that need <code>lib/jszip.min.js</code>. If it
+                is missing from the deployment, they are refused with a message naming the missing
+                library rather than failing as a parse error &mdash; the distinction matters,
+                because a parse error sends you looking at the file when the problem is the
+                install. Every other format is plain text and needs nothing extra.
             </div>
             <div class="note">
                 <strong>Before loading any data:</strong> the chart already shows a live theoretical stick pattern ($2\theta$ positions and relative Kα1/Kα2 markers) for the currently selected space group and lattice parameters, updating as you change them. <code>Save Report</code> is active even without a data file, exporting this theoretical <code>hkl</code> / $d$ / $2\theta$ list — useful for previewing where reflections are expected before you have a scan in hand.
@@ -1532,6 +1544,31 @@ blockquote {
                 correlation) without having been forced to.
             </div>
 
+            <h4>5. Weak reflections are freed, not forced</h4>
+            <p>
+                The rules above impose \(|F_{\text{obs}}|\) on every reflection. The
+                <strong>Weak Fraction</strong> control exempts the weakest ones: for that
+                fraction of the reflections, the calculated modulus is kept and the phase is
+                advanced by a constant \(\Delta\varphi = \pi/2\) each cycle instead
+                (Oszl&aacute;nyi &amp; S&uuml;t&#337;, 2005). Their measured intensity is then
+                used only for the knowledge that they <em>are</em> weak.
+            </p>
+            <p>
+                This matters more on powder data than on single-crystal data. A weak
+                reflection sharing a peak with a strong one was assigned its intensity by the
+                Pawley fit on almost no evidence, so forcing the map to reproduce that number
+                is forcing it to reproduce a fitting artefact. The \(\pi/2\) rotation also
+                perturbs the iteration, which is what lets it escape the flat, featureless
+                maps the 2004 algorithm can settle into.
+            </p>
+            <div class="note">
+                This is a different mechanism from the overlap handling in rule&nbsp;2, and the
+                two are not alternatives. Overlap re-partitioning frees a reflection's
+                <em>share of a cluster</em> while holding the cluster total; the weak flip frees
+                a reflection's <em>modulus entirely</em> and perturbs its phase. A reflection
+                can be subject to both.
+            </div>
+
             <h4>Intensity scaling</h4>
             <p>
                 The refined Pawley parameter is a peak <em>height</em>, because the
@@ -1575,6 +1612,7 @@ blockquote {
                     <tr><td><strong>Peak Merge (&Aring;)</strong></td><td>Maxima closer than this are treated as one atom.</td></tr>
                     <tr><td><strong>Symmetry in loop</strong></td><td>How strongly the space group is imposed on the structure factors each cycle (\(\lambda\), see <a href="#cf-symmetry">Space-Group Constraints</a>). <em>None</em> is classical \(P1\) charge flipping; <em>Damped</em> (\(\lambda = 0.5\)) is the default; <em>Strict</em> (\(\lambda = 1\)) is fastest and fixes the origin, but assumes the space group is right.</td></tr>
                     <tr><td><strong>Overlap (&deg;2&theta;)</strong></td><td>Reflections closer than this in \(2\theta\) are treated as one measured peak and share their intensity dynamically. Exact overlaps are always caught regardless of the setting. Symmetry equivalents are unaffected &mdash; they are constrained to equal \(|F|\).</td></tr>
+                    <tr><td><strong>Weak Fraction</strong></td><td>The weakest this fraction of reflections keep their <em>calculated</em> modulus and have their phase advanced by \(\pi/2\) each cycle instead of being forced onto \(|F_{\text{obs}}|\) (see <a href="#cf-symmetry">rule&nbsp;5</a>). Range 0&ndash;0.33, default 0.15. At <strong>0</strong> the readout says <em>off</em>, and the run is the original 2004 algorithm.</td></tr>
                 </tbody>
             </table>
             <div class="note">
@@ -1591,7 +1629,10 @@ blockquote {
                 single precision and the CPU in double, so the maps agree closely rather
                 than exactly; a difference in the last digit of \(R\) between backends is
                 normal. The reported <em>Compute</em> field in the solution shows which
-                path was used. The GPU path requires the file
+                path was used. Every control affects both backends alike &mdash; including
+                <strong>Weak Fraction</strong>, which is implemented in the CPU loop as well,
+                so a machine without WebGPU does not quietly solve a different problem. The
+                threshold itself is computed identically on both. The GPU path requires the file
                 <code>charge_flipping.wgsl</code> to be served alongside
                 <code>charge_flipping_worker.js</code>; if it fails to load or compile,
                 a message says so and the run continues on the CPU rather than failing.
@@ -1718,6 +1759,29 @@ blockquote {
                 the iteration count.
             </div>
 
+            <h4>Choosing the weak fraction</h4>
+            <p>
+                <strong>Scan it; do not tune it.</strong> The published range is broad &mdash;
+                the precursor experiment worked with anything from 10% to 50% of the data
+                inside the resolution sphere &mdash; so the setting has a plateau rather than
+                an optimum. Try 0, 0.10, 0.20 and 0.30 and compare across <em>all</em> random
+                starts, not one. If 0.15 and 0.20 give visibly different answers, that
+                difference is trial-to-trial scatter and not the parameter.
+            </p>
+            <p>
+                Two things argue for the lower end on powder data. The cut is a percentile of
+                the observed intensities, so a large resolution sphere sweeps genuinely strong
+                reflections into the "weak" set and over-perturbs the iteration. And the
+                intensities at the high-angle edge of a Pawley fit are often badly determined,
+                which puts them in the weak set for the wrong reason &mdash; trimming the
+                reflection range is the better fix there.
+            </p>
+            <div class="note">
+                A run at 0 and a run at 0.15 are the 2004 and 2005 algorithms and are not
+                trials of the same thing, so the setting is reported in the solution summary
+                rather than left to memory.
+            </div>
+
             <h3 id="cf-reading">Reading the Solution</h3>
             <p>
                 Each run appends a timestamped entry to the Charge Flipping history, so
@@ -1726,7 +1790,7 @@ blockquote {
             </p>
             <ul>
                 <li><strong>Best R.</strong> The amplitude agreement of the retained map, summed over measured peaks. Below ~0.15 is promising; above ~0.30 usually means the run has not converged &mdash; add random starts, adjust the threshold by &plusmn;0.1&sigma;, or see <a href="#cf-settings">Recommended Settings</a>.</li>
-                <li><strong>Electron-density peaks.</strong> Fractional coordinates. At \(\lambda = 0\) the map is in \(P1\) with an arbitrary origin and hand, so absolute positions are meaningless &mdash; compare interatomic <em>distances</em>. At \(\lambda &gt; 0\) the origin is pinned by the symmetrisation and the coordinates are directly comparable to the space group's Wyckoff positions. Relative peak heights are a rough guide to atomic number in both cases.</li>
+                <li><strong>Electron-density peaks.</strong> Fractional coordinates. At \(\lambda = 0\) the map is in \(P1\) with an arbitrary origin and hand, so absolute positions are meaningless &mdash; compare interatomic <em>distances</em>. At \(\lambda &gt; 0\) the origin is pinned by the symmetrisation and the coordinates are directly comparable to the space group's Wyckoff positions. <strong>Read the <em>Charge</em> column, not <em>Height</em>, to tell a heavy atom from a light one</strong> &mdash; see <a href="#cf-peak-columns">the column descriptions</a> for why height gets this backwards.</li>
                 <li><strong>Symmetry diagnostics.</strong> The summary reports which symmetry was used (operators or Laue-table fallback), how many reflections were forced to zero as systematically absent, and how many ended up sharing a peak with another reflection. A large absence count is normal for a centred lattice; an <em>absent-but-observed</em> warning is not, and usually means the space group is wrong.</li>
                 <li><strong>Density section.</strong> A slice through the map, with selectable axis and depth. The colour bar under the image is an <em>absolute</em> scale taken from the whole map, not from the slice on screen, so slices are directly comparable and an empty one looks empty. The caption gives the slice maximum in units of the map's \(\sigma\); anything under about 3&sigma; is ripple, not an atom. The <em>Stretch each slice to its own range</em> checkbox restores per-slice auto-contrast, which is occasionally useful for tracing weak features but makes noise look like structure &mdash; the caption says so whenever it is on.</li>
                 <li><strong>3D isosurface.</strong> The same map drawn as a surface of constant density, at a level you set in units of the map's \(\sigma\) — the same units as the section caption, so the two views can be read against each other. Drag to rotate, scroll to zoom. At 1&ndash;2&sigma; you will see mostly noise; real atoms usually appear as isolated closed blobs somewhere above 3&sigma;.
@@ -1903,125 +1967,12 @@ blockquote {
                 carries only rotations will index reflections but cannot build a
                 structure.
             </div>
-
-            <h3 id="cf-wyckoff">Wyckoff Target Composition Search</h3>
-            <p>
-                The Wyckoff search has its <strong>own tab</strong> in the left panel and its own
-                results tab on the right. It is a peer of charge flipping, not a step inside it:
-                it consumes a space group, a cell, a composition and the Pawley intensities, and
-                not one of those comes from a density map. <strong>It does not require a
-                charge-flipping run.</strong>
-            </p>
-            <p>
-                This is direct-space (global-optimisation) structure solution, the family that
-                includes FOX, EXPO, DASH and TOPAS's simulated annealing. It works where charge
-                flipping struggles on powder data because of parameter counting: PbSO<sub>4</sub>
-                in \(Pnma\) has <strong>nine</strong> free positional parameters against a few
-                hundred observations, whereas charge flipping solves for thousands of grid
-                amplitudes and phases from the same data. It has no phase problem, no origin
-                ambiguity, no hand ambiguity and no series-termination ripples &mdash; and because
-                the composition is enforced by construction, it cannot invent an atom where there
-                is nothing to explain it.
-            </p>
-
-            <h4>The objective</h4>
-            <p>
-                A WebGPU swarm (replica-exchange MCMC) places atoms on trial Wyckoff assignments
-                that satisfy the stoichiometry exactly. Each candidate is scored by
-                $$f = \text{CC} - \text{pen}$$
-                where CC is a <strong>weighted Pearson correlation between
-                \(|F_{\text{calc}}|^2\) and the observed intensities</strong>, taken over
-                groups of reflections the powder pattern cannot separate. The observed intensity
-                of a group is \(\sum m |F_o|^2\) and the calculated one is accumulated the same
-                way, so the comparison is made where the measurement actually exists.
-            </p>
-            <p>
-                Pearson rather than a cosine similarity or an R factor: it is scale-free, so there
-                is no scale factor to fit and no scale degeneracy for the swarm to explore;
-                subtracting the means keeps it discriminating, where a cosine similarity is
-                dominated by the large positive offset both vectors share; and it lands in
-                \([0,1]\), the range the clash and bond penalties are tuned against.
-            </p>
-            <p>
-                Scattering factors are the tabulated \(f(s)\) with an overall temperature factor
-                folded in as \(f(s)\exp(-Bs^2/4)\), pre-computed per (reflection, element) on the
-                host. \(B\) is estimated by a <strong>Wilson plot</strong> over resolution shells
-                from the extracted intensities themselves. The Pawley intensities do not lack a
-                temperature factor &mdash; they <em>contain</em> the real one, because they are a
-                measurement &mdash; so the model needs one to reproduce their fall-off.
-            </p>
-
-            <h4>Penalties and hard constraints</h4>
-            <p>
-                Clash, bond-window and coordination penalties are <em>soft</em> and ramped during
-                the search, which is correct while the swarm still needs to move through crowded
-                configurations. They are <em>not</em> how the answer is decided. A candidate whose
-                contacts break the floors is <strong>rejected outright</strong>, and candidates are
-                walked in score order until one passes; if every candidate fails, that is reported
-                rather than swallowed, because it is a statement about the composition, \(Z\), or
-                the floor.
-            </p>
-            <p>
-                The same test is applied <em>after</em> the coordinate refinement. The refinement
-                moves every free coordinate with no contact term at all, so guarding only its
-                input guards nothing: a refinement that breaks a floor is discarded and the search
-                positions are kept, with the reason recorded.
-            </p>
-
-            <h4>Resolution ramp &mdash; and why the running CC is not the final one</h4>
-            <div class="warning-note">
-                The swarm starts on a <strong>subset</strong> of the reflection groups &mdash; as
-                few as a quarter &mdash; and reaches the full set part-way through each restart.
-                The figure shown while a search runs is computed on whatever subset is active, so
-                it reads considerably higher than the final value and is labelled
-                <strong>CC (partial res.)</strong>. Only the full-resolution figure from the
-                closing quench, shown in the results panel as <strong>Search: CC</strong>, is
-                comparable with anything. A running 0.99 alongside a final \(wR\) of 50% is not
-                a contradiction; it usually means the low-order reflections line up and the light
-                atoms are not yet placed.
-            </div>
-
-            <h4>Controls</h4>
-            <table class="param-table">
-                <thead><tr><th>Control</th><th>Description &amp; defaults</th></tr></thead>
-                <tbody>
-                    <tr><td><strong>Formula</strong></td><td>Target composition, e.g. <code>PbSO4</code>. Required; the Search button stays disabled and says why until one is entered.</td></tr>
-                    <tr><td><strong>Z</strong></td><td>Formula units per cell. Blank for automatic estimation from the cell volume.</td></tr>
-                    <tr><td><strong>Max sites / elem</strong></td><td>Most distinct Wyckoff positions one element may occupy.</td></tr>
-                    <tr><td><strong>Max reuse / pos</strong></td><td>Most independent atoms sharing one Wyckoff position.</td></tr>
-                    <tr><td><strong>Chains</strong></td><td>Independent trial structures. Capped automatically against the device's storage-buffer and dispatch limits and snapped to a multiple of 64.</td></tr>
-                    <tr><td><strong>Iterations</strong></td><td>Steps per chain (100&ndash;10000, default 2000).</td></tr>
-                    <tr><td><strong>Restarts</strong></td><td>Independent restarts (1&ndash;20, default 4).</td></tr>
-                    <tr><td><strong>Min contact (&Aring;)</strong></td><td>Floor applied to every unlike pair, default 1.0&nbsp;&Aring;.</td></tr>
-                    <tr><td><strong>Distance constraints</strong></td><td><code>ElemA ElemB N dmin/dmax</code>, one per line, e.g. <code>S O 4 1.35/1.65</code>. Sets both the bond-window penalty during the search and the floor used to reject a candidate afterwards.</td></tr>
-                </tbody>
-            </table>
-
-            <h4>Final coordinate refinement</h4>
-            <p>
-                The search finishes with a least-squares refinement of the free Wyckoff
-                coordinates against \(|F_{\text{obs}}|^2\), weighted by \(1/\sigma^2\) and
-                re-projecting each atom onto its symmetry element every step. It uses the same
-                scattering factors and the same \(B\) as the search &mdash; if those two ever
-                disagree they are not fitting the same model, and no arrangement of atoms can
-                satisfy both.
-            </p>
-            <p>
-                Both answers are reported: the <strong>search positions</strong> and the
-                <strong>refined positions</strong>, in separate tables, with the second appearing
-                only when the refinement actually moved something. They optimise different
-                quantities, and when they disagree that disagreement is the interesting part. If
-                you intend to run a Rietveld refinement afterwards, the search positions are
-                usually the cleaner starting point.
-            </p>
             <div class="note">
-                <strong>The free-parameter count is the constrained one.</strong> A \(4c\) site
-                in \(Pnma\) is \((x,\tfrac14,z)\) and contributes 2, an \(8d\) general site
-                contributes 3, and a fixed site such as \(4b\) at \((0,0,\tfrac12)\)
-                contributes 0. Putting atoms on Wyckoff positions <em>is</em> the method, so
-                reporting \(3N\) would understate the constraint that does the work. The count
-                is taken as the rank of each site's projection matrix, which for an idempotent
-                projector is its trace.
+                <strong>This step ends at a peak list.</strong> It does not place atoms of a
+                given composition, and giving it one is refused rather than accepted: the
+                <a href="#cf-wyckoff">Wyckoff search</a> is a separate method with its own tab,
+                and it must not be handed this map. Two methods that agree are evidence only if
+                neither saw the other's answer.
             </div>
 
             <h3 id="cf-output-fields">Result Fields Explained</h3>
@@ -2062,9 +2013,10 @@ blockquote {
                     <tr><td><strong>#</strong></td><td>Peak rank by height (1 = strongest).</td></tr>
                     <tr><td><strong>x, y, z</strong></td><td>Fractional coordinates. In the raw peak list these are in \(P1\) with an arbitrary origin; in the built structure they are placed on the space-group origin.</td></tr>
                     <tr><td><strong>Height</strong></td><td>The map value at the peak, relative to the strongest (set to 1). <strong>It does not rank atoms by atomic number.</strong> It is one voxel: it depends on where the atom falls relative to the grid, on its displacement parameters, and on the series-termination ripples of its neighbours &mdash; and the heaviest atom, having the largest ripples, erodes its own maximum. On a real PbSO<sub>4</sub> solution the sulfur came out at 1.000 and the lead at 0.728.</td></tr>
-                    <tr><td><strong>Charge</strong></td><td>The map <em>integrated</em> over a 0.65&nbsp;&Aring; sphere with a local baseline removed, relative to the largest integral. This is the column that tracks atomic number. Both columns are on an arbitrary scale &mdash; \(F(000)\) is held at zero throughout charge flipping, so the map has zero mean &mdash; and only ratios mean anything. The radius stays below half the shortest bond you expect to resolve, or the integral swallows the neighbours.</td></tr>
+                    <tr><td><strong>Charge</strong></td><td>The map <em>integrated</em> over a 0.65&nbsp;&Aring; sphere with a local baseline removed, relative to the largest integral. This is the column that tracks atomic number. Both columns are on an arbitrary scale &mdash; \(F(000)\) is held at zero throughout charge flipping, so the map has zero mean &mdash; and only ratios mean anything. The radius stays below half the shortest bond you expect to resolve, or the integral swallows the neighbours. <strong>Empty on a Wyckoff structure</strong> &mdash; that method has no map, and filling this in would mean scoring it against the charge-flipping one.</td></tr>
                     <tr><td><strong>Nearest peak (&Aring;)</strong></td><td>(Peak list.) Distance to the closest <em>other</em> peak in the list. Not a resolution limit and not a bond length: it says how isolated each peak is. A value far below any real bond means the peak is a ripple beside a stronger neighbour, not an atom.</td></tr>
                     <tr><td><strong>Mult</strong></td><td>Site multiplicity: how many symmetry-equivalent copies of this site exist in the unit cell. See the note on the asterisk below.</td></tr>
+                    <tr><td><strong>Element</strong></td><td>(Site table.) Blank as <code>?</code> on a charge-flipping structure, which yields density and not chemistry. Filled in on a <a href="#cf-wyckoff">Wyckoff</a> structure, where the element on each site is part of the model being fitted rather than something read off a map.</td></tr>
                 </tbody>
             </table>
             <div class="note">
@@ -2110,6 +2062,219 @@ blockquote {
                     beyond reach from powder data alone.</li>
             </ul>
         </section>
+
+        <hr>
+
+        <section id="cf-wyckoff">
+            <h2>Direct-Space Structure Solution: Wyckoff Search</h2>
+            <p>
+                The Wyckoff search has its <strong>own tab</strong> in the left panel and its own
+                results tab on the right. It is a peer of charge flipping, not a step inside it:
+                it consumes a space group, a cell, a composition and the Pawley intensities, and
+                not one of those comes from a density map. <strong>It does not require a
+                charge-flipping run, and it cannot read one.</strong> The two methods share only
+                the Pawley intensity list &mdash; the same measurement, seen independently.
+            </p>
+            <div class="note">
+                <strong>The independence is enforced, not merely intended.</strong> The
+                structure builder refuses a target composition, and the Wyckoff search takes no
+                density-map argument at all, so neither can be given the other's answer even by
+                accident. This is what makes agreement between them worth something: if two
+                methods that never communicated place the same atoms in the same places, that
+                is evidence. If one had been seeded with the other's solution, it would not be.
+            </div>
+            <p>
+                This is direct-space (global-optimisation) structure solution, the family that
+                includes FOX, EXPO, DASH and TOPAS's simulated annealing. It works where charge
+                flipping struggles on powder data because of parameter counting: PbSO<sub>4</sub>
+                in \(Pnma\) has <strong>nine</strong> free positional parameters against a few
+                hundred observations, whereas charge flipping solves for thousands of grid
+                amplitudes and phases from the same data. It has no phase problem, no origin
+                ambiguity, no hand ambiguity and no series-termination ripples &mdash; and because
+                the composition is enforced by construction, it cannot invent an atom where there
+                is nothing to explain it.
+            </p>
+
+            <h3 id="wy-objective">The objective</h3>
+            <p>
+                A WebGPU swarm (replica-exchange MCMC) places atoms on trial Wyckoff assignments
+                that satisfy the stoichiometry exactly. Each candidate is scored by
+                $$f = \text{CC} - \text{pen}$$
+                where CC is a <strong>weighted Pearson correlation between
+                \(|F_{\text{calc}}|^2\) and the observed intensities</strong>, taken over
+                groups of reflections the powder pattern cannot separate. The observed intensity
+                of a group is \(\sum m |F_o|^2\) and the calculated one is accumulated the same
+                way, so the comparison is made where the measurement actually exists.
+            </p>
+            <p>
+                Pearson rather than a cosine similarity or an R factor: it is scale-free, so there
+                is no scale factor to fit and no scale degeneracy for the swarm to explore;
+                subtracting the means keeps it discriminating, where a cosine similarity is
+                dominated by the large positive offset both vectors share; and it lands in
+                \([0,1]\), the range the clash and bond penalties are tuned against.
+            </p>
+            <p>
+                Scattering factors are the tabulated \(f(s)\) with an overall temperature factor
+                folded in as \(f(s)\exp(-Bs^2/4)\), pre-computed per (reflection, element) on the
+                host. \(B\) is estimated by a <strong>Wilson plot</strong> over resolution shells
+                from the extracted intensities themselves. The Pawley intensities do not lack a
+                temperature factor &mdash; they <em>contain</em> the real one, because they are a
+                measurement &mdash; so the model needs one to reproduce their fall-off.
+            </p>
+
+            <h3>Penalties and hard constraints</h3>
+            <p>
+                Clash, bond-window and coordination penalties are <em>soft</em> and ramped during
+                the search, which is correct while the swarm still needs to move through crowded
+                configurations. They are <em>not</em> how the answer is decided. A candidate whose
+                contacts break the floors is <strong>rejected outright</strong>, and candidates are
+                walked in score order until one passes; if every candidate fails, that is reported
+                rather than swallowed, because it is a statement about the composition, \(Z\), or
+                the floor.
+            </p>
+            <p>
+                The same test is applied <em>after</em> the coordinate refinement. The refinement
+                moves every free coordinate with no contact term at all, so guarding only its
+                input guards nothing: a refinement that breaks a floor is discarded and the search
+                positions are kept, with the reason recorded.
+            </p>
+
+            <h3>Resolution ramp &mdash; and why the running CC is not the final one</h3>
+            <div class="warning-note">
+                The swarm starts on a <strong>subset</strong> of the reflection groups &mdash; as
+                few as a quarter &mdash; and reaches the full set part-way through each restart.
+                The figure shown while a search runs is computed on whatever subset is active, so
+                it reads considerably higher than the final value and is labelled
+                <strong>CC (partial res.)</strong>. Only the full-resolution figure from the
+                closing quench, shown in the results panel as <strong>Search: CC</strong>, is
+                comparable with anything. A running 0.99 alongside a final \(wR\) of 50% is not
+                a contradiction; it usually means the low-order reflections line up and the light
+                atoms are not yet placed.
+            </div>
+
+            <h3 id="wy-controls">Controls</h3>
+            <table class="param-table">
+                <thead><tr><th>Control</th><th>Description &amp; defaults</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>Formula</strong></td><td>Target composition, e.g. <code>PbSO4</code>. Required; the Search button stays disabled and says why until one is entered.</td></tr>
+                    <tr><td><strong>Z</strong></td><td>Formula units per cell. Blank for automatic estimation from the cell volume.</td></tr>
+                    <tr><td><strong>Max sites / elem</strong></td><td>Most distinct Wyckoff positions one element may occupy. This is a <em>per-element</em> cap and says nothing about the total &mdash; see the capacity note below.</td></tr>
+                    <tr><td><strong>Max reuse / pos</strong></td><td>Most independent atoms sharing one Wyckoff position.</td></tr>
+                    <tr><td><strong>Chains</strong></td><td>Independent trial structures. Capped automatically against the device's storage-buffer and dispatch limits and snapped to a multiple of 64.</td></tr>
+                    <tr><td><strong>Iterations</strong></td><td>Steps per chain (100&ndash;10000, default 2000).</td></tr>
+                    <tr><td><strong>Restarts</strong></td><td>Independent restarts (1&ndash;20, default 4).</td></tr>
+                    <tr><td><strong>Min contact (&Aring;)</strong></td><td>Floor applied to every unlike pair, default 1.0&nbsp;&Aring;.</td></tr>
+                    <tr><td><strong>Distance constraints</strong></td><td><code>ElemA ElemB N dmin/dmax</code>, one per line, e.g. <code>S O 4 1.35/1.65</code>. Sets both the bond-window penalty during the search and the floor used to reject a candidate afterwards.</td></tr>
+                </tbody>
+            </table>
+
+            <div class="note">
+                <strong>Capacities, and what happens when you exceed one.</strong> The search
+                kernel holds at most <strong>16 independent atomic sites</strong> in one
+                assignment, <strong>8 distinct elements</strong>, <strong>8 distance
+                rules</strong>, and <strong>16 coordination slots</strong> shared across all
+                rules. These are fixed array sizes, not preferences.
+                <br><br>
+                Read the first two carefully, because neither counts what its name suggests:
+                <ul>
+                    <li><strong>16 sites</strong> counts <em>independent atoms in the asymmetric
+                        unit</em>, summed over every element &mdash; not Wyckoff <em>letters</em>.
+                        A position used three times counts three, because each use is an atom
+                        with its own free coordinates.</li>
+                    <li><strong>8 elements</strong> counts <em>distinct chemical elements</em>,
+                        not atoms and not sites. An element occupying nine positions is still
+                        one element.</li>
+                </ul>
+                So the two limits are close to independent, and a single-element structure can
+                use the whole site budget. C<sub>60</sub> in \(Pa\bar{3}\) is the illustrative
+                case: 240 carbons per cell, the molecule on a \(\bar{3}\) site, so its 60 atoms
+                split into \(60/6 = 10\) orbits &mdash; <strong>1 element and 10 sites</strong>,
+                inside both caps with room to spare.
+                <br><br>
+                In practice the kernel caps are rarely what stops you. <strong>Max sites /
+                elem</strong> and <strong>Max reuse / pos</strong> bind first: at their default
+                of 4 the enumeration is raised only as far as the composition strictly requires,
+                and for C<sub>60</sub> that yields the single 10&times;24<em>d</em> assignment.
+                Raising both to 16 finds six candidates; raising them past 16 is where the
+                kernel cap finally starts dropping assignments. If a plausible assignment is
+                missing, check those two sliders before the capacities.
+                <br><br>
+                These four limits belong to the Wyckoff search alone.
+                <a href="#charge-flipping">Charge flipping</a> has no composition, no elements
+                and no Wyckoff positions, so none of them applies to it &mdash; it can return
+                more than 16 sites, and routinely does before the spurious peaks are weeded out.
+                <ul>
+                    <li><em>Sites.</em> Assignments needing more than 16 are dropped during
+                        enumeration and the count is reported, because an over-wide assignment
+                        is one candidate among many. If <em>every</em> assignment needs more,
+                        the run stops and says so &mdash; which normally means \(Z\) is too
+                        large for the group.</li>
+                    <li><em>Elements, rules and slots.</em> The run is refused before it
+                        starts, with a message naming the limit. Note that a bare upper bound
+                        such as <code>Pb O 0/3.0</code> is applied in <em>both</em> directions
+                        and therefore costs two rules; the constraint box counts rules, not
+                        lines, and tells you the total.</li>
+                </ul>
+                Nothing is silently truncated. A restraint you typed and the search did not
+                apply is the worst failure mode available here: it costs a full run, the answer
+                looks reasonable, and the structure then violates a constraint the report
+                correctly flags &mdash; which reads as a bad structure rather than a dropped rule.
+            </div>
+
+            <div class="note">
+                <strong>Stopping returns the best structure found so far.</strong> The swarm
+                keeps a running best for every assignment, so pressing Stop finishes the run
+                early and reports what it had rather than discarding it.
+            </div>
+            <div class="note">
+                <strong>What a stop skips, precisely.</strong> Only the closing
+                full-resolution quench inside the swarm. The coordinate refinement below runs
+                afterwards and is unaffected, so a stopped run still reports \(wR(F^2)\) and a
+                Refined positions table, and those are real. What is <em>not</em> final is the
+                <strong>Search: CC</strong> &mdash; without the quench it carries whatever
+                subset of reflections the resolution ramp had reached, so it is not a
+                full-resolution figure and is not comparable with \(wR\) &mdash; and the
+                <strong>ranking</strong> that chose this candidate over the others, which was
+                made on the same partial figure. Treat a stopped run as a preview of where the
+                search was heading rather than as a finished answer.
+            </div>
+
+            <h3 id="wy-refinement">Final coordinate refinement</h3>
+            <p>
+                The search finishes with a least-squares refinement of the free Wyckoff
+                coordinates against \(|F_{\text{obs}}|^2\), weighted by \(1/\sigma^2\) and
+                re-projecting each atom onto its symmetry element every step. It uses the same
+                scattering factors and the same \(B\) as the search &mdash; if those two ever
+                disagree they are not fitting the same model, and no arrangement of atoms can
+                satisfy both.
+            </p>
+            <p>
+                Both answers are reported: the <strong>search positions</strong> and the
+                <strong>refined positions</strong>, in separate tables, with the second appearing
+                only when the refinement actually moved something. They optimise different
+                quantities, and when they disagree that disagreement is the interesting part. If
+                you intend to run a Rietveld refinement afterwards, the search positions are
+                usually the cleaner starting point.
+            </p>
+            <div class="note">
+                <strong>The free-parameter count is the constrained one.</strong> A \(4c\) site
+                in \(Pnma\) is \((x,\tfrac14,z)\) and contributes 2, an \(8d\) general site
+                contributes 3, and a fixed site such as \(4b\) at \((0,0,\tfrac12)\)
+                contributes 0. Putting atoms on Wyckoff positions <em>is</em> the method, so
+                reporting \(3N\) would understate the constraint that does the work. The count
+                is taken as the rank of each site's projection matrix, which for an idempotent
+                projector is its trace.
+            </div>
+            <div class="note">
+                <strong>The <em>Charge</em> column is empty on a Wyckoff structure</strong>, and
+                the <em>Element</em> column is filled. Both follow from the same fact: the
+                elements here are an input to the model, not something inferred from density,
+                and there is no map to integrate. On a charge-flipping structure it is the
+                other way round.
+            </div>
+        </section>
+
+        <hr>
 
         <section id="strategy">
             <h2>Recommended Refinement Strategy</h2>
@@ -2220,6 +2385,70 @@ blockquote {
                 <em>weighted</em> residual actually minimised. An unweighted figure printed next
                 to a weighted refinement describes a fit nobody performed.
             </p>
+
+            <h4 id="results-chi2-low">&chi;&sup2; well below 1 means the weights are wrong, not that the fit is good</h4>
+            <p>
+                \(\chi^2 \approx 1\) is the right target, but only when \(w_i\) is the real
+                variance of \(y_i\). The profile weight above assumes \(\sigma^2 = y\), which is
+                exact for <strong>raw counts</strong> and for nothing else. If the intensities on
+                the vertical axis are not counts, the weights are wrong by whatever factor
+                separates the two scales, and \(\chi^2\) is wrong by the same factor.
+            </p>
+            <p>
+                Three ways a real dataset stops being counts:
+            </p>
+            <ul>
+                <li><strong>Normalisation.</strong> Synchrotron data are routinely divided by a
+                    monitor, the ring current or the exposure time, and the result is written in
+                    arbitrary units. A pattern whose strongest peak reads 100 &ldquo;a.u.&rdquo;
+                    would, if those were counts, scatter by \(\pm 10\) at the peak and by about
+                    a quarter of its own height in the background. If the trace on screen is
+                    visibly smoother than that, the numbers are not counts.</li>
+                <li><strong>Averaging.</strong> Multi-analyser crystals, strip and area detectors,
+                    and repeated scans all average many measurements into each point. That cuts
+                    the true noise by \(\sqrt{n}\) while leaving the intensity scale alone, so
+                    \(\sqrt{y}\) overstates \(\sigma\) by the same \(\sqrt{n}\).</li>
+                <li><strong>Smoothing or rebinning.</strong> Both correlate neighbouring points,
+                    which removes point-to-point scatter without touching \(y\). This one cannot
+                    be undone after the fact &mdash; fit the unsmoothed data if you still have it.</li>
+            </ul>
+            <div class="note">
+                <strong>&chi;&sup2; is itself the diagnostic, because the relationship is linear.</strong>
+                Under \(w_i = 1/y_i\), multiplying every intensity by \(k\) multiplies
+                \(\chi^2\) by exactly \(k\). So a run reporting \(\chi^2 = 0.05\) is telling
+                you its data sit about twenty times below a count scale: scale the intensities up
+                by twenty before loading and \(\chi^2\) arrives near 1. If you know the original
+                counts &mdash; 500&nbsp;000 at the strongest peak, normalised to 100 &mdash; that
+                ratio should agree with the one \(\chi^2\) implies, and it is worth checking that
+                it does.
+            </div>
+            <p><strong>What a wrong weighting scale does and does not change.</strong></p>
+            <ul>
+                <li><strong>Unaffected: the refined parameters.</strong> Multiplying every weight
+                    by a constant does not move the minimum, so the cell, the profile terms and
+                    the extracted intensities are exactly what they would have been.</li>
+                <li><strong>Unaffected: \(R_{wp}\) and \(R_p\).</strong> Both are ratios in which
+                    the scale cancels, which is why they remain usable while \(\chi^2\) does not.</li>
+                <li><strong>Unaffected: the ESDs.</strong> Powder&nbsp;5 reports
+                    \(\sigma(p) = \sqrt{\chi^2 \, C_{pp}}\), and scaling the covariance by
+                    \(\chi^2\) cancels the weighting error exactly. Cell and profile ESDs come out
+                    independent of the intensity scale; intensity ESDs scale with the intensities,
+                    so <em>relative</em> ESDs are invariant. That is the correct behaviour, not a
+                    lucky accident, and it is why a low \(\chi^2\) is not a reason to distrust
+                    the numbers in the table.</li>
+                <li><strong>Broken: \(\chi^2\) as a figure of merit</strong>, and with it
+                    \(R_{exp} = R_{wp}/\sqrt{\chi^2}\) and any judgement of the form
+                    &ldquo;\(\chi^2\) is near 1, so the model is adequate&rdquo;. Until the scale
+                    is right, read \(R_{wp}\) and the difference curve instead.</li>
+            </ul>
+            <div class="warning-note">
+                The failure is asymmetric, and only one direction is safe to ignore. A
+                \(\chi^2\) far <em>below</em> 1 is almost always this scale problem and leaves the
+                model intact. A \(\chi^2\) far <em>above</em> 1 can also come from an
+                over-optimistic \(\sigma\), but it is much more often a real deficiency &mdash;
+                a missing phase, a wrong peak shape, an unmodelled background &mdash; and should
+                not be scaled away.
+            </div>
 
             <h4 id="results-clusters">Overlap clusters: which intensities mean anything</h4>
             <p>

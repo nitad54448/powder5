@@ -17,23 +17,35 @@
    together.
    ------------------------------------------------------------------ */
 
+/**
+ * Module version.
+ *
+ * It was in module.exports and defined NOWHERE. In a browser the export block
+ * never runs, so nothing showed; under Node it is a ReferenceError at load,
+ * which means the "node-side unit test" this module exports itself for could
+ * not require it at all.
+ */
+const SHARKO_CONTACTS_VERSION = '1.1.0';
+
 /* ------------------------------------------------------------------
    Tunables. Named because two of them are tolerances that look
    interchangeable and are not: one is float noise, the other is chemistry.
    ------------------------------------------------------------------ */
 const CT_DEFAULTS = Object.freeze({
-    // Fractional coordinate close enough to 1 to BE 1. This is float noise on a
-    // symmetry image, not a distance - it exists so images of a special
-    // position deduplicate through the Set key below. Fractional rather than
-    // Cartesian is right here for exactly that reason: it is a rounding
-    // question, not a chemical one.
-    wrapEpsilonFrac: 0.999,
-    dedupeDecimals: 3,
-    // Fractional bounding box used to reject far-apart pairs before the
-    // Cartesian distance is computed. Purely a speed filter; it must be loose
-    // enough never to discard a genuine near neighbour, which at one shell of
-    // neighbouring cells it is.
-    pairBoxFrac: 1.2,
+    // How close two symmetry images have to be, in FRACTIONAL coordinates,
+    // before they are the same atom. This is float noise on a special
+    // position, not chemistry.
+    //
+    // It replaces the old wrapEpsilonFrac / dedupeDecimals pair, which
+    // deduplicated by rounding each coordinate to three decimals and comparing
+    // the strings. Rounding has boundaries: two images at 0.4994999 and
+    // 0.4995001 are 2e-7 apart and round to "0.499" and "0.500", so they did
+    // NOT deduplicate. The distance loops hid it (a 0 A contact is skipped by
+    // the d < 1e-4 guard) but structureFactors() did not - it sums over
+    // inCell, so a missed duplicate contributes to F twice and every R factor
+    // computed from that structure is wrong. Comparing with a tolerance,
+    // modulo one lattice translation, has no boundary to fall off.
+    dedupeTolFrac: 1e-4,
     contactCutoffA: 3.6,        // neighbour list radius
     maxNeighbours: 12,
     qualityCutoffA: 3.2,        // radius the bond-valence sum runs over
@@ -42,22 +54,92 @@ const CT_DEFAULTS = Object.freeze({
     // sulfate sulfur came back nine-coordinate with a mean bond of 2.7 A.
     shellFactor: 1.35,
     // Brese & O'Keeffe universal bond-valence softness parameter.
-    bondValenceB: 0.37
+    bondValenceB: 0.37,
+    // Ceiling on how many shells of neighbouring cells will be enumerated.
+    // ctShellRange() derives the real number from the cell and the cutoff; this
+    // only stops a degenerate cell (a near-zero axis from a failed refinement)
+    // from asking for millions of images. Reaching it is reported, not hidden.
+    maxShellRange: 5
 });
 
 /**
- * Expands the asymmetric unit into the cell, plus one shell of neighbouring
- * cells.
+ * Perpendicular widths of the cell, i.e. the interplanar spacings d(100),
+ * d(010), d(001), in Angstrom.
  *
- * ONE SHELL IS ENOUGH, INCLUDING FOR SKEWED CELLS. Unlike the naive
- * minimum-image convention this does not round each fractional component
- * independently - it enumerates the neighbouring translations and takes the
- * true minimum - so it is correct where `d - round(d)` is not. Checked
- * numerically against an exhaustive +/-4 shell for monoclinic beta = 125,
- * triclinic 70/115/100, rhombohedral alpha = 60 and monoclinic beta = 150:
- * exact in every case, including with the bounding-box filter applied. This
- * routine is therefore the reference the GPU kernel's reduced-basis distance
- * is expected to agree with.
+ * These, not the edge lengths, are what bound a search over lattice
+ * translations. The Cartesian separation of two points differing by dx in the
+ * first fractional coordinate is at least |dx| * d(100), because d(100) is the
+ * distance between the planes x = const. Edge lengths give no such bound in a
+ * skewed cell.
+ *
+ * `orth` is the fractional -> Cartesian matrix, row-major, so the cell vectors
+ * are its COLUMNS.
+ */
+function ctCellWidths(orth) {
+    const A = [orth[0], orth[3], orth[6]];
+    const B = [orth[1], orth[4], orth[7]];
+    const C = [orth[2], orth[5], orth[8]];
+    const cross = (u, v) => [u[1] * v[2] - u[2] * v[1],
+                             u[2] * v[0] - u[0] * v[2],
+                             u[0] * v[1] - u[1] * v[0]];
+    const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    const norm = u => Math.sqrt(dot(u, u));
+    const bc = cross(B, C), ca = cross(C, A), ab = cross(A, B);
+    const V = Math.abs(dot(A, bc));
+    const nbc = norm(bc), nca = norm(ca), nab = norm(ab);
+    if (!(V > 0) || !(nbc > 0) || !(nca > 0) || !(nab > 0)) return null;
+    return [V / nbc, V / nca, V / nab];
+}
+
+/**
+ * How many shells of neighbouring cells have to be enumerated, per axis, for
+ * every pair within `cutoff` to be present.
+ *
+ * WHY THIS IS NOT A CONSTANT 1. With both atoms wrapped into [0,1), the
+ * fractional separation along a reaches |dx| <= B + 1 where B = cutoff/d(100),
+ * so one shell suffices only while cutoff <= d(100). At the 3.6 A neighbour
+ * radius that means every axis spacing must exceed 3.6 A - which a great many
+ * real cells do not satisfy. A metal with a = 2.9 A, or any layered structure
+ * with a short in-plane repeat, silently lost neighbours: they were never
+ * generated, so nothing downstream could notice they were missing.
+ *
+ * Returns [na, nb, nc], each at least 1.
+ */
+function ctShellRange(orth, cutoff, options = {}) {
+    const cap = options.maxShellRange ?? CT_DEFAULTS.maxShellRange;
+    const w = ctCellWidths(orth);
+    if (!w || !(cutoff > 0)) return [1, 1, 1];
+    return w.map(d => {
+        if (!(d > 0)) return cap;
+        return Math.max(1, Math.min(cap, Math.ceil(cutoff / d)));
+    });
+}
+
+/**
+ * Per-axis fractional half-widths outside which a pair CANNOT be within
+ * `cutoff`. Exact rather than generous: |dx| > cutoff/d(100) implies the
+ * Cartesian distance exceeds cutoff, so nothing real is discarded and the
+ * filter is as tight as it can be.
+ *
+ * The old filter was a flat 1.2 in every direction, chosen to be "loose enough
+ * never to discard a genuine near neighbour". For a cell with any spacing below
+ * 3 A it was not: 3.6 / 2.5 = 1.44 and those contacts were dropped.
+ */
+function ctPairBox(orth, cutoff) {
+    const w = ctCellWidths(orth);
+    if (!w || !(cutoff > 0)) return [Infinity, Infinity, Infinity];
+    // A whisker of slack against float error in the distance that follows.
+    return w.map(d => (d > 0 ? cutoff / d * (1 + 1e-9) + 1e-9 : Infinity));
+}
+
+/**
+ * Expands the asymmetric unit into the cell, plus the neighbouring cells.
+ *
+ * EXACT FOR SKEWED CELLS. Unlike the naive minimum-image convention this does
+ * not round each fractional component independently - it enumerates the
+ * neighbouring translations and takes the true minimum - so it is correct where
+ * `d - round(d)` is not. This routine is the reference the GPU kernel's
+ * reduced-basis distance is expected to agree with.
  *
  * The neighbouring cells matter: a site at z = 0.98 and one at z = 0.02 are
  * 0.04 apart through the cell face, not 0.96 the long way round. Working only
@@ -67,42 +149,58 @@ const CT_DEFAULTS = Object.freeze({
  *
  * @param sites  [{element, x, y, z}] the asymmetric unit
  * @param symOps [{r:[9], t:[3]}]
- * @param range  how many cells out; 1 is enough for any contact under ~5 A
+ * @param range  how many cells out. A number applies to all three axes; an
+ *               array [na, nb, nc] gives one per axis, which is what
+ *               ctShellRange() returns and what a cell with one short axis
+ *               actually needs. 0 returns the home cell only.
  */
 function expandForContacts(sites, symOps, range = 1) {
+    const [ra, rb, rc] = Array.isArray(range) ? range : [range, range, range];
+
+    // DEDUPLICATION BY DISTANCE, NOT BY ROUNDED STRING.
+    //
+    // Images of a site on a special position coincide, and keeping both would
+    // report a 0 A contact with itself - and, worse, would double that atom's
+    // contribution in structureFactors(), which sums over inCell. The old key
+    // was `x.toFixed(3)`, which fails whenever two coincident images straddle a
+    // rounding boundary: 0.4994999 and 0.4995001 are 2e-7 apart and hash apart.
+    //
+    // Comparing separations modulo a lattice translation has no boundary, and
+    // it also removes the need for the old wrap epsilon: 1 - 1e-9 and 0 are one
+    // translation apart and match directly.
+    const TOL = CT_DEFAULTS.dedupeTolFrac;
+    const sameFrac = (a, b) => {
+        let d = a - b;
+        d -= Math.round(d);
+        return Math.abs(d) < TOL;
+    };
+
     const inCell = [];
-    const seen = new Set();
     sites.forEach((s, si) => {
+        const mine = [];                       // images of THIS site, so far
         for (const op of symOps) {
             let x = s.x * op.r[0] + s.y * op.r[1] + s.z * op.r[2] + op.t[0];
             let y = s.x * op.r[3] + s.y * op.r[4] + s.z * op.r[5] + op.t[1];
             let z = s.x * op.r[6] + s.y * op.r[7] + s.z * op.r[8] + op.t[2];
- 
 
             x -= Math.floor(x); y -= Math.floor(y); z -= Math.floor(z);
-            
-            // Snap floating point boundary values near 1.0 back to 0.0
-            // so they deduplicate correctly in the Set.
-            const eps = CT_DEFAULTS.wrapEpsilonFrac;
-            if (x > eps) x = 0;
-            if (y > eps) y = 0;
-            if (z > eps) z = 0;
 
-            // Images of a site on a special position coincide exactly; keeping
-            // both would report a contact of 0 A with itself.
-            const dp = CT_DEFAULTS.dedupeDecimals;
-            const key = `${si}:${x.toFixed(dp)},${y.toFixed(dp)},${z.toFixed(dp)}`;
- 
-            if (seen.has(key)) continue;
-            seen.add(key);
-            inCell.push({ site: si, element: s.element, x, y, z });
+            let dup = false;
+            for (const q of mine) {
+                if (sameFrac(x, q.x) && sameFrac(y, q.y) && sameFrac(z, q.z)) { dup = true; break; }
+            }
+            if (dup) continue;
+
+            const img = { site: si, element: s.element, x, y, z };
+            mine.push(img);
+            inCell.push(img);
         }
     });
 
     const out = [];
-    for (let a = -range; a <= range; a++)
-        for (let b = -range; b <= range; b++)
-            for (let c = -range; c <= range; c++)
+    for (let a = -ra; a <= ra; a++)
+        for (let b = -rb; b <= rb; b++)
+            for (let c = -rc; c <= rc; c++)
                 for (const p of inCell)
                     out.push({ site: p.site, element: p.element,
                                x: p.x + a, y: p.y + b, z: p.z + c,
@@ -127,8 +225,10 @@ function cartDistance(dx, dy, dz, orth) {
 function contactsForSite(siteIdx, sites, symOps, orth, options = {}) {
     const cutoff = options.cutoff ?? CT_DEFAULTS.contactCutoffA;
     const maxN = options.max ?? CT_DEFAULTS.maxNeighbours;
-    const { inCell, all } = expandForContacts(sites, symOps, 1);
-    const BOX = CT_DEFAULTS.pairBoxFrac;
+    // The shell count and the pair box both come from the cell and the cutoff
+    // now, rather than from a hardcoded 1 and 1.2. See ctShellRange().
+    const { inCell, all } = expandForContacts(sites, symOps, ctShellRange(orth, cutoff, options));
+    const [BX, BY, BZ] = ctPairBox(orth, cutoff);
 
     const ref = inCell.find(p => p.site === siteIdx);
     if (!ref) return [];
@@ -136,7 +236,7 @@ function contactsForSite(siteIdx, sites, symOps, orth, options = {}) {
     const out = [];
     for (const q of all) {
         const dx = q.x - ref.x, dy = q.y - ref.y, dz = q.z - ref.z;
-        if (Math.abs(dx) > BOX || Math.abs(dy) > BOX || Math.abs(dz) > BOX) continue;
+        if (Math.abs(dx) > BX || Math.abs(dy) > BY || Math.abs(dz) > BZ) continue;
         const d = cartDistance(dx, dy, dz, orth);
         if (d < 1e-4 || d > cutoff) continue;      // 0 is the atom itself
         out.push({ element: q.element, site: q.site, d,
@@ -155,8 +255,21 @@ function contactsForSite(siteIdx, sites, symOps, orth, options = {}) {
  * one whose sulfur has no oxygen within 3 A.
  */
 function contactSummary(sites, symOps, orth, windows = [], options = {}) {
-    const { inCell, all } = expandForContacts(sites, symOps, 1);
-    const BOX = CT_DEFAULTS.pairBoxFrac;
+    // THE SEARCH RADIUS IS THE LARGEST DISTANCE ANY CHECK BELOW LOOKS AT.
+    //
+    // Expanding to a fixed one shell meant a window whose dmax exceeded the
+    // shortest cell spacing was evaluated against neighbours that had never
+    // been generated - so the report could say a constraint was unmet when the
+    // partner was there, in the next cell along, and the search had correctly
+    // scored it as satisfied. The two disagreeing is exactly what this function
+    // exists to prevent.
+    let reach = options.cutoff ?? CT_DEFAULTS.contactCutoffA;
+    for (const w of windows) {
+        if (Number.isFinite(w.dmax)) reach = Math.max(reach, w.dmax);
+        if (Number.isFinite(w.dmin)) reach = Math.max(reach, w.dmin);
+    }
+    const { inCell, all } = expandForContacts(sites, symOps, ctShellRange(orth, reach, options));
+    const [BX, BY, BZ] = ctPairBox(orth, reach);
     // Per-pair floor below which a contact is not close, it is impossible.
     // Distinct from the user's windows: those express what a chemist expects,
     // this expresses what atoms permit. A structure with lead and oxygen 0.32 A
@@ -169,7 +282,7 @@ function contactSummary(sites, symOps, orth, windows = [], options = {}) {
     for (const p of inCell) {
         for (const q of all) {
             const dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
-            if (Math.abs(dx) > BOX || Math.abs(dy) > BOX || Math.abs(dz) > BOX) continue;
+            if (Math.abs(dx) > BX || Math.abs(dy) > BY || Math.abs(dz) > BZ) continue;
             const d = cartDistance(dx, dy, dz, orth);
             if (d < 1e-4) continue;
             if (d < shortest) { shortest = d; shortestPair = `${p.element}-${q.element}`; }
@@ -224,7 +337,7 @@ function contactSummary(sites, symOps, orth, windows = [], options = {}) {
             for (const q of all) {
                 if (q.element.toUpperCase() !== B) continue;
                 const dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
-                if (Math.abs(dx) > BOX || Math.abs(dy) > BOX || Math.abs(dz) > BOX) continue;
+                if (Math.abs(dx) > BX || Math.abs(dy) > BY || Math.abs(dz) > BZ) continue;
                 const d = cartDistance(dx, dy, dz, orth);
                 if (d < 1e-4) continue;
                 if (d < best) best = d;
@@ -318,7 +431,16 @@ const BV_B = CT_DEFAULTS.bondValenceB;
 function siteQuality(siteIdx, sites, symOps, orth, options = {}) {
     const anion = (options.anion || 'O').toUpperCase();
     const cutoff = options.cutoff ?? CT_DEFAULTS.qualityCutoffA;
-    const el = String(sites[siteIdx].element).toUpperCase();
+    // A missing site is a caller error, but it used to surface as
+    // "cannot read property element of undefined" from inside a reporting
+    // routine, which says nothing about where the bad index came from.
+    const site = sites && sites[siteIdx];
+    if (!site) {
+        return { element: null, coordination: 0, mean: null, spread: null,
+                 valence: null, shellCut: null,
+                 note: `no site at index ${siteIdx} (${(sites || []).length} site(s))` };
+    }
+    const el = String(site.element).toUpperCase();
 
    
     const all = contactsForSite(siteIdx, sites, symOps, orth, { cutoff, max: 200 })
@@ -436,5 +558,6 @@ function structureRFactor(sites, symOps, rows, opts = {}) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { SHARKO_CONTACTS_VERSION, CT_DEFAULTS, expandForContacts, contactsForSite,
                        contactSummary, cartDistance, siteQuality, structureFactors, structureRFactor,
+                       ctCellWidths, ctShellRange, ctPairBox,
                        BV_R0_OXYGEN };
 }
