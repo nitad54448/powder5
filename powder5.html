@@ -20,6 +20,10 @@
     <script src="js/state.js"></script>
     <script src="js/constants.js"></script>
     <script src="js/crystal.js"></script>
+    <!-- Structure plot, contact list and bond-valence analysis for the
+         Wyckoff results panel. Self-contained; reads only the structure
+         object the search already produces. -->
+    <script src="js/wyckoff_report.js"></script>
     <script src="js/polarization.js"></script>
     <script src="js/profile.js"></script>
     <script src="js/density3d.js"></script>
@@ -987,7 +991,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 161, 17 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 162, 18 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -4119,6 +4123,12 @@ function runWyckoffStandalone() {
             done();
             cfStructure = msg.results;
             cfStructure.spaceGroup = sg;
+            // The report expands the asymmetric unit to compute contacts and
+            // coordination numbers, which needs the matrices rather than the
+            // xyz strings. The charge-flipping route already keeps them; the
+            // standalone launcher dropped them, so a Wyckoff run had no way
+            // back to the full cell.
+            cfStructure.opMatrices = got.symops;
             wyckoffPhase = 'idle';
             // A STOPPED RUN IS A RESULT, NOT A FAILURE -- and not a complete
             // run either. These sites are the search's best so far and have not
@@ -4241,13 +4251,13 @@ function runBuildStructure(quiet) {
                     done();
                     cfStructure = msg.results;
                     cfStructure.spaceGroup = sg;
+                    // The worker returns the operators as xyz strings for the report.
+                    // The 3D viewer and the Wyckoff-panel analysis need the matrices
+                    // to expand the asymmetric unit, so keep the objects that went in.
+                    // Set BEFORE the panel renders: the analysis reads them.
+                    cfStructure.opMatrices = got.symops;
                     updateWyckoffTabState();
                     rpRenderWyckoffRun();
-
-                    // The worker returns the operators as xyz strings for the report.
-                    // The 3D viewer needs the matrices to expand the asymmetric unit,
-                    // so keep the objects that went in.
-                    cfStructure.opMatrices = got.symops;
                     renderStructure(cfStructure, got);
                     cfSetStructureStatus(
                         `${msg.results.sites.length} unique site(s) in ${sg.symbol || 'SG ' + sg.number}, ` +
@@ -7534,10 +7544,27 @@ function rpRenderWyckoffRun() {
         // here rather than in the header so it cannot be enabled while the
         // table is empty -- it only exists when there are rows.
         `<div style="display:flex;justify-content:flex-end;margin-top:10px;">` +
-        `<button id="wyckoff-export-cif" class="btn btn-primary rp-action-btn">Structure (.cif)</button></div>`;
+        `<button id="wyckoff-export-cif" class="btn btn-primary rp-action-btn">Structure (.cif)</button></div>` +
+        // Structure plot, contacts and bond valence. Everything above this
+        // line says how well the coordinates fit the intensities; this says
+        // whether they are chemistry. A structure can reach a respectable
+        // wR(F^2) with an oxygen 1.3 A from its sulfur, and the R factor will
+        // not mention it.
+        `<div id="wy-analysis-host"></div>`;
 
     const cif = document.getElementById('wyckoff-export-cif');
     if (cif) cif.addEventListener('click', () => exportStructureCIF(st));
+
+    if (typeof WyckoffReport !== 'undefined') {
+        try {
+            WyckoffReport.render(document.getElementById('wy-analysis-host'), st);
+        } catch (e) {
+            console.error('Wyckoff analysis failed:', e);
+            const h = document.getElementById('wy-analysis-host');
+            if (h) h.innerHTML = '<p class="cf-hint">The structure analysis could not be ' +
+                                 'built for this run: ' + escapeHtml(e.message || String(e)) + '</p>';
+        }
+    }
 }
 
 function rpRenderCFRun() {

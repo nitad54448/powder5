@@ -453,6 +453,7 @@ blockquote {
             <li><a href="#wy-controls" class="sub-link">Controls &amp; Capacities</a></li>
             <li><a href="#wy-how-many-sites" class="sub-link">How Many Sites</a></li>
             <li><a href="#wy-refinement" class="sub-link">Coordinate Refinement</a></li>
+            <li><a href="#wy-geometry" class="sub-link">Plot, Contacts &amp; Bond Valence</a></li>
             <li><a href="#strategy">Refinement Strategy</a></li>
             <li><a href="#results">Interpreting Results</a></li>
             <li><a href="#results-weights" class="sub-link">Weighting &amp; ESDs</a></li>
@@ -538,7 +539,7 @@ blockquote {
                     <tr><td><code>charge_flipping.wgsl</code></td><td>WebGPU kernels for the charge-flipping loop.</td></tr>
                     <tr><td><code>swarm_density.wgsl</code></td><td>Wyckoff swarm kernel scoring against a density map.</td></tr>
                     <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel scoring |F<sub>calc</sub>|&sup2; against the Pawley intensities. Used when no map is supplied.</td></tr>
-                    <tr><td><code>js/</code></td><td>All application modules &mdash; <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
+                    <tr><td><code>js/</code></td><td>All application modules &mdash; <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code>, <code>wyckoff_report.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
                     <tr><td><code>lib/</code></td><td>Vendor bundles: <code>chart.umd.min.js</code>, <code>three.min.js</code>, <code>jspdf.umd.min.js</code>, <code>html2canvas.min.js</code>.</td></tr>
                     <tr><td><code>sg/</code></td><td>Space-group database (all settings of the 230 groups).</td></tr>
                     <tr><td><code>scatters/</code></td><td>Tabulated atomic scattering factors, with <code>index.json</code> naming the available tables.</td></tr>
@@ -564,7 +565,7 @@ blockquote {
                 console when it happens.
             </div>
             <div class="warning-note">
-                <strong>A local web server is required.</strong> Opening the file directly by
+                <strong>A local web server is required.</strong> You can run this program directly from the github server. If you want to have your own copy you'll need to download all the files in a given folder. Opening the file directly by
                 double-clicking it (a <code>file://</code> URL) will not work: browsers block both
                 <code>fetch()</code> and Web Workers under that scheme, so the symmetry database
                 never loads and no refinement can start. From the directory containing the files,
@@ -577,8 +578,7 @@ blockquote {
                 all</strong> during use. The only remaining external references are the two Google
                 Fonts stylesheets; if they cannot be reached the interface falls back to
                 Helvetica/Arial and Menlo/Consolas through the CSS font stacks, which changes
-                nothing but the typeface. If either PDF library is missing, the report button
-                reports which file to add rather than failing obscurely.
+                nothing but the typeface. 
             </div>
         </section>
 
@@ -2315,6 +2315,145 @@ blockquote {
                 and there is no map to integrate. On a charge-flipping structure it is the
                 other way round.
             </div>
+
+            <h3 id="wy-geometry">Structure plot, contacts and bond valence</h3>
+            <p>
+                Everything above this point on the Wyckoff results tab answers one question:
+                how well do these coordinates reproduce the measured intensities. That is not
+                the same question as whether they are chemistry. A structure can reach a
+                respectable \(wR(F^2)\) with an oxygen 1.3&nbsp;&Aring; from its sulfur, or with
+                a cation whose coordination sphere is a physical impossibility, and no R factor
+                will mention it. The block below the coordinate tables is the independent check:
+                it uses no intensities at all, only the cell, the space group and the atom
+                positions.
+            </p>
+
+            <h4>What is displayed</h4>
+            <ul>
+                <li><strong>Cell content, volume and calculated density.</strong> The formula
+                    per cell is built from the multiplicity <em>counted</em> from the symmetry
+                    expansion, not read off the Wyckoff label &mdash; a site that has drifted
+                    onto a special position during refinement generates fewer distinct images,
+                    and the counted value is the one the contacts and the mass are actually
+                    built from. A density far from what the compound should have usually means
+                    the wrong \(Z\), not a wrong coordinate.</li>
+                <li><strong>Net formal charge.</strong> Shown only when the oxidation states do
+                    not cancel over the cell. An imbalance means either the assignment below is
+                    wrong for this compound or the composition given to the search was, and
+                    every valence verdict inherits the problem.</li>
+                <li><strong>Structure plot.</strong> Drag to rotate, wheel to zoom, click an atom
+                    to list its contacts. Sites can be hidden individually, the cell frame and
+                    labels toggled, boundary images switched off, and the view saved as a PNG.
+                    Bonds are drawn between counter-ions closer than 1.4&nbsp;&times; the sum of
+                    their covalent radii; they are a drawing convention, not part of the
+                    analysis.</li>
+                <li><strong>Contacts.</strong> Every neighbour of the selected site within the
+                    cutoff, sorted, tagged with the site it belongs to, with a rule drawn where
+                    the distance jumps by more than 0.45&nbsp;&Aring;. The gap after the first
+                    coordination sphere is what a reader is looking for, and a flat list hides
+                    it.</li>
+                <li><strong>Structure quality.</strong> Coordination number, mean bond length,
+                    the spread of those lengths, the bond-valence sum against the formal
+                    valence, and a verdict.</li>
+            </ul>
+
+            <h4>Coordination number</h4>
+            <p>
+                Taken over the counter-ions &mdash; anions around a cation, cations around an
+                anion &mdash; and cut at the first clear break in the sorted distances rather
+                than at the cutoff, <em>separately for each neighbouring element</em>.
+            </p>
+            <p>
+                Both of those choices are forced. A single cutoff cannot serve both a sulfate
+                sulfur and a twelve-coordinate lead in the same structure: at 3.5&nbsp;&Aring;
+                the sulfur is reported as CN&nbsp;5 or 6, with a mean bond length halfway between
+                the SO<sub>4</sub> tetrahedron and the next oxygen in the lattice and a spread
+                that describes nothing. And an oxygen in that same sulfate sits 1.5&nbsp;&Aring;
+                from its sulfur and 2.4&nbsp;&Aring; from the nearest lead, so a break taken over
+                the merged list would stop at the S&ndash;O bond and report CN&nbsp;1 &mdash; the
+                sulfate group, not the oxygen's coordination. Per-element breaks give
+                CN&nbsp;12 for the lead, 4 for the sulfur and 4 for the oxygen, which is the
+                structure as a chemist would describe it.
+            </p>
+            <p>
+                The <strong>spread</strong> is the standard deviation of the distances in that
+                shell. On a cation surrounded by one element it is a distortion measure and a
+                large value is worth a look. On an anion coordinated by two different elements
+                it mixes two bond types and will be large for a perfectly good structure; the
+                shell composition is given beside the CN for that reason.
+            </p>
+
+            <h4>Bond-valence sums</h4>
+            <p>
+                Each contact between a cation and an anion is assigned a valence from its length
+                alone,
+            </p>
+            <p style="text-align:center;">
+                \( s_{ij} = \exp\!\left( \dfrac{R_0 - d_{ij}}{b} \right), \qquad
+                   V_i = \sum_j s_{ij} \)
+            </p>
+            <p>
+                with \(b = 0.37\)&nbsp;&Aring; and \(R_0\) tabulated per cation&ndash;anion
+                pair and oxidation state. In a correct structure the sum \(V_i\) over a site
+                recovers that ion's formal valence. The sum runs over every counter-ion inside
+                the cutoff rather than over the coordination shell defined above: the exponential
+                already makes distant contacts negligible, so the sum does not need a shell
+                boundary and is better off without one.
+            </p>
+            <p>
+                Reported as &ldquo;<em>V</em> of <em>n</em> expected&rdquo;, with a verdict that
+                is nothing more than the relative deviation:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Verdict</th><th>Condition</th><th>Reading</th></tr></thead>
+                <tbody>
+                    <tr><td><strong>plausible</strong></td><td>within 15%</td>
+                        <td>The site is where an ion of that charge would sit.</td></tr>
+                    <tr><td><strong>borderline</strong></td><td>within 30%</td>
+                        <td>Common on a powder solution before Rietveld refinement, and on light
+                            atoms whose positions the data barely constrain.</td></tr>
+                    <tr><td><strong>check</strong></td><td>worse than 30%</td>
+                        <td>Either the coordinate is wrong, or the oxidation state assumed for it
+                            is. An under-valued cation is usually one that has been placed too
+                            far from its anions; a badly over-valued one is usually too close.</td></tr>
+                    <tr><td><strong>no parameters</strong></td><td>&mdash;</td>
+                        <td>No tabulated \(R_0\) for one of the pairs involved. The pair is left
+                            out of the sum and the site is not judged. An invented \(R_0\) would
+                            produce a number that looks like a measurement and is not one.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Which atoms are anions, and in what oxidation state</h4>
+            <p>
+                Decided per structure, not from a fixed list: the candidate anions present are
+                compared by electronegativity, and those within 0.5 units of the most
+                electronegative species in the cell act as the anions. Sulfur is therefore an
+                anion in PbS and a cation in PbSO<sub>4</sub>, which a fixed list gets wrong one
+                way or the other every time. Oxidation states start from the common state of
+                each element and are <strong>editable in the site table</strong> &mdash; change
+                one and the sums, the expected valences and the net cell charge are recomputed.
+                Use it when the compound has mixed valence, or when the default guess is simply
+                not the chemistry you are working on.
+            </p>
+
+            <div class="warning-note">
+                <strong>This is a plausibility check, not a figure of merit.</strong> Nothing
+                here is fitted, and none of it should be reported as evidence that a structure is
+                correct &mdash; a bond-valence sum can be satisfied by a wrong structure with
+                roughly the right coordination distances. It is reliable in the other direction:
+                a site that comes out at half its formal valence is telling you something real
+                about that site, and it will keep telling you after Rietveld refinement has
+                driven \(R_{wp}\) down. Read it alongside the \(wR(F^2)\) above, not instead
+                of it.
+            </div>
+            <div class="note">
+                <strong>Three limits worth knowing.</strong> Site occupancies are taken as 1,
+                so a partially occupied or mixed site will not balance. Hydrogen is not located
+                by these methods at all, so hydrogen-bond contributions are missing from every
+                oxygen sum in a hydrate or a hydroxide &mdash; expect those to read low.
+                And the coordination number, though not the valence sum, depends on the contact
+                cutoff you set; the value in force is stated under the table.
+            </div>
         </section>
 
         <hr>
@@ -2722,6 +2861,22 @@ blockquote {
                 Markvardsen, A. J., David, W. I. F., Johnson, J. C. &amp; Shankland, K. (2001). "A Probabilistic Approach to Space-Group Determination from Powder Diffraction Data". <em>Acta Crystallographica Section A</em>, 57(1), 47-54.
             </div>
             <div class="reference-item">
+                <strong>Bond-valence method:</strong><br>
+                Brown, I. D. &amp; Altermatt, D. (1985). "Bond-valence parameters obtained from a systematic analysis of the inorganic crystal structure database". <em>Acta Crystallographica Section B</em>, 41(4), 244-247.
+            </div>
+            <div class="reference-item">
+                <strong>Bond-valence parameters used here:</strong><br>
+                Brese, N. E. &amp; O'Keeffe, M. (1991). "Bond-valence parameters for solids". <em>Acta Crystallographica Section B</em>, 47(2), 192-197. (Source of the \(R_0\) table and of \(b = 0.37\)&nbsp;&Aring;.)
+            </div>
+            <div class="reference-item">
+                <strong>Bond valence as a structure-validation tool:</strong><br>
+                Brown, I. D. (2009). "Recent developments in the methods and applications of the bond valence model". <em>Chemical Reviews</em>, 109(12), 6858-6919.
+            </div>
+            <div class="reference-item">
+                <strong>Covalent radii (bond drawing in the structure plot):</strong><br>
+                Cordero, B., Gómez, V., Platero-Prats, A. E., Revés, M., Echeverría, J., Cremades, E., Barragán, F. &amp; Alvarez, S. (2008). "Covalent radii revisited". <em>Dalton Transactions</em>, (21), 2832-2838.
+            </div>
+            <div class="reference-item">
                 <strong>cctbx - Computational Crystallography Toolbox:</strong><br>
                 Grosse-Kunstleve, R. W., Sauter, N. K., Moriarty, N. W., & Adams, P. D. (2002). "The Computational Crystallography Toolbox: crystallographic algorithms in a reusable software framework". <em>Journal of Applied Crystallography</em>, 35(1), 126-136. (Used for space group systematic absence rules).
             </div>
@@ -2759,7 +2914,7 @@ blockquote {
             </div>
         </section>
         <footer id="help-footer">
-            Powder 5, version 167
+            Powder 5, version 162, 18 august 2026
         </footer>
     </main>
 </div>
