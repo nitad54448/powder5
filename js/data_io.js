@@ -237,8 +237,26 @@ function writePdCIF(b) {
     }
     if (sg.symbol || sg.number) {
         L.push('_space_group_name_H-M_alt       ' + esc(sg.symbol || ''),
-               '_space_group_IT_number          ' + (sg.number || '?'),
-               '');
+               '_space_group_IT_number          ' + (sg.number || '?'));
+        // THE IT NUMBER ALONE DOES NOT SAY WHICH SETTING.
+        //
+        // Several monoclinic space groups -- 14 among them -- have multiple
+        // standard settings sharing one IT number: unique axis b or c, and
+        // up to three cell choices each, with DIFFERENT symmetry operators
+        // and DIFFERENT reflection multiplicities. sg.symbol states which
+        // one (e.g. "P121/a1" for #14 in the b3 setting), but a reader that
+        // trusts only _space_group_IT_number and maps it to its own table's
+        // default representative -- some other setting of the same number --
+        // silently applies the wrong operators. It will still produce a
+        // space group, a cell and a symmetry-allowed reflection list; there
+        // is nothing in that output to say it used the wrong one.
+        //
+        // The Hall symbol has no such ambiguity: it names one specific set
+        // of generators, not a number shared by several. Writing it costs
+        // nothing extra here and lets a Hall-aware reader resolve the exact
+        // setting without depending on how it parses the H-M string.
+        if (sg.hall) L.push('_space_group_name_Hall          ' + esc(sg.hall));
+        L.push('');
     }
     if (Number.isFinite(p.zeroShift)) {
         // THE TWO ZERO TAGS CARRY OPPOSITE SIGNS, DELIBERATELY.
@@ -743,7 +761,7 @@ function parsePdCifFile(content) {
     let zeroShift = null, cifOffset = null;
     let wavelength2 = null, ratio21 = null;
     const cell = {};
-    const sgIn = { symbol: null, number: null };
+    const sgIn = { symbol: null, number: null, hall: null };
     let profileType = null;
     const profileParams = {};
     const polarisation = { mode: null, monoTth: NaN, fraction: NaN };
@@ -765,6 +783,15 @@ function parsePdCifFile(content) {
                  && unq(val) && unq(val) !== '?') sgIn.symbol = unq(val);
         else if ((tag === '_space_group_it_number' || tag === '_symmetry_int_tables_number')
                  && Number.isFinite(num(val))) sgIn.number = num(val);
+        // THE ONE TAG THAT NAMES A SETTING, NOT JUST A NUMBER.
+        //
+        // See the writer's note on why this is written at all: several IT
+        // numbers cover more than one setting, and this is the tag that
+        // resolves which one without depending on how the H-M string gets
+        // parsed. '_symmetry_space_group_name_hall' is the deprecated
+        // spelling of the same tag.
+        else if ((tag === '_space_group_name_hall' || tag === '_symmetry_space_group_name_hall')
+                 && unq(val) && unq(val) !== '?') sgIn.hall = unq(val);
         else if (tag === '_powder5_profile_type') profileType = unq(val) || null;
         else if (tag === '_powder5_pol_mode') polarisation.mode = unq(val) || null;
         else if (tag === '_powder5_pol_mono_2theta') polarisation.monoTth = num(val);
@@ -1017,7 +1044,7 @@ function parsePdCifFile(content) {
         // A partial cell applied to the controls would leave a mix of this
         // file's edges and the previous sample's.
         cell: Number.isFinite(cell.a) ? cell : null,
-        spaceGroup: (sgIn.symbol || Number.isFinite(sgIn.number)) ? sgIn : null,
+        spaceGroup: (sgIn.symbol || sgIn.hall || Number.isFinite(sgIn.number)) ? sgIn : null,
         profileType,
         profileParams,
         polarisation: (polarisation.mode || Number.isFinite(polarisation.monoTth) ||

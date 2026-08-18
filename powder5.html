@@ -991,7 +991,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 163, 18 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 163, 19 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -6793,13 +6793,21 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
             if (pd.spaceGroup && globalThis.SG_ENGINE) {
                 try {
                     const want = String(pd.spaceGroup.symbol || '').replace(/\s+/g, '');
+                    const wantHall = String(pd.spaceGroup.hall || '').replace(/\s+/g, '');
                     let rec = null;
                     if (Number.isFinite(pd.spaceGroup.number)) {
                         const settings = SG_ENGINE.listSettings(pd.spaceGroup.number) || [];
                         // Match the SETTING, not just the number: 62 also returns
                         // Pmnb, Pbnm, Pcmn, Pmcn and Pnam, and picking the wrong
                         // one gives a different set of absences from the same cell.
-                        rec = settings.find(r => String(r.symbol || '').replace(/\s+/g, '') === want)
+                        //
+                        // Hall symbol first, when the file has one: it names one
+                        // specific set of generators, so there is nothing to get
+                        // wrong the way an H-M string comparison can (whitespace,
+                        // a symbol that happens to match a DIFFERENT setting's
+                        // spelling). writePdCIF() writes it for exactly this.
+                        rec = (wantHall && settings.find(r => String(r.hall || '').replace(/\s+/g, '') === wantHall))
+                           || settings.find(r => String(r.symbol || '').replace(/\s+/g, '') === want)
                            || settings.find(r => String(r.standard_symbol || '').replace(/\s+/g, '') === want)
                            || settings[0] || null;
                     }
