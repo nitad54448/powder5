@@ -991,7 +991,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 162, 18 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 163, 18 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -2312,6 +2312,15 @@ function buildExportBundle(opts) {
         params: fr.params || (typeof getAllParams === 'function' ? getAllParams() : null),
         spaceGroup: sgUsedForFit || currentSG || null,
         hklList: fr.hklList || null,
+        // The spline control points, not the pointwise curve above -- see
+        // writePdCIF()'s comment on why loading needs both. Stripped down to
+        // {tth, y}: `index` is an offset into fullExperimentalData for THIS
+        // session and means nothing once the file is reloaded elsewhere.
+        backgroundAnchors: (typeof backgroundAnchors !== 'undefined' && Array.isArray(backgroundAnchors))
+            ? backgroundAnchors
+                .filter(a => a && Number.isFinite(a.tth) && Number.isFinite(a.y))
+                .map(a => ({ tth: a.tth, y: a.y }))
+            : null,
         stats: fr.statistics || fr.stats || null,
         // WITHOUT THESE TWO THE REFLECTION ESDS IN A PAWLEY pdCIF ARE ALL "?".
         //
@@ -6883,6 +6892,57 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
             if (said.length) logEvent('Read from file: ' + said.join('; ') + '.');
         }
 
+        /**
+         * Merge a calculated pdCIF's reflection intensities into the live hkl
+         * list, in place of generateMasterHklList()'s flat placeholder height.
+         *
+         * Only called for a file where parsePdCifFile() set hasCalculatedData
+         * -- a plain experimental scan has no reflection loop to merge and
+         * this is never called for one. masterHklList must already reflect
+         * the CURRENT space group and cell (i.e. this runs after
+         * generateMasterHklList()), since matching is by (h,k,l) against
+         * whatever was just symmetry-generated.
+         *
+         * Writes through lastFitResultsCache rather than only masterHklList:
+         * that is the existing mechanism updatePreviewPattern() already reads
+         * to redraw the "Simulation (Manual)" curve from real intensities
+         * instead of either the flat placeholder or its own local-window
+         * estimate, so restoring a fit this way needs no new chart code.
+         *
+         * @param {object} pd  parsePdCifFile()'s return value.
+         * @returns {{matched: number, total: number}}
+         */
+        function restoreCifCalculatedPattern(pd) {
+            if (!pd || !pd.hasCalculatedData || !Array.isArray(pd.hklList) || !pd.hklList.length) {
+                return { matched: 0, total: 0 };
+            }
+            if (!Array.isArray(masterHklList) || !masterHklList.length) {
+                return { matched: 0, total: 0 };
+            }
+            if (typeof reflectionHeightsFromFsq !== 'function') {
+                console.warn('reflectionHeightsFromFsq is not available; cannot restore reflection intensities.');
+                return { matched: 0, total: masterHklList.length };
+            }
+
+            const heights = reflectionHeightsFromFsq(pd.hklList, getAllParams(), masterHklList);
+            let matched = 0;
+            masterHklList.forEach(peak => {
+                const key = peak.hkl_list && peak.hkl_list[0];
+                if (key && heights.has(key)) {
+                    peak.intensity = heights.get(key);
+                    matched++;
+                }
+            });
+
+            // The same list, in the shape updatePreviewPattern() expects from
+            // a remembered fit -- see the function comment above.
+            lastFitResultsCache = {
+                hklList: masterHklList.map(p => ({ hkl_list: p.hkl_list, intensity: p.intensity }))
+            };
+
+            return { matched, total: masterHklList.length };
+        }
+
         // 4. Main File Input: Clears the ENTIRE cache and sets up the application
         controls.fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
@@ -7015,9 +7075,51 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
 
                     updateWorkingData();
                     updatePlotRange(true);
-                    generateMasterHklList();      
+                    generateMasterHklList();
+
+                    // ---- CALCULATED vs EXPERIMENTAL pdCIF: two different loads ----
+                    //
+                    // parsePdCifFile() flags whether this file carries a finished
+                    // refinement (hasCalculatedData) or is a plain scan; only
+                    // some pdCIF files have one. generateMasterHklList() just
+                    // above always seeds every reflection at a flat placeholder
+                    // height -- the right thing for a fresh experimental file,
+                    // where there is nothing better to start from, but wrong for
+                    // a file that already carries real reflection intensities
+                    // and a real background: regenerating those from scratch is
+                    // exactly the bug this branch exists to avoid.
+                    if (parsedData.hasCalculatedData) {
+                        if (Array.isArray(parsedData.backgroundAnchors) && parsedData.backgroundAnchors.length >= 2) {
+                            // Exact points from the file, not the auto-placed
+                            // guess. `index` is recomputed against THIS load's
+                            // fullExperimentalData -- the offset saved in a
+                            // previous session means nothing here -- but should
+                            // land on the same points, since it's the same scan.
+                            backgroundAnchors = parsedData.backgroundAnchors.map(a => {
+                                const near = (typeof findClosestExperimentalPoint === 'function')
+                                    ? findClosestExperimentalPoint(a.tth) : null;
+                                return { tth: a.tth, y: a.y, index: near ? near.index : 0 };
+                            });
+                            if (typeof renderSplinePointList === 'function') renderSplinePointList();
+                            logEvent(`Background: ${backgroundAnchors.length} anchor point(s) read from file.`);
+                        } else {
+                            // A calculated pattern with no saved anchors (an
+                            // older export, or one written by something else):
+                            // fall back to the normal auto-placed background
+                            // rather than leaving it empty.
+                            autoFindSplinePoints(parseInt(document.getElementById('spline-points-slider').value));
+                        }
+
+                        const restored = restoreCifCalculatedPattern(parsedData);
+                        if (restored.matched > 0) {
+                            logEvent(`Reflections: ${restored.matched} of ${restored.total} ` +
+                                     `intensities restored from file.`);
+                        }
+                    } else {
+                        autoFindSplinePoints(parseInt(document.getElementById('spline-points-slider').value));
+                    }
+
                     updateBackgroundForPreview();
-                    autoFindSplinePoints(parseInt(document.getElementById('spline-points-slider').value));
 
                     rescalePlot(false); 
                     mainChart.update('none');

@@ -33,6 +33,10 @@
  * @property {object} [params]                  Profile/cell parameters.
  * @property {object} [spaceGroup]              { symbol, number }.
  * @property {object[]} [hklList]               Reflections with intensities.
+ * @property {object[]} [backgroundAnchors]      Spline background control points,
+ *                                              [{tth, y}, ...]. The points the
+ *                                              background was actually built
+ *                                              from, not the resulting curve.
  * @property {object} [stats]                   Figures of merit.
  * @property {object} [esds]                    Parameter esds, keyed as the
  *                                              report keys them ("I_(h,k,l)").
@@ -344,6 +348,35 @@ function writePdCIF(b) {
         L.push('');
     }
 
+    // ---- background anchor points ------------------------------------------
+    //
+    // The spline control points the background was actually built from --
+    // position and intensity -- not the pointwise curve written into the
+    // profile loop below. The dictionary has no tags for these, so they are
+    // private, the same as the profile model above.
+    //
+    // Without them, loading this file back could only rebuild the SHAPE of
+    // the background from whatever polynomial/Chebyshev parameters happen to
+    // be in the profile model; the anchors that were actually dragged into
+    // place would be gone, and the reconstructed background would not match
+    // what was subtracted from this pattern. _pd_proc_intensity_bkg_calc
+    // above is the resulting curve and is enough to redraw a plot that looks
+    // right; it is not enough to keep editing the background from where this
+    // file left off, because there is nothing there to drag.
+    if (Array.isArray(b.backgroundAnchors) && b.backgroundAnchors.length) {
+        const pts = b.backgroundAnchors.filter(
+            a => a && Number.isFinite(a.tth) && Number.isFinite(a.y));
+        if (pts.length) {
+            L.push('loop_',
+                   '    _powder5_bkg_anchor_2theta',
+                   '    _powder5_bkg_anchor_intensity');
+            for (const a of pts) {
+                L.push('  ' + ioNum(a.tth, 5) + '  ' + ioNum(a.y, 4));
+            }
+            L.push('');
+        }
+    }
+
     // ---- the profile ------------------------------------------------------
     const haveCalc = !!(b.calc && b.calc.length === b.tth.length);
     const haveBkg = !!(b.bkg && b.bkg.length === b.tth.length);
@@ -557,6 +590,90 @@ function reflectionStructureFactors(hklList, params, opts = {}) {
 }
 
 /**
+ * The inverse of reflectionStructureFactors(): |F|^2 back to a peak HEIGHT.
+ *
+ * Used only when restoring a calculated pdCIF's reflection list into the live
+ * hkl list, where .intensity has always meant a height, never |F|^2. Needs
+ * the model the file was fitted with -- profile parameters, polarisation,
+ * wavelength -- to invert Lp, the multiplicity and the profile-area integral:
+ * exactly the model reflectionStructureFactors() used to build |F|^2 in the
+ * first place, run backwards.
+ *
+ * A reflection whose |F|^2 could not be matched to a symmetry-generated
+ * position, or whose Lp or profile area could not be evaluated there, is left
+ * out of the returned map rather than guessed at with a placeholder: a
+ * preview built from a mix of restored and invented heights is worse than one
+ * that is honestly incomplete, and the caller can see exactly how many it got
+ * back from the size of the map.
+ *
+ * @param {object[]} hklList     {h,k,l,Fsq}, as parsePdCifFile returns.
+ * @param {object} params        Profile/cell parameters resolved from the file
+ *                               (e.g. the live getAllParams(), once the space
+ *                               group, cell and wavelength have been applied).
+ * @param {object[]} generated   Symmetry-generated reflections for this cell --
+ *                               h_orig/k_orig/l_orig/tth/multiplicity/d/hkl_list,
+ *                               as generateAndCacheHklIndices() + updateHklPositions()
+ *                               produce. Needed because |F|^2 alone carries
+ *                               neither the Bragg angle nor the multiplicity.
+ * @param {object} [opts]
+ * @param {number} [opts.scale]         Same meaning as in reflectionStructureFactors.
+ *                                      The overall scale is arbitrary -- see
+ *                                      writePdCIF()'s note on it -- and
+ *                                      whatever is left over here is absorbed
+ *                                      by the caller's own least-squares
+ *                                      preview scale factor, so 1 is a fine
+ *                                      default.
+ * @param {object} [opts.polarisation]  Model from polarizationFromParams().
+ * @returns {Map<string, number>}  hkl_list[0] ("(h,k,l)") -> height, using the
+ *                                 same key format masterHklList already keys
+ *                                 reflections by.
+ */
+function reflectionHeightsFromFsq(hklList, params, generated, opts = {}) {
+    const p = params || {};
+    const scale = Number.isFinite(opts.scale) ? opts.scale : 1;
+    const pol = opts.polarisation
+        || (typeof polarizationFromParams === 'function' ? polarizationFromParams(p) : null);
+    const dbl = (p.ratio > 1e-6 && p.lambda2 > 1e-6 &&
+                 Math.abs(p.lambda - p.lambda2) > 1e-6);
+    const doubletSum = dbl ? (1 + p.ratio) : 1;
+
+    const byKey = new Map();
+    for (const g of generated || []) {
+        if (g && Number.isFinite(g.tth)) byKey.set(`${g.h_orig},${g.k_orig},${g.l_orig}`, g);
+    }
+
+    const out = new Map();
+    for (const r of hklList || []) {
+        if (!Number.isFinite(r.Fsq)) continue;
+        const g = byKey.get(`${r.h},${r.k},${r.l}`);
+        if (!g) continue;
+
+        // Lp at the CORRECTED angle -- the same quantity reflectionStructureFactors()
+        // evaluated going forward.
+        let tthCorr = g.tth + (p.zeroShift || 0);
+        try {
+            if (typeof calculatePeakShift === 'function') tthCorr += calculatePeakShift(g.tth, p);
+        } catch { /* a shift model that cannot evaluate here leaves the angle alone */ }
+
+        const m = (Number.isFinite(g.multiplicity) && g.multiplicity > 0) ? g.multiplicity : 1;
+        const lp = (typeof lorentzPolarization === 'function') ? lorentzPolarization(tthCorr, pol) : NaN;
+        if (!Number.isFinite(lp) || !(lp > 0)) continue;
+
+        // K = the profile-area integral at UNIT height -- the same factor
+        // integratedPeakArea() divides out of a real height when it converts
+        // one to an area, recovered here by asking it for the area of an
+        // artificial height-1 peak at this reflection's own position.
+        const K = (typeof integratedPeakArea === 'function')
+            ? integratedPeakArea({ ...g, intensity: 1 }, p, 1) : NaN;
+        if (!Number.isFinite(K) || !(K > 0)) continue;
+
+        const height = (r.Fsq * m * lp * doubletSum) / (K * scale);
+        out.set((g.hkl_list && g.hkl_list[0]) || `(${r.h},${r.k},${r.l})`, height);
+    }
+    return out;
+}
+
+/**
  * Render a bundle in the requested format.
  * @param {string} formatId
  * @param {ExportBundle} bundle
@@ -586,13 +703,27 @@ function exportPattern(formatId, bundle) {
  * 1234, not a parse error.
  *
  * Everything the writer states is read back, not just the profile: the cell,
- * the space group, both wavelengths with the Ka2 ratio, the zero point and the
- * profile model. A file that describes a refinement and a reader that returns
- * only two columns of numbers meant a powder5 pdCIF could not restore the fit
- * it came from -- and the loss was silent, because the tags were all there.
+ * the space group, both wavelengths with the Ka2 ratio, the zero point, the
+ * profile model, the calculated and background curves, the reflection list
+ * and the background spline anchors. A file that describes a refinement and a
+ * reader that returns only two columns of numbers meant a powder5 pdCIF could
+ * not restore the fit it came from -- and the loss was silent, because the
+ * tags were all there.
+ *
+ * hasCalculatedData tells the caller which file this is. A plain
+ * experimental scan and a finished refinement are both valid pdCIF, but they
+ * need to be LOADED differently: the former has nothing to restore beyond the
+ * profile and should go through the normal "generate reflections from the
+ * space group" path, while the latter already has real reflection
+ * intensities and a real background, and generating fresh ones with a flat
+ * placeholder intensity would throw that away.
  *
  * @param {string} content
- * @returns {{tth: number[], intensity: number[], wavelength: number|null,
+ * @returns {{tth: number[], intensity: number[],
+ *            calc: number[]|null, bkg: number[]|null,
+ *            hklList: object[]|null, backgroundAnchors: object[]|null,
+ *            hasCalculatedData: boolean,
+ *            wavelength: number|null,
  *            wavelength2: number|null, ratio21: number|null,
  *            zeroShift: number|null, cell: object|null,
  *            spaceGroup: object|null, profileType: string|null,
@@ -704,13 +835,108 @@ function parsePdCifFile(content) {
         }
     }
 
+    // ---- the reflection loop, if the file has one --------------------------
+    //
+    // Only a file with calculated data has one -- a plain experimental scan
+    // has no structure model behind it and nothing to put here. What is
+    // stored is |F|^2 (see reflectionStructureFactors() above for how
+    // writePdCIF() derives it), not a peak height, and it is handed back as
+    // |F|^2 unchanged. Turning it into a height needs the exact profile,
+    // Lp and multiplicity model the file was fitted with; that conversion
+    // belongs to the caller, once it has resolved the space group and has
+    // that model in hand, not to this reader.
+    let hklList = null;
+    {
+        let j = 0;
+        while (j < lines.length) {
+            if (lines[j].trim().toLowerCase() !== 'loop_') { j++; continue; }
+            j++;
+            const tags = [];
+            while (j < lines.length && lines[j].trim().startsWith('_')) {
+                tags.push(lines[j].trim().toLowerCase()); j++;
+            }
+            const iH = tags.indexOf('_refln_index_h');
+            const iK = tags.indexOf('_refln_index_k');
+            const iL = tags.indexOf('_refln_index_l');
+            if (iH < 0 || iK < 0 || iL < 0) continue;    // not the reflection loop
+            const iD  = tags.indexOf('_refln_d_spacing');
+            const iWl = tags.indexOf('_pd_refln_wavelength_id');
+            const iF  = tags.indexOf('_refln_f_squared_meas');
+            const iFs = tags.indexOf('_refln_f_squared_sigma');
+            const rows = [];
+            while (j < lines.length) {
+                const s = lines[j].trim();
+                if (s === '' || s.startsWith('_') || s.startsWith('#') ||
+                    s.toLowerCase() === 'loop_' || s.toLowerCase().startsWith('data_')) break;
+                const tok = s.split(/\s+/);
+                if (tok.length >= tags.length) {
+                    const h = num(tok[iH]), k = num(tok[iK]), l = num(tok[iL]);
+                    if (Number.isFinite(h) && Number.isFinite(k) && Number.isFinite(l)) {
+                        rows.push({
+                            h, k, l,
+                            d: iD >= 0 ? num(tok[iD]) : NaN,
+                            wavelengthId: iWl >= 0 ? tok[iWl] : '1',
+                            // A bare "?" -- no F^2 could be formed for this
+                            // reflection when the file was written -- reads
+                            // back as NaN, not as an intensity of zero.
+                            Fsq: iF >= 0 ? num(tok[iF]) : NaN,
+                            Fsq_sigma: iFs >= 0 ? num(tok[iFs]) : NaN
+                        });
+                    }
+                }
+                j++;
+            }
+            if (rows.length) { hklList = rows; break; }
+        }
+    }
+
+    // ---- background anchor points, if the file has them --------------------
+    //
+    // The spline control points, not the pointwise curve in the profile loop
+    // below -- see the writer for why the two are not the same thing.
+    let backgroundAnchors = null;
+    {
+        let j = 0;
+        while (j < lines.length) {
+            if (lines[j].trim().toLowerCase() !== 'loop_') { j++; continue; }
+            j++;
+            const tags = [];
+            while (j < lines.length && lines[j].trim().startsWith('_')) {
+                tags.push(lines[j].trim().toLowerCase()); j++;
+            }
+            const iT = tags.indexOf('_powder5_bkg_anchor_2theta');
+            const iY = tags.indexOf('_powder5_bkg_anchor_intensity');
+            if (iT < 0 || iY < 0) continue;    // not the anchor loop
+            const rows = [];
+            while (j < lines.length) {
+                const s = lines[j].trim();
+                if (s === '' || s.startsWith('_') || s.startsWith('#') ||
+                    s.toLowerCase() === 'loop_' || s.toLowerCase().startsWith('data_')) break;
+                const tok = s.split(/\s+/);
+                if (tok.length >= tags.length) {
+                    const t = num(tok[iT]), y = num(tok[iY]);
+                    if (Number.isFinite(t) && Number.isFinite(y)) rows.push({ tth: t, y });
+                }
+                j++;
+            }
+            if (rows.length) { backgroundAnchors = rows; break; }
+        }
+    }
+
     // ---- find the profile loop -------------------------------------------
     const ANGLE = ['_pd_proc_2theta_corrected', '_pd_meas_2theta_scan',
                    '_pd_meas_2theta_corrected'];
     const INTEN = ['_pd_meas_intensity_total', '_pd_meas_counts_total',
                    '_pd_proc_intensity_total', '_pd_proc_intensity_net'];
+    // Written by writePdCIF() only when a fit produced them (haveCalc /
+    // haveBkg there). Their absence is exactly the signal used below to tell
+    // a plain experimental scan from a file that carries a calculated
+    // pattern -- so read them here, aligned 1:1 with tth/intensity, rather
+    // than as a separate pass that would have to re-match rows by 2-theta.
+    const CALC = ['_pd_calc_intensity_total', '_pd_proc_intensity_calc'];
+    const BKG  = ['_pd_proc_intensity_bkg_calc', '_pd_calc_intensity_bkg', '_pd_proc_intensity_bkg'];
 
-    const tth = [], intensity = [];
+    const tth = [], intensity = [], calc = [], bkg = [];
     let i = 0;
     while (i < lines.length) {
         if (lines[i].trim().toLowerCase() !== 'loop_') { i++; continue; }
@@ -719,8 +945,10 @@ function parsePdCifFile(content) {
         while (i < lines.length && lines[i].trim().startsWith('_')) {
             tags.push(lines[i].trim().toLowerCase()); i++;
         }
-        const iA = tags.findIndex(t => ANGLE.includes(t));
-        const iI = tags.findIndex(t => INTEN.includes(t));
+        const iA  = tags.findIndex(t => ANGLE.includes(t));
+        const iI  = tags.findIndex(t => INTEN.includes(t));
+        const iC  = tags.findIndex(t => CALC.includes(t));
+        const iBk = tags.findIndex(t => BKG.includes(t));
         if (iI < 0) continue;      // not the profile loop; skip its body
 
         while (i < lines.length) {
@@ -733,6 +961,11 @@ function parsePdCifFile(content) {
                 if (Number.isFinite(y)) {
                     intensity.push(y);
                     tth.push(iA >= 0 ? num(tok[iA]) : NaN);
+                    // '?' (no value) parses to NaN through num(), which is
+                    // right here too: a point the fit did not cover has no
+                    // calculated intensity, not a calculated zero.
+                    calc.push(iC  >= 0 ? num(tok[iC])  : NaN);
+                    bkg.push (iBk >= 0 ? num(tok[iBk]) : NaN);
                 }
             }
             i++;
@@ -760,8 +993,25 @@ function parsePdCifFile(content) {
     // The private tag has priority; otherwise convert the dictionary's offset.
     if (zeroShift === null && cifOffset !== null) zeroShift = -cifOffset;
 
+    // ONLY SOME pdCIF FILES CARRY CALCULATED DATA.
+    //
+    // A file written by exporting a raw scan has none of this: no calculated
+    // column, no reflection loop. A file written after a fit has both. This
+    // is the single flag the caller needs to choose between the two loading
+    // paths -- restore a finished calculated pattern, or treat the file as a
+    // fresh experimental scan -- rather than each caller re-deriving it from
+    // whether calc/hklList happen to be non-null.
+    const hasCalculatedData = calc.some(Number.isFinite) ||
+                              !!(hklList && hklList.some(r => Number.isFinite(r.Fsq)));
+
     return {
-        tth, intensity, wavelength, zeroShift,
+        tth, intensity,
+        // null, not an all-NaN array, when the file never had the column --
+        // "no data" and "a fit that covers nothing" should not look alike.
+        calc: calc.some(Number.isFinite) ? calc : null,
+        bkg: bkg.some(Number.isFinite) ? bkg : null,
+        hklList, backgroundAnchors, hasCalculatedData,
+        wavelength, zeroShift,
         wavelength2, ratio21,
         // Only handed back when the cell is actually complete enough to use.
         // A partial cell applied to the controls would leave a mix of this
@@ -779,6 +1029,7 @@ function parsePdCifFile(content) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         DATA_EXPORT_FORMATS, availableExportFormats, exportPattern, parsePdCifFile,
-        writeXY, writeXYCalc, writeUXD, writeXRA, writePdCIF, ioAxisStep
+        writeXY, writeXYCalc, writeUXD, writeXRA, writePdCIF, ioAxisStep,
+        reflectionStructureFactors, reflectionHeightsFromFsq
     };
 }
