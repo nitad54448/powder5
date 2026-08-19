@@ -28,6 +28,34 @@
 /* ------------------------------------------------------------------ */
 /*  Cell geometry                                                      */
 /* ------------------------------------------------------------------ */
+/*
+ *  ON THE OVERLAP WITH crystal.js.
+ *
+ *  crystal.js has cellVolume(), cellBasis() and fracDistance(); this file has
+ *  sharkoCellVolume(), sharkoOrthMatrix() and sharkoFracToCartLength(). The
+ *  names differ, so unlike sharkoLorentzPolarization() (removed above) there
+ *  is no collision and nothing silently overrides anything. They are NOT
+ *  interchangeable, and were left alone rather than merged:
+ *
+ *    cellVolume vs sharkoCellVolume -- identical to 1e-9 on every real cell,
+ *    but they disagree on a DEGENERATE one: crystal.js clamps the discriminant
+ *    and returns ~0, this one returns NaN. sharkoOrthMatrix() depends on the
+ *    NaN: it propagates into the matrix and every distance drawn from it,
+ *    which is how a nonsense cell announces itself instead of quietly
+ *    producing near-infinite coordinates.
+ *
+ *    fracDistance vs sharkoFracToCartLength -- genuinely different answers.
+ *    fracDistance searches the 5^3 neighbouring translations for an oblique
+ *    cell; this one rounds each fractional component, which is the minimum
+ *    image only for a near-orthogonal cell or inside sharkoReducedCell()'s
+ *    safe radius. On a triclinic cell (6.1 7.9 9.4 / 81.2 97.6 113.4) the
+ *    difference reaches 2.2 A, always in the same direction: this one reads
+ *    LONG. That is why the note on sharkoFracToCartLength() says to go through
+ *    the reduced basis for anything that decides an outcome.
+ *
+ *  So: one function was a duplicate and is gone; these two pairs are not
+ *  duplicates and merging them would change results.
+ */
 
 /** Unit-cell volume in A^3 (general triclinic formula). */
 function sharkoCellVolume(cell) {
@@ -527,30 +555,48 @@ function sharkoPattersonFFT(fullReflections, cell, requestedRes, lorchStrength =
 /* ------------------------------------------------------------------ */
 
 /**
- * Lorentz-polarisation factor, written in exactly the form Powder 5 states in
- * the "--- Lorentz-Polarisation ---" block of its report:
+ * Lorentz-polarisation factor:
  *
  *   Lp(2th) = L(2th) * P(2th)
  *     L(2th) = 1 / ( sin^2(th) * cos(th) )
  *     P(2th) = ( 1 + K * cos^2(2th) ) / ( 1 + K )
  *
- * K is the polarisation constant: 1 for an unpolarised beam (lab tube, no
- * monochromator), cos^2(2theta_m) for a monochromated beam. The report writes
- * it out as "Polarisation K", so it is read from the file rather than assumed.
+ * ---------------------------------------------------------------------------
+ *  THIS FILE NO LONGER DEFINES IT. crystal.js DOES.
+ * ---------------------------------------------------------------------------
  *
- * This is only a fallback. When the file supplies its own Lp column that value
- * is used instead, since it was computed at full precision from the refined
- * 2theta rather than from the value rounded for printing.
+ * Both files used to declare a global named sharkoLorentzPolarization(). Two
+ * function declarations of one name across two classic scripts is legal, and
+ * the LATER one silently wins -- which meant the definition in force depended
+ * on the importScripts order of whichever entry point you happened to be in.
+ * The two bodies were checked against each other over 2-theta = 1-170 deg at
+ * K = 0, 0.5, 0.8 and 1 and agreed to the last bit, so nothing was ever wrong;
+ * but an edit to either one would have changed the meaning of the other's
+ * callers, in some entry points and not others, with nothing to show for it.
+ *
+ * crystal.js is the canonical home because it holds the whole polarisation
+ * model rather than one factor of it: sharkoPolarizationK() resolving a
+ * descriptor to K, sharkoLorentzFactor() and sharkoPolarizationFactor() as the
+ * separate pieces, and sharkoLp() for callers holding a descriptor instead of
+ * a K. This file only ever had the one function, so it is the one that goes.
+ *
+ * CONSEQUENCE: symmetry_utils.js now depends on crystal.js. Any entry point
+ * that loads this file must load crystal.js first --
+ *
+ *     importScripts('crystal.js', 'symmetry_utils.js');
+ *
+ * -- and the check below says so out loud rather than leaving a caller to
+ * discover it as "sharkoLorentzPolarization is not defined" much later, in a
+ * stack frame that has nothing to do with loading.
  */
-function sharkoLorentzPolarization(tthDeg, K) {
-    if (!Number.isFinite(tthDeg) || tthDeg <= 0 || tthDeg >= 180) return 1;
-    const d2r = Math.PI / 180;
-    const th = 0.5 * tthDeg * d2r;
-    const s = Math.sin(th), c = Math.cos(th);
-    if (s < 1e-6 || c < 1e-6) return 1;
-    const k = Number.isFinite(K) && K >= 0 ? K : 1;
-    const P = (1 + k * Math.cos(tthDeg * d2r) ** 2) / (1 + k);
-    return P / (s * s * c);
+// Browser and worker only. Under Node each module has its own scope, globals
+// are not how anything is shared, and the export block below requires
+// crystal.js directly -- so warning there would be a false alarm on every
+// require().
+if (typeof module === 'undefined' && typeof sharkoLorentzPolarization !== 'function') {
+    console.warn('symmetry_utils.js: crystal.js is not loaded, so ' +
+                 'sharkoLorentzPolarization() is unavailable. Load crystal.js first ' +
+                 "-- importScripts('crystal.js', 'symmetry_utils.js').");
 }
 
 /* ------------------------------------------------------------------ */
@@ -911,7 +957,9 @@ if (typeof module !== 'undefined' && module.exports) {
         getExpansionOperators, expandReflections,
         sharkoCellVolume, sharkoOrthMatrix, sharkoFracToCartLength,
         sharkoReducedCell, sharkoMinImageDistance,
-        sharkoLorentzPolarization,
+        // Re-exported from its one definition, so a Node consumer of this
+        // module gets the same function the browser and the workers get.
+        sharkoLorentzPolarization: require('./crystal.js').sharkoLorentzPolarization,
         sharkoReciprocalMatrix, sharkoDStar, sharkoReciprocalAxisLengths,
         sharkoNextFFTSize, sharkoFFT3D, sharkoPattersonFFT,
         sharkoSmearMap, sharkoMapScaleFactor,

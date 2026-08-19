@@ -1,5 +1,6 @@
 // data_io.js
 // Writing patterns out, and reading pdCIF back in.
+// A bug exists in version 157 and before. patched in version 163 and above, 18 aug 2026.
 //
 // ---------------------------------------------------------------------------
 //  WHICH FORMATS ARE WRITTEN, AND WHY NOT THE OTHERS

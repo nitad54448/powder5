@@ -34,6 +34,12 @@ let currentSG = null;
 //  be in the dead zone for any of them.
 // ---------------------------------------------------------------------------
 let chargeFlipWorker = null;
+// The Wyckoff search has its OWN worker (js/wyckoff_worker.js). It is not a
+// stage of charge flipping and does not consume its map, so it does not share
+// its thread either: either run can be cancelled, crashed or terminated
+// without touching the other. Declared here for the same reason as the rest of
+// this block -- powder5.html reads it during setup.
+let wyckoffWorker = null;
 let cfRunning = false;
 let cfCancelled = false;
 let wyckoffRunning = false;

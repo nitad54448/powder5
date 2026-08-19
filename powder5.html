@@ -991,7 +991,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 163, 19 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 164, 19 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -999,6 +999,7 @@
     //11 aug 2026, implemented formula constraint
     //13 aug, moved the Wyckoff constraint block
     //14 aug, chenged the peak search in CF from interpolation to block integr
+    //19 aug, version 164: auto finding Z in Wyckoff search
     //removed the cctbx dependencies, all data is in /sg and /scatter
 
     document.addEventListener('DOMContentLoaded', async () => {     
@@ -1161,20 +1162,20 @@
         // the structure found so far, and runWyckoffSearch already returns it
         // on a co-operative stop -- shouldStop() was simply hardwired to false.
         // Stopping now finishes the run early and reports what it had.
-        if (!chargeFlipWorker) return;
+        if (!wyckoffWorker) return;
         wyckoffCancelled = true;
         wyCancel.disabled = true;
         setWyckoffStatus('Stopping\u2026 returning the best structure found so far.');
-        chargeFlipWorker.postMessage({ type: 'cancel-wyckoff' });
+        wyckoffWorker.postMessage({ type: 'cancel-wyckoff' });
 
         // Safety net for a worker that is wedged rather than searching. The
         // identity check is the test for "did it answer": done() nulls
         // chargeFlipWorker, so if this one is still current the request went
         // unanswered and killing it is the only way out.
-        const stuck = chargeFlipWorker;
+        const stuck = wyckoffWorker;
         setTimeout(() => {
-            if (chargeFlipWorker !== stuck) return;
-            terminateChargeFlipWorker();
+            if (wyckoffWorker !== stuck) return;
+            terminateWyckoffWorker();
             wySetRunning(false);
             document.body.style.cursor = '';
             wyckoffPhase = 'idle';
@@ -2014,10 +2015,14 @@ function clampNumberInput(el, fallback) {
  * True when the space group used for the solution contains inversion through
  * the origin.
  *
- * "Solution hand" is only meaningful for a chiral setting. In Pnma -- or any
- * other centrosymmetric group -- a map and its inverse describe the same
- * structure, so reporting "inverted" invites the reader to wonder what went
- * wrong when nothing did.
+ * NO LONGER CALLED. Its only caller was the "Solution hand" row in
+ * renderStructure(), which gated the row on the setting being non-centro-
+ * symmetric; the row is gone, because a powder pattern cannot determine a hand
+ * in ANY setting (see the note there). Kept rather than deleted because the
+ * question "does this setting contain -1 at the origin" is a real one that the
+ * CIF export and any future Flack-style caveat would ask, and the answer is
+ * fiddly enough to be worth not re-deriving. Delete it if nothing has picked
+ * it up by the next clear-out.
  * @returns {boolean}
  */
 function cfIsCentrosymmetricSetting() {
@@ -2042,7 +2047,7 @@ function cfIsCentrosymmetricSetting() {
  * started while a map happened to exist reported its progress somewhere the
  * user could not see, and the Wyckoff bar sat empty for the whole run.
  *
- * @param {object} msg  A cf-wyckoff-start or cf-wyckoff-progress message.
+ * @param {object} msg  A wy-start or wy-progress message.
  */
 /** Which phase the Wyckoff panel is currently reporting: idle, preparing or
  *  processing. Tracked so the status line is written once per transition. */
@@ -2064,7 +2069,7 @@ function wyckoffProgress(msg) {
     // There are now three states: Preparing while the device and tables are
     // built, Processing once generations are arriving, and a result at the end.
     // The idle state is the en dash setWyckoffStatus() already falls back to.
-    if (msg.type === 'cf-wyckoff-start') {
+    if (msg.type === 'wy-start' || msg.type === 'cf-wyckoff-start') {
         if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; void bar.offsetWidth; }
         if (gen) gen.textContent = 'Preparing\u2026';
         if (cc) cc.textContent = '--';
@@ -2535,6 +2540,33 @@ function startChargeFlipWorker() {
 
 function terminateChargeFlipWorker() {
     if (chargeFlipWorker) { chargeFlipWorker.terminate(); chargeFlipWorker = null; }
+}
+
+/**
+ * The Wyckoff search runs in its OWN worker.
+ *
+ * It used to be posted to js/charge_flipping_worker.js, which is why a failure
+ * in the Wyckoff arithmetic reported itself from a charge-flipping stack frame
+ * and read as if the two methods were still coupled. They are not, and now
+ * they do not share a thread either: a charge-flipping run and a Wyckoff run
+ * can be cancelled, crashed or terminated independently.
+ *
+ * `wyckoffWorker` itself is declared in js/state.js, alongside
+ * chargeFlipWorker and for the same reason: state.js loads before every other
+ * script, so nothing that runs during setup can catch it in its temporal dead
+ * zone.
+ */
+function startWyckoffWorker() {
+    if (!wyckoffWorker) wyckoffWorker = new Worker('js/wyckoff_worker.js');
+    // A reused worker still carries the previous launcher's handlers, which
+    // close over a different done() and a different status line.
+    wyckoffWorker.onmessage = null;
+    wyckoffWorker.onerror = null;
+    return wyckoffWorker;
+}
+
+function terminateWyckoffWorker() {
+    if (wyckoffWorker) { wyckoffWorker.terminate(); wyckoffWorker = null; }
 }
 
 function parseDistanceConstraints(text) {
@@ -4099,11 +4131,11 @@ function runWyckoffStandalone() {
     const windowsEl = document.getElementById('cf-wyckoff-windows');
     const iv = (el) => { const v = el ? parseInt(el.value, 10) : NaN; return Number.isNaN(v) ? null : v; };
 
-    startChargeFlipWorker();
+    startWyckoffWorker();
     const done = () => {
         wySetRunning(false);
         document.body.style.cursor = '';
-        terminateChargeFlipWorker();
+        terminateWyckoffWorker();
     };
     // WITHOUT THIS A WORKER CRASH LOCKS THE UI PERMANENTLY. wySetRunning(true)
     // has already disabled the left panel and set a wait cursor; nothing else
@@ -4111,24 +4143,26 @@ function runWyckoffStandalone() {
     // page reload is the only way back. runBuildStructure() below sets one; the
     // Wyckoff launcher did not. Assigned before postMessage so a failure during
     // worker startup is caught as well.
-    chargeFlipWorker.onerror = (ev) => {
+    wyckoffWorker.onerror = (ev) => {
         done();
         const m = 'Wyckoff worker crashed: ' + ((ev && ev.message) || 'unknown error');
         wyckoffPhase = 'idle';
         setWyckoffStatus(m, 'warn');
         showToast(m, 'error');
     };
-    chargeFlipWorker.onmessage = (e) => {
+    wyckoffWorker.onmessage = (e) => {
         const msg = e.data;
-        if (msg.type === 'cf-error') {
+        if (msg.type === 'wy-error' || msg.type === 'cf-error') {
             done(); setWyckoffStatus(msg.message, 'warn'); showToast(msg.message, 'error'); return;
         }
-        if (msg.type === 'cf-info') { showToast(msg.message, 'info'); return; }
-        if (msg.type === 'cf-wyckoff-start' || msg.type === 'cf-wyckoff-progress') {
+        if (msg.type === 'wy-info' || msg.type === 'cf-info') { showToast(msg.message, 'info'); return; }
+        // The search's running commentary, including the Z scan.
+        if (msg.type === 'wy-log') { logEvent('  ' + msg.message); return; }
+        if (msg.type === 'wy-start' || msg.type === 'wy-progress') {
             wyckoffProgress(msg);
             return;
         }
-        if (msg.type === 'cf-structure') {
+        if (msg.type === 'wy-structure') {
             done();
             cfStructure = msg.results;
             cfStructure.spaceGroup = sg;
@@ -4173,7 +4207,7 @@ function runWyckoffStandalone() {
             return;
         }
     };
-    chargeFlipWorker.postMessage({
+    wyckoffWorker.postMessage({
         type: 'wyckoff-search',
         cell,
         symops: got.symops,
@@ -4360,21 +4394,36 @@ function renderStructure(st, got) {
     cfScheduleIsosurface(0);
 
     const sg = st.spaceGroup;
+    // ----------------------------------------------------------------------
+    //  NO "SOLUTION HAND" ROW. IT IS NOT A RESULT A POWDER PATTERN CAN GIVE.
+    //
+    //  Friedel pairs hkl and -h-k-l have the same d-spacing, so they fall in
+    //  the same peak and are summed before anything is measured. Anomalous
+    //  scattering makes |F(hkl)| differ from |F(-h-k-l)| but the pattern only
+    //  ever shows the sum, so the difference is gone: absolute configuration
+    //  is not determinable from powder data, and there is no Flack parameter
+    //  to be had. The same goes for the enantiomorphic space-group pairs --
+    //  P3_1 and P3_2, P4_1 and P4_3 -- which give identical patterns.
+    //
+    //  st.hand is still produced and still needed: charge flipping cannot
+    //  distinguish rho(x) from rho(-x), so buildStructure tries both and
+    //  reports which orientation of the map correlated better with the chosen
+    //  operators. That is bookkeeping, and cfDrawStructure uses it to overlay
+    //  sites on the raw map. It is not a finding, and printing it in a results
+    //  summary invited it to be read as one.
+    //
+    //  (The peak-list hints and the exported CSV still SAY the hand is
+    //  arbitrary. That is the opposite statement and it stays.)
+    // ----------------------------------------------------------------------
     const rows = [
         ['Space group', `${sg.symbol || got.entry.standard_symbol} (No. ${sg.number})`],
         ['Operators applied', String(st.nOps)],
         ['Origin shift', `(${st.originShift.map(v => v.toFixed(4)).join(', ')})`],
-                // A centrosymmetric group contains inversion, so the map and its
-        // mirror image are the same structure and "hand" says nothing. Only
-        // report it where it can actually distinguish two solutions.
-        ...(cfIsCentrosymmetricSetting()
-            ? []
-            : [['Solution hand', (ref.hand === 'inverted' ? 'inverted (map was inverted to match the operators)'
-                                                          : 'as solved')]]),
         ['Symmetry correlation', st.symmetryCorrelation.toFixed(3)],
         ['Phase agreement', st.originScore.toFixed(3)],
-        ['Peaks → unique sites', `${st.rawPeakCount} → ${st.sites.length}`]
+        ['Peaks \u2192 unique sites', `${st.rawPeakCount} \u2192 ${st.sites.length}`]
     ];
+
     document.getElementById('cf-structure-summary').innerHTML =
         rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
 
