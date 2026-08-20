@@ -4821,10 +4821,10 @@ if (tooltipContainer && tooltipContent) {
             const isStd = currentSG.setting_description === 'standard';
             
             const settingInfo = !isStd
-    ? ` · ( setting ${currentSG.setting_description}, ${currentSG.symbol} )`
+    ? ` · ( setting ${currentSG.setting_description} )`
     : '';
 const base =
-    `#${currentSG.number} · ${currentSG.standard_symbol}`
+    `#${currentSG.number} · ${currentSG.symbol}`
     + settingInfo
     + ` · Laue ${currentSG.laue_class}`;
             // Monoclinic settings off unique axis b used to carry a warning

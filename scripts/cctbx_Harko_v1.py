@@ -811,6 +811,10 @@ def generate_all_space_groups(only=None):
             if only is not None and sg_num not in only:
                 continue
             hm_symbol = symbols.hermann_mauguin()
+            ext = str(symbols.extension()).strip().replace('\0', '')
+            if ext:
+                hm_symbol = f"{hm_symbol}:{ext}"
+
             hall = symbols.hall().strip()
 
             uid = hall
@@ -873,6 +877,11 @@ def generate_all_space_groups(only=None):
                 order_p = 0
 
             desc = symbols.qualifier() if symbols.qualifier() else "standard"
+            if ext == '1' and desc == "standard":
+                desc = "origin choice 1"
+            elif ext == '2' and desc == "standard":
+                desc = "origin choice 2"
+
             clean_sym = hm_symbol.replace(" ", "")
 
             all_data[str(sg_num)]["settings"].append({

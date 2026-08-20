@@ -290,7 +290,7 @@ if (state.selected) {
                     + `<h3>${escapeHtml(rec.display_label || rec.symbol)}</h3>`
                     + '<dl class="sg-explain-grid">'
                     + row('Number',    '#' + rec.number)
-                    + row('Symbol',    rec.standard_symbol)
+                    + row('Symbol',    rec.symbol)
                     + row('Setting',   rec.setting_description || '(default)')
                     + row('System',    rec.system)
                     + row('Laue class', rec.laue_class)
