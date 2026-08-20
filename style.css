@@ -841,15 +841,8 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 .bottom-actions > .control-group > .results-grid {
     grid-column: 1 / -1;
 }
-/* The 2-theta range sits like Method does: label left, control right. */
-.bottom-actions > .control-group > .tth-range-label { grid-column: 1; margin-bottom: 0; }
-.bottom-actions > .control-group > .range-row { grid-column: 2; }
-.bottom-actions > .control-group > label[for="algorithm-select"] {
-    grid-column: 1;
-    margin-bottom: 0;
-}
-.bottom-actions > .control-group > #algorithm-select {
-    grid-column: 2;
+/* Uniform label alignment for refinement grid elements */
+.bottom-actions > .control-group > .parameter-grid-2col > .control-label {
     margin-bottom: 0;
 }
 
@@ -1730,14 +1723,24 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 .run-row .btn { flex: 1 1 0; min-width: 0; }
 .run-row .btn:disabled { opacity: 0.45; cursor: default; }
 
-.range-row {
+.tth-slider-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    gap: 6px;
+    grid-template-columns: 1fr 75px;
+    gap: 8px;
     align-items: center;
+    margin-bottom: 6px;
 }
-.range-row .control-input { width: 100%; min-width: 0; box-sizing: border-box; text-align: right; }
-.range-row .range-dash { color: var(--system-secondary-label); font-size: 12px; }
+.tth-num-input {
+    width: 100%;
+    text-align: right;
+    font-family: var(--font-mono);
+}
+
+/* Background Spline Active Point Row Styling */
+.anchor-point-item.editing-point {
+    border-left: 3px solid var(--system-orange, #ff9f0a) !important;
+    background-color: var(--system-fill, rgba(255, 159, 10, 0.12));
+}
 
 
 /* ---------------------------------------------------------------------------
@@ -1777,3 +1780,32 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 /* The export dialog reuses the space-group modal chrome; it only needs a
    footer rule, which that modal did not have. */
 .sg-modal-footer { border-top: 1px solid var(--system-separator); }
+
+/* Per-site colour picker in the isosurface legend */
+.cf-site-color {
+    -webkit-appearance: none; -moz-appearance: none; appearance: none;
+    padding: 0;
+    min-width: 12px;
+    min-height: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.28);
+    border-radius: 3px;
+    background: none;
+    cursor: pointer;
+    flex: 0 0 auto;
+    vertical-align: middle;
+}
+.cf-site-color::-webkit-color-swatch-wrapper { padding: 0; }
+.cf-site-color::-webkit-color-swatch { border: none; border-radius: 2px; }
+.cf-site-color::-moz-color-swatch { border: none; border-radius: 2px; }
+.cf-site-row.is-hidden .cf-site-color { opacity: 0.45; }
+
+/* Legend actions row */
+.cf-site-legend-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 1px 0 5px;
+}
+.cf-site-legend-actions > button { white-space: nowrap; }
+

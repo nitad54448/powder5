@@ -454,15 +454,27 @@ function generateReportContent(format = 'summary', resultsArg = null) {
     //   ADDED: Background Points Section, version 115, 25 oct 2025  
     const backgroundPointsSection = [];
     if (backgroundAnchors && backgroundAnchors.length > 0) {
-         const bgWidths = [15, 18]; // 2theta, Intensity
-         const bgHeader = formatLine(['2theta (°)', 'Intensity'], bgWidths);
+         const bgWidths = [15, 18, 18]; // 2theta, Intensity, ESD
+         const isBgRefined = fitFlags && fitFlags.fitBackground;
+         const bgHeader = formatLine(['2theta (°)', 'Intensity', 'ESD'], bgWidths);
          backgroundPointsSection.push('', '--- Background Spline Points ---', bgHeader, '-'.repeat(bgHeader.length));
          // Use a copy sorted by tth for the report
          const sortedAnchors = [...backgroundAnchors].sort((a, b) => a.tth - b.tth);
-         sortedAnchors.forEach(point => {
+         sortedAnchors.forEach((point, i) => {
+              let esdStr = '-';
+              if (isBgRefined && esds[`bg_y_${i}`] !== undefined) {
+                  const esdValue = esds[`bg_y_${i}`];
+                  if (typeof esdValue === 'number' && isFinite(esdValue)) {
+                      esdStr = `(${esdValue.toExponential(2)})`;
+                  } else if (isNaN(esdValue)) {
+                      esdStr = '(NaN)';
+                  }
+              }
+              const yVal = (isBgRefined && finalParams[`bg_y_${i}`] !== undefined) ? finalParams[`bg_y_${i}`] : point.y;
               backgroundPointsSection.push(formatLine([
                   point.tth.toFixed(4),
-                  point.y.toFixed(2)
+                  yVal.toFixed(2),
+                  esdStr
               ], bgWidths));
          });
          backgroundPointsSection.push(''); // Add blank line after section

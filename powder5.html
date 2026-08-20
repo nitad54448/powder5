@@ -1,7 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -12,17 +10,9 @@
     <!-- three.js r160 UMD. r161 removed build/three.min.js, so the version is
          pinned; the isosurface viewer degrades to a message without it. -->
     <script src="lib/three.min.js"></script>
-    <!-- Shared modules: single source of truth for the physical constants, the
-         lattice geometry and the peak-shape model. The workers load the same
-         three files via importScripts. Order matters (profile.js reads
-         constants.js's declarations) and they must come BEFORE density3d.js,
-         which uses crystal.js's cellBasis/fracToCart. -->
     <script src="js/state.js"></script>
     <script src="js/constants.js"></script>
     <script src="js/crystal.js"></script>
-    <!-- Structure plot, contact list and bond-valence analysis for the
-         Wyckoff results panel. Self-contained; reads only the structure
-         object the search already produces. -->
     <script src="js/wyckoff_report.js"></script>
     <script src="js/polarization.js"></script>
     <script src="js/profile.js"></script>
@@ -35,64 +25,16 @@
     <script src="js/charting.js"></script>
     <script src="js/spline_background.js"></script>
     <script src="js/refinement_controller.js"></script>
-    <!-- .brml and .rasx are ZIP archives; parsers.js unzips them through this.
-         Absent, those two formats are refused with an explanation rather than
-         failing as a parse error - nothing else depends on it. -->
     <script src="lib/jszip.min.js"></script>
     <script src="lib/jspdf.umd.min.js"></script>
-
     <script src="lib/html2canvas.min.js"></script>
-    
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
     <!-- Extracted CSS -->
     <link rel="stylesheet" href="style.css">
-
-    <!-- Per-site colour picker in the isosurface legend.
-         Kept here rather than in style.css because it is only three rules and
-         they exist purely to strip the native <input type="color"> chrome --
-         the browser's default padding and border make a 14px swatch look like
-         a button. The vendor pseudo-elements cannot be set from an inline
-         style attribute, which is why this is a rule block and not inline.
-         Sizing is left to .cf-site-swatch in style.css so the picker lines up
-         with whatever the rest of the legend uses. -->
-    <style>
-      .cf-site-color {
-        -webkit-appearance: none; -moz-appearance: none; appearance: none;
-        padding: 0;
-        min-width: 12px;
-        min-height: 12px;
-        border: 1px solid rgba(0, 0, 0, 0.28);
-        border-radius: 3px;
-        background: none;
-        cursor: pointer;
-        flex: 0 0 auto;
-        vertical-align: middle;
-      }
-      .cf-site-color::-webkit-color-swatch-wrapper { padding: 0; }
-      .cf-site-color::-webkit-color-swatch { border: none; border-radius: 2px; }
-      .cf-site-color::-moz-color-swatch { border: none; border-radius: 2px; }
-      .cf-site-row.is-hidden .cf-site-color { opacity: 0.45; }
-
-      /* Legend actions row. The title keeps its own line above; these two sit
-         under it, left and right, matching the columns they act on. Both need
-         nowrap: at this width "hide all" and "reset colours" otherwise break
-         mid-label, which is what made them look like three controls. */
-      .cf-site-legend-actions {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        margin: 1px 0 5px;
-      }
-      .cf-site-legend-actions > button { white-space: nowrap; }
-    </style>
-
 </head>
-
-
 <body>
 
 <script>
@@ -125,20 +67,10 @@
     })();
 </script>
 
-
-
-
-
-
-
-
-
 <div id="app-container">
         <div id="controls-panel">
             <div id="controls-scroll">
-            
             <input type="file" id="file-input" class="hidden" accept=".asc,.brml,.cif,.csv,.dat,.esd,.gsa,.mdi,.prn,.ras,.rasx,.rd,.sd,.std,.txt,.udf,.uxd,.xra,.xrdml,.xy">
-
             <div class="tab-buttons">
                 <button class="tab-btn active" data-tab="sample">Sample</button>
                 <button class="tab-btn" data-tab="background">Background</button>
@@ -153,10 +85,6 @@
             <div id="tab-panel-sample" class="tab-content-panel active">
                 <div class="control-group">
                     <h2>Data</h2>
-                    <!-- Load keeps its caption whatever is loaded: a button that
-                         renames itself to the current file stops looking like the
-                         control that opens a new one. The file in hand is stated
-                         below instead, where a name belongs. -->
                     <div class="run-row">
                         <button type="button" id="load-file-btn" class="btn btn-primary">Load file</button>
                         <button type="button" id="save-file-btn" class="btn" disabled
@@ -250,16 +178,13 @@
                     </div>
                 
                         <div class="form-row" style="margin-bottom: 16px;">
-                           <label for="show-spline-points-checkbox" class="control-label">Show Points on Chart</label>
-                           <input type="checkbox" id="show-spline-points-checkbox" class="fit-checkbox" style="justify-self: start;">
+                           <label for="fit-background-checkbox" class="control-label">Fit background</label>
+                           <input type="checkbox" id="fit-background-checkbox" class="fit-checkbox" style="justify-self: end;">
                        </div>
-                        <!-- The height was pinned at 230px, which showed about
-                             six of forty anchors on any screen. It now scales
-                             with the viewport (the subtracted constant is the
-                             header, tab strip and the two controls above this
-                             list) and carries a drag handle, so a tall window
-                             shows the whole table and a short one still leaves
-                             the rest of the panel reachable. -->
+                        <div class="form-row" style="margin-bottom: 16px;">
+                           <label for="show-spline-points-checkbox" class="control-label">Show Points on Chart</label>
+                           <input type="checkbox" id="show-spline-points-checkbox" class="fit-checkbox" style="justify-self: end;">
+                       </div>
                         <div id="spline-points-list" style="height: clamp(160px, calc(100vh - 420px), 62vh); overflow-y: auto; resize: vertical; border: 1px solid var(--system-gray-4); border-radius: 8px; padding: 8px 0 8px 8px;">
                             </div>
                     </div>
@@ -738,32 +663,37 @@
 
                 <div id="wyckoff-status" class="cf-hint" style="margin-top: 12px;">&ndash;</div>
             </div>
-
-
             </div> <!-- Closes tab-content-panels -->
 
-            <div class="bottom-actions"> 
+
+
+<div class="bottom-actions"> 
                  <div class="control-group" style="border-top: none; padding-top: 0;">
                      <h2>Refinement</h2>
-                     <label for="algorithm-select" class="control-label">Method</label>
-                     <select id="algorithm-select" class="control-select">
-                        <option value="lm">Levenberg-Marquardt</option>
-                        <option value="pt" selected>Parallel Tempering</option>
-                     </select>
-                     
-                     <div class="parameter-grid-2col" style="gap: 16px;">
+                     <div class="parameter-grid-2col" style="gap: 12px; width: 100%;">
+                         <label for="algorithm-select" class="control-label">Method</label>
+                         <select id="algorithm-select" class="control-select">
+                            <option value="lm">Levenberg-Marquardt</option>
+                            <option value="pt" selected>Parallel Tempering</option>
+                         </select>
+
                          <label class="control-label" for="iterations-slider">Max Iterations</label>
                          <div class="slider-value-track">
                              <input type="range" id="iterations-slider" class="custom-slider" min="2" max="100" value="20" step="1">
                              <span id="iterations-value" class="slider-value-display">20</span>
                          </div>
-                     </div>
 
-                     <label class="control-label tth-range-label">Fitted 2θ range (°)</label>
-                     <div class="range-row">
-                         <input type="number" id="tth-min-slider" step="0.01" class="control-input" disabled>
-                         <span class="range-dash">–</span>
-                         <input type="number" id="tth-max-slider" step="0.01" class="control-input" disabled>
+                         <label class="control-label" for="tth-min-range">2θ min (°)</label>
+                         <div class="tth-slider-row">
+                             <input type="range" id="tth-min-range" class="custom-slider" step="0.01" disabled>
+                             <input type="number" id="tth-min-slider" step="0.01" class="control-input tth-num-input" disabled>
+                         </div>
+
+                         <label class="control-label" for="tth-max-range">2θ max (°)</label>
+                         <div class="tth-slider-row">
+                             <input type="range" id="tth-max-range" class="custom-slider" step="0.01" disabled>
+                             <input type="number" id="tth-max-slider" step="0.01" class="control-input tth-num-input" disabled>
+                         </div>
                      </div>
 
                      <div id="progress-bar-container" class="hidden" style="width: 100%; border-radius: 3px; height: 5px;">
@@ -991,7 +921,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 164, 19 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 165, 20 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1000,6 +930,7 @@
     //13 aug, moved the Wyckoff constraint block
     //14 aug, chenged the peak search in CF from interpolation to block integr
     //19 aug, version 164: auto finding Z in Wyckoff search
+    //20 aug, added background fit
     //removed the cctbx dependencies, all data is in /sg and /scatter
 
     document.addEventListener('DOMContentLoaded', async () => {     
@@ -1371,12 +1302,6 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
         }
     }
    
-// chargeFlipWorker, cfRunning, cfCancelled, wyckoffRunning, wyckoffCancelled
-// and cfLastResult are declared in js/state.js -- see the note there. They
-// were here, below the setup code that reads them, which put them in the
-// temporal dead zone during initialisation.
-
-
 // Completes a refined parameter set into a full six-parameter cell.
 //
 // getAllParams already fixes the angles per system, but the lengths come
@@ -1490,7 +1415,6 @@ function cfIsCentric(h, k, l, symops) {
     return false;
 }
 
-
 // The intensity ESDs, taken from the same normal-equations matrix the report
 // uses. Returns a plain object keyed by the parameter name, or null when the
 // matrix is unavailable or singular -- which is common, because exactly
@@ -1528,9 +1452,6 @@ function intensityEsdsFromCovariance(fr) {
  * Group the refined Pawley intensities into OVERLAP CLUSTERS and report, for
  * each cluster, the quantity that is actually determined.
  *
- * -------------------------------------------------------------------------
- *  WHY THIS EXISTS
- * -------------------------------------------------------------------------
  *  A Pawley fit can show a beautifully fitted peak and still return an
  *  intensity with an ESD seventeen times its own value. That is not a broken
  *  fit and not a broken ESD -- it is the correct answer to a question that has
@@ -1724,9 +1645,6 @@ function monoclinicUniqueAxis(sg) {
     _monoAxisCache.set(key, axis);
     return axis;
 }
-
-// MOVED to crystal.js: MONOCLINIC_ANGLE_FOR_AXIS (and its companion
-// MONOCLINIC_FIXED_ANGLES_FOR_AXIS, plus normaliseCell which applies them).
 
 function fullCellFromParams(p, system) {
     if (!p) return null;
@@ -4856,11 +4774,10 @@ if (tooltipContainer && tooltipContent) {
             rpResult: document.getElementById('rp-result'),
             rwpResult: document.getElementById('rwp-result'),
             chi2Result: document.getElementById('chi2-result'),
-            mainChartCanvas: document.getElementById('main-chart'),
+  mainChartCanvas: document.getElementById('main-chart'),
             placeholder: document.getElementById('placeholder'),
             resultsContainer: document.getElementById('results-container'),
-
- resultsContainer: document.getElementById('results-container'),
+            fitBackgroundCheckbox: document.getElementById('fit-background-checkbox'),
                     };
 
         // Initialize Charting Navigation now that controls are mapped
@@ -5022,15 +4939,31 @@ const base =
             // the ends keeps the background defined right up to the new
             // limits, so removing an edge anchor does not leave a gap.
             if (Array.isArray(backgroundAnchors) && backgroundAnchors.length) {
-                const before = backgroundAnchors.length;
-                backgroundAnchors = backgroundAnchors.filter(
-                    p => p && Number.isFinite(p.tth) && p.tth >= minTth && p.tth <= maxTth);
-                const dropped = before - backgroundAnchors.length;
-                if (dropped > 0) {
-                    if (typeof renderSplinePointList === 'function') renderSplinePointList();
-                    showToast(`${dropped} background point${dropped === 1 ? '' : 's'} ` +
-                              `outside ${minTth.toFixed(2)}\u2013${maxTth.toFixed(2)}\u00b0 removed.`, 'info');
+                const validTths = backgroundAnchors
+                    .filter(p => p && Number.isFinite(p.tth))
+                    .map(p => p.tth)
+                    .sort((a, b) => a - b);
+
+                const anyOutOfRange = backgroundAnchors.some(
+                    p => !p || !Number.isFinite(p.tth) || p.tth < minTth || p.tth > maxTth);
+
+                // Trigger redistribution if points exceed bounds OR no longer reach the active range edges
+                const margin = 0.05;
+                const spanIncomplete = validTths.length === 0 ||
+                    (validTths[0] - minTth > margin) ||
+                    (maxTth - validTths[validTths.length - 1] > margin);
+
+                if (anyOutOfRange || spanIncomplete) {
+                    const sliderEl = document.getElementById('spline-points-slider');
+                    const numPoints = sliderEl ? parseInt(sliderEl.value, 10) : backgroundAnchors.length;
+                    if (typeof autoFindSplinePoints === 'function') {
+                        autoFindSplinePoints(numPoints);
+                    }
                 }
+            }
+
+            if (typeof updateBackgroundForPreview === 'function') {
+                updateBackgroundForPreview();
             }
 
             // Pre-calculate weights into a new Float64Array for performance
@@ -5679,15 +5612,12 @@ function generateMasterHklList() {
     updatePreviewPattern();
 }
 
-        function updateBackgroundForPreview() {
+ function updateBackgroundForPreview() {
             if (fullExperimentalData.tth.length === 0 || isFitting) return;
 
             const params = getAllParams();
             // *** PASS SPLINE POINTS (backgroundAnchors) TO BACKGROUND CALCULATION ***
             calculatedBackground = calculateTotalBackground(fullExperimentalData.tth, params, backgroundAnchors);
-
-
-
 
             if (mainChart) {
                 const currentXMin = mainChart.scales.x.min;
@@ -5697,24 +5627,31 @@ function generateMasterHklList() {
 
                 const backgroundDataset = mainChart.data.datasets.find(d => d.label === 'Background');
                 if (backgroundDataset) {
-                    backgroundDataset.data = fullExperimentalData.tth.map((t, i) => ({ x: t, y: calculatedBackground[i] }));
+                    backgroundDataset.hidden = false;
+                    const start = workingData.startIndex || 0;
+                    if (workingData && workingData.tth && workingData.tth.length > 0) {
+                        backgroundDataset.data = Array.from(workingData.tth).map((t, i) => ({
+                            x: t,
+                            y: calculatedBackground[start + i]
+                        }));
+                    } else {
+                        backgroundDataset.data = Array.from(fullExperimentalData.tth).map((t, i) => ({
+                            x: t,
+                            y: calculatedBackground[i]
+                        }));
+                    }
                 }
-                
-                updatePreviewPattern(); 
-                
+
+                updatePreviewPattern();
+
                 mainChart.options.scales.x.min = currentXMin;
                 mainChart.options.scales.x.max = currentXMax;
                 mainChart.options.scales.y.min = currentYMin;
                 mainChart.options.scales.y.max = currentYMax;
-                
+
                 mainChart.update('none');
             }
-
-
-
-
         }
-
 
 /**
  * Performs a Williamson-Hall analysis using the refined TCH profile parameters.
@@ -5873,9 +5810,14 @@ function calculateWilliamsonHall(params, hklList) {
                  isFitting = false; setUIState(false); return;
             }
 
-            const currentParams = getAllParams();
-            if (currentParams.__invalidFields && currentParams.__invalidFields.length > 0) {
-                showToast(
+const currentParams = getAllParams();
+    if (controls.fitBackgroundCheckbox && controls.fitBackgroundCheckbox.checked) {
+        backgroundAnchors.forEach((anchor, i) => {
+            currentParams[`bg_y_${i}`] = anchor.y;
+        });
+    }
+
+    if (currentParams.__invalidFields && currentParams.__invalidFields.length > 0) {                showToast(
                     `Cannot start: these fields are empty or not a number - ${currentParams.__invalidFields.join(', ')}.`,
                     "error"
                 );
@@ -6059,6 +6001,7 @@ const minTth = parseFloat(controls.tthMinSlider.value);
                 beta: document.getElementById('fit-lattice-beta')?.checked ?? false,
                 gamma: document.getElementById('fit-lattice-gamma')?.checked ?? false,
                 zeroShift: controls.fitZeroShift.checked,
+                fitBackground: controls.fitBackgroundCheckbox ? controls.fitBackgroundCheckbox.checked : false,
             };
 
             switch (profileType) {
@@ -6806,6 +6749,92 @@ function debounce(func, wait) {
             }
         });
         
+        // Two-way binding between 2θ sliders and text fields with loop protection and plot sync
+        const tthMinRange = document.getElementById('tth-min-range');
+        const tthMaxRange = document.getElementById('tth-max-range');
+        let isTthSyncing = false;
+
+        const updateRangeAndPlot = () => {
+            updateWorkingData();
+            if (typeof updatePlotRange === 'function') updatePlotRange(false);
+        };
+
+        if (tthMinRange && controls.tthMinSlider && tthMaxRange) {
+            const onMinRangeChange = () => {
+                if (isTthSyncing) return;
+                isTthSyncing = true;
+                let minVal = parseFloat(tthMinRange.value);
+                const maxVal = parseFloat(tthMaxRange.value);
+                if (minVal >= maxVal) {
+                    minVal = Math.max(parseFloat(tthMinRange.min) || 0, maxVal - 0.01);
+                    tthMinRange.value = minVal;
+                }
+                controls.tthMinSlider.value = minVal.toFixed(2);
+                updateRangeAndPlot();
+                isTthSyncing = false;
+            };
+
+            const onMinNumChange = () => {
+                if (isTthSyncing) return;
+                isTthSyncing = true;
+                const val = parseFloat(controls.tthMinSlider.value);
+                if (Number.isFinite(val)) {
+                    tthMinRange.value = val;
+                    let minVal = parseFloat(tthMinRange.value);
+                    const maxVal = parseFloat(tthMaxRange.value);
+                    if (minVal >= maxVal) {
+                        minVal = Math.max(parseFloat(tthMinRange.min) || 0, maxVal - 0.01);
+                        tthMinRange.value = minVal;
+                        controls.tthMinSlider.value = minVal.toFixed(2);
+                    }
+                    updateRangeAndPlot();
+                }
+                isTthSyncing = false;
+            };
+
+            tthMinRange.addEventListener('input', onMinRangeChange);
+            controls.tthMinSlider.addEventListener('input', onMinNumChange);
+            controls.tthMinSlider.addEventListener('change', onMinNumChange);
+        }
+
+        if (tthMaxRange && controls.tthMaxSlider && tthMinRange) {
+            const onMaxRangeChange = () => {
+                if (isTthSyncing) return;
+                isTthSyncing = true;
+                let maxVal = parseFloat(tthMaxRange.value);
+                const minVal = parseFloat(tthMinRange.value);
+                if (maxVal <= minVal) {
+                    maxVal = Math.min(parseFloat(tthMaxRange.max) || 180, minVal + 0.01);
+                    tthMaxRange.value = maxVal;
+                }
+                controls.tthMaxSlider.value = maxVal.toFixed(2);
+                updateRangeAndPlot();
+                isTthSyncing = false;
+            };
+
+            const onMaxNumChange = () => {
+                if (isTthSyncing) return;
+                isTthSyncing = true;
+                const val = parseFloat(controls.tthMaxSlider.value);
+                if (Number.isFinite(val)) {
+                    tthMaxRange.value = val;
+                    let maxVal = parseFloat(tthMaxRange.value);
+                    const minVal = parseFloat(tthMinRange.value);
+                    if (maxVal <= minVal) {
+                        maxVal = Math.min(parseFloat(tthMaxRange.max) || 180, minVal + 0.01);
+                        tthMaxRange.value = maxVal;
+                        controls.tthMaxSlider.value = maxVal.toFixed(2);
+                    }
+                    updateRangeAndPlot();
+                }
+                isTthSyncing = false;
+            };
+
+            tthMaxRange.addEventListener('input', onMaxRangeChange);
+            controls.tthMaxSlider.addEventListener('input', onMaxNumChange);
+            controls.tthMaxSlider.addEventListener('change', onMaxNumChange);
+        }
+
         // 2. Triggers for SIMPLE Preview Update (these use the cached HKLs)
 const controlsPanel = document.getElementById('controls-panel');
 controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile-tch-aniso-container input, #profile-split-pvoigt-container input').forEach(el => {
@@ -6820,6 +6849,81 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
     document.getElementById('profile-function-select').addEventListener('change', handleSimplePreviewUpdate);
     document.getElementById('zero-shift').addEventListener('input', handleSimplePreviewUpdate);
     document.getElementById('fit-zero-shift').addEventListener('change', handleSimplePreviewUpdate);
+
+        // Background point table editing marker setup
+        let activeBgMarkerTth = null;
+
+        if (typeof Chart !== 'undefined') {
+            Chart.register({
+                id: 'bgMarkerPlugin',
+                afterDatasetsDraw(chart) {
+                    if (activeBgMarkerTth === null || !Number.isFinite(activeBgMarkerTth)) return;
+                    const xScale = chart.scales.x;
+                    const yScale = chart.scales.y;
+                    if (!xScale || !yScale) return;
+
+                    const xPixel = xScale.getPixelForValue(activeBgMarkerTth);
+                    if (xPixel < xScale.left || xPixel > xScale.right) return;
+
+                    const ctx = chart.ctx;
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.setLineDash([4, 3]);
+                    ctx.strokeStyle = '#ff9f0a';
+                    ctx.lineWidth = 2;
+                    ctx.moveTo(xPixel, yScale.top);
+                    ctx.lineTo(xPixel, yScale.bottom);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+            });
+        }
+
+        const splineListEl = document.getElementById('spline-points-list');
+        if (splineListEl) {
+            const updateActiveMarker = (target) => {
+                const activeEl = document.activeElement;
+                if (!target || !splineListEl.contains(target)) {
+                    activeBgMarkerTth = null;
+                    splineListEl.querySelectorAll('.anchor-point-item').forEach(el => {
+                        el.classList.remove('editing-point');
+                    });
+                } else {
+                    const item = target.closest('.anchor-point-item');
+                    splineListEl.querySelectorAll('.anchor-point-item').forEach(el => {
+                        const shouldBeEditing = (el === item);
+                        if (el.classList.contains('editing-point') !== shouldBeEditing) {
+                            el.classList.toggle('editing-point', shouldBeEditing);
+                        }
+                    });
+                    if (item) {
+                        const inputs = item.querySelectorAll('input');
+                        const tthVal = inputs[0] ? parseFloat(inputs[0].value) : NaN;
+                        activeBgMarkerTth = Number.isFinite(tthVal) ? tthVal : null;
+                    } else {
+                        activeBgMarkerTth = null;
+                    }
+                }
+                if (typeof mainChart !== 'undefined' && mainChart) {
+                    requestAnimationFrame(() => {
+                        mainChart.update('none');
+                        if (activeEl && document.contains(activeEl) && document.activeElement !== activeEl) {
+                            activeEl.focus();
+                        }
+                    });
+                }
+            };
+
+            splineListEl.addEventListener('focusin', (e) => updateActiveMarker(e.target));
+            splineListEl.addEventListener('input', (e) => updateActiveMarker(e.target));
+            splineListEl.addEventListener('focusout', () => {
+                setTimeout(() => {
+                    if (!splineListEl.contains(document.activeElement)) {
+                        updateActiveMarker(null);
+                    }
+                }, 50);
+            });
+        }
 
         // 3. Background parameters have their own dedicated updater function
         document.getElementById('tab-panel-background').addEventListener('input', (e) => {
@@ -7118,15 +7222,21 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                     const max = fullExperimentalData.tth[fullExperimentalData.tth.length - 1];
                     const step = (max - min) / 2000;
 
-                    [controls.tthMinSlider, controls.tthMaxSlider].forEach(slider => {
-                        slider.min = min;
-                        slider.max = max;
-                        slider.step = step;
-                        slider.disabled = false;
+                    const tthMinRange = document.getElementById('tth-min-range');
+                    const tthMaxRange = document.getElementById('tth-max-range');
+
+                    [controls.tthMinSlider, controls.tthMaxSlider, tthMinRange, tthMaxRange].forEach(el => {
+                        if (!el) return;
+                        el.min = min;
+                        el.max = max;
+                        el.step = step;
+                        el.disabled = false;
                     });
                     
                     controls.tthMinSlider.value = min;
                     controls.tthMaxSlider.value = max;
+                    if (tthMinRange) tthMinRange.value = min;
+                    if (tthMaxRange) tthMaxRange.value = max;
                     
                     updateUIForSystemChange();
 

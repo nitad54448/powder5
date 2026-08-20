@@ -51,6 +51,15 @@ function createRefinementWorker() {
                 if (fitResults && fitResults.params) window.enforceSymmetryConstraints(fitResults.params);
                 lastFitResultsCache = JSON.parse(JSON.stringify(fitResults)); 
 
+                if (fitResults.fitFlags && fitResults.fitFlags.fitBackground) {
+                    backgroundAnchors.forEach((anchor, i) => {
+                        if (fitResults.params[`bg_y_${i}`] !== undefined) {
+                            anchor.y = fitResults.params[`bg_y_${i}`];
+                        }
+                    });
+                    if (window.renderSplinePointList) window.renderSplinePointList();
+                }
+
                 try {
                     const histMode = (fitResults.refinementMode === 'pawley') ? 'pawley' : 'lebail';
                     window.rpSnapshotFit(histMode, fitResults);

@@ -1009,11 +1009,14 @@ function calculateTotalBackground(tthAxis, params, splinePoints, outArr = null) 
     background.fill(0);
     if (n === 0 || !splinePoints || splinePoints.length < 2) return background;
 
-    const sortedPoints = [...splinePoints].sort((a, b) => a.tth - b.tth);
+    const mappedPoints = splinePoints.map((p, i) => ({
+        tth: p.tth,
+        y: (params && params[`bg_y_${i}`] !== undefined) ? params[`bg_y_${i}`] : p.y
+    }));
 
     let interpolate = null;
     try {
-        interpolate = createMonotonicCubicSplineInterpolator(sortedPoints);
+        interpolate = createMonotonicCubicSplineInterpolator(mappedPoints);
     } catch (splineError) {
         console.error("Monotonic spline failed; falling back to linear.", splineError);
         interpolate = null;
@@ -1021,13 +1024,13 @@ function calculateTotalBackground(tthAxis, params, splinePoints, outArr = null) 
 
     if (!interpolate) {
         console.warn("Using linear interpolation for the background.");
-        const np = sortedPoints.length;
+        const np = mappedPoints.length;
         let p_idx = 0;
         for (let i = 0; i < n; i++) {
             const tth = tthAxis[i];
-            while (p_idx < np - 2 && sortedPoints[p_idx + 1].tth < tth) p_idx++;
-            const p1 = sortedPoints[p_idx];
-            const p2 = sortedPoints[Math.min(p_idx + 1, np - 1)];
+            while (p_idx < np - 2 && mappedPoints[p_idx + 1].tth < tth) p_idx++;
+            const p1 = mappedPoints[p_idx];
+            const p2 = mappedPoints[Math.min(p_idx + 1, np - 1)];
             let v;
             if (tth <= p1.tth)      v = p1.y;
             else if (tth >= p2.tth) v = p2.y;

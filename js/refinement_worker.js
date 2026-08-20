@@ -686,6 +686,7 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
     //      intensities, because the decomposition works on y_obs - y_bkg.
     // -----------------------------------------------------------------------
     const nBackgroundAnchors = Array.isArray(workerBackgroundAnchors) ? workerBackgroundAnchors.length : 0;
+    const isBgRefined = fitFlags && fitFlags.fitBackground;
 
     return {
         r_p: isFinite(Rp) ? Rp : -1,
@@ -698,13 +699,14 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
         nParams: P_base,
         nIntensities: nIntensities,
         dof: degreesOfFreedom,
-        backgroundRefined: false,
+        backgroundRefined: isBgRefined,
         nBackgroundAnchors,
         backgroundNote: nBackgroundAnchors > 0
-            ? `Background: fixed spline through ${nBackgroundAnchors} user anchor point`
-              + `${nBackgroundAnchors === 1 ? '' : 's'}, not refined. Its ${nBackgroundAnchors} `
+            ? `Background: spline through ${nBackgroundAnchors} user anchor point`
+              + `${nBackgroundAnchors === 1 ? '' : 's'}, `
+              + (isBgRefined ? `Y positions refined.` : `not refined. Its ${nBackgroundAnchors} `
               + `degree${nBackgroundAnchors === 1 ? '' : 's'} of freedom are not counted in P, and no `
-              + `reported ESD includes background uncertainty.`
+              + `reported ESD includes background uncertainty.`)
             : 'Background: none defined (zero baseline), not refined.'
     };
 }
@@ -759,6 +761,9 @@ const scratch_bkg = new Float64Array(n_points);
         enforceSymmetryConstraintsWorker(params, system);
 
         updateHklPositions(workingHklList, params, system);
+        if (fitFlags && fitFlags.fitBackground) {
+            calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors, scratch_bkg);
+        }
         const bkg0 = scratch_bkg;
         
         if (LEBAIL_RESET_EACH_ITER) {
@@ -802,11 +807,14 @@ const scratch_bkg = new Float64Array(n_points);
 
 
 
-    const calculateTotalPattern = (targetArray, requiresHklUpdate = true) => {
+    const calculateTotalPattern = (targetArray, requiresHklUpdate = true, requiresBkgUpdate = true) => {
         enforceSymmetryConstraintsWorker(params, system);
 
         if (requiresHklUpdate) {
             updateHklPositions(workingHklList, params, system);
+        }
+        if (requiresBkgUpdate || (fitFlags && fitFlags.fitBackground)) {
+            calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors, scratch_bkg);
         }
 
         const netCalcPattern = calculatePatternCPU(workerWorkingData.tth, workingHklList, params, scratch_pattern);
@@ -815,12 +823,11 @@ const scratch_bkg = new Float64Array(n_points);
             targetArray[i] = netCalcPattern[i] + scratch_bkg[i];
         }
 
-
         return 1.0; 
     };
 
     const evaluateResiduals = (target) => {
-        calculateTotalPattern(target);
+        calculateTotalPattern(target, true, true);
         let cost = 0;
         for (let i = 0; i < n_points; i++) {
             residuals[i] = (y_obs[i] - target[i]) * sqrt_weights[i];
@@ -915,6 +922,7 @@ const scratch_bkg = new Float64Array(n_points);
             // ---- finite-difference column --------------------------------
             const originalValue = mapping.get(params, workingHklList);
             const isStructural = ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].includes(mapping.name);
+            const isBkg = mapping.isBackground || false;
 
             const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
             const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
@@ -936,7 +944,7 @@ const scratch_bkg = new Float64Array(n_points);
                 const actual_h = applied - originalValue;
 
                 if (actual_h !== 0) {
-                    calculateTotalPattern(y_calc_total, isStructural);
+                    calculateTotalPattern(y_calc_total, isStructural, isBkg);
 
                     for (let i = 0; i < n_points; i++) {
                         if (!isFinite(y_calc_baseline[i]) || !isFinite(y_calc_total[i])) {
@@ -1343,6 +1351,11 @@ const n_points = workerWorkingData.tth.length;
         
  enforceSymmetryConstraintsWorker(p_obj, system); 
             updateHklPositions(hkl_list_obj, p_obj, system);
+            
+            if (fitFlags && fitFlags.fitBackground) {
+                calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors, scratch_bkg);
+            }
+
             const netCalcPattern = calculatePatternCPU(workerWorkingData.tth, hkl_list_obj, p_obj, scratch_pattern);
              let sum_w_res_sq = 0;
              for (let i = 0; i < workerWorkingData.tth.length; i++) {
@@ -1374,6 +1387,11 @@ const n_points = workerWorkingData.tth.length;
 if (refinementMode === 'le-bail') {
             enforceSymmetryConstraintsWorker(rep.params, system);
             updateHklPositions(rep.hklList, rep.params, system);
+            
+            if (fitFlags && fitFlags.fitBackground) {
+                calculateTotalBackground(workerWorkingData.tth, rep.params, workerBackgroundAnchors, scratch_bkg);
+            }
+
             leBailIntensityExtraction(
                 { tth: workerWorkingData.tth, intensity: workerWorkingData.intensity,
                   background: scratch_bkg, weights: workerWorkingData.weights },
@@ -1966,6 +1984,31 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode, s
         mappings.push(createMapping(fitFlags.trns_split, 'trns_split', 0.1, -Infinity, Infinity, 0.1));
     }
    
+    if (fitFlags && fitFlags.fitBackground && workerBackgroundAnchors && workerBackgroundAnchors.length > 0) {
+        workerBackgroundAnchors.forEach((anchor, i) => {
+            const bgName = `bg_y_${i}`;
+            const initialValue = initialParams[bgName] !== undefined ? initialParams[bgName] : anchor.y;
+            const scale = Math.max(1.0, Math.abs(initialValue));
+
+            mappings.push({
+                name: bgName,
+                scale: scale,
+                defaultScale: 100.0,
+                step: 1.0,
+                maxStepAbs: Infinity,
+                isIntensity: false,
+                isBackground: true,
+                index: i,
+                minVal: 0,
+                maxVal: Infinity,
+                get: (p_obj) => p_obj[bgName] ?? 0,
+                set: (p_obj, hkl_list_obj, rawValue) => {
+                    if (p_obj) p_obj[bgName] = Math.max(0, rawValue);
+                }
+            });
+        });
+    }
+
     const paramMapping = mappings.filter(Boolean);
     return { paramMapping };
 }
