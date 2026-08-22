@@ -1841,16 +1841,28 @@ async function runChargeFlippingGPU(job) {
                 `grid ${N}). This usually means the driver reset the device; try a ` +
                 `smaller grid or fewer iterations.`)), WATCHDOG_MS);
         });
-        const lost = device.lost.then((info) => {
-            throw new Error('WebGPU device lost during charge flipping: ' +
-                            ((info && info.message) || (info && info.reason) || 'unknown') +
-                            '. A smaller grid or fewer iterations usually avoids this.');
-        });
-        try {
-            await Promise.race([headerRead.mapAsync(GPUMapMode.READ, 0, count * 16), lost, guard]);
-        } finally {
-            if (timer) clearTimeout(timer);
-        }
+
+
+
+            const mapPromise = headerRead.mapAsync(GPUMapMode.READ, 0, count * 16);
+            mapPromise.catch(() => {}); // Suppress unhandled rejection if it outlives the race
+
+            try {
+                await Promise.race([mapPromise, guard]);
+            } catch (err) {
+                if (device.__lostInfo) {
+                    throw new Error('WebGPU device lost during charge flipping: ' +
+                                    (device.__lostInfo.message || device.__lostInfo.reason || 'unknown') +
+                                    '. A smaller grid or fewer iterations usually avoids this.');
+                }
+                throw err;
+            } finally {
+                if (timer) clearTimeout(timer);
+            }
+
+
+
+
         const hdr = new Float32Array(headerRead.getMappedRange(0, count * 16)).slice();
         headerRead.unmap();
         for (let k = 0; k < count; k++) {

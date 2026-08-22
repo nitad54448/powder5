@@ -981,6 +981,43 @@ async function runWyckoffSearch(o) {
             device.queue.submit([enc.finish()]);
         }
 
+
+
+        /**
+         * Safely awaits mapAsync against TDR hangs and device loss,
+         * without leaking floating promise rejections.
+         */
+        async function safeMapAsync(buffers) {
+            const WATCHDOG_MS = 30000;
+            let timer = null;
+            
+            const guard = new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error(
+                    `The GPU stopped responding (no result for ${WATCHDOG_MS / 1000} s). ` +
+                    `This usually means the driver reset the device.`
+                )), WATCHDOG_MS);
+            });
+
+            // Catch floating rejections in case the race resolves via guard or device.lost
+            const mapPromise = Promise.all(buffers.map(b => b.mapAsync(GPUMapMode.READ)));
+            mapPromise.catch(() => {}); 
+
+            // Convert device.lost into a throwable rejection, caught safely
+            const lostPromise = device.lost.then(info => {
+                throw new Error('WebGPU device lost: ' + (info?.message || info?.reason || 'unknown'));
+            });
+            lostPromise.catch(() => {});
+
+            try {
+                await Promise.race([mapPromise, lostPromise, guard]);
+            } finally {
+                if (timer) clearTimeout(timer);
+            }
+        }
+
+
+
+
         /**
          * Dispatch, then read back only fit/cc, immediately. This is the
          * old evaluateCoords()'s exact behaviour and return shape, kept for
@@ -998,7 +1035,7 @@ async function runWyckoffSearch(o) {
             enc.copyBufferToBuffer(bufState, 0, bufStateRead, 0, bufState.size);
             device.queue.submit([enc.finish()]);
 
-            await bufStateRead.mapAsync(GPUMapMode.READ);
+            await safeMapAsync([bufStateRead]);
             const stateF32 = new Float32Array(bufStateRead.getMappedRange());
             const S32 = SW_STATE_STRIDE / 4;
             const out = new Float32Array(numParticles * 2);
@@ -1023,10 +1060,7 @@ async function runWyckoffSearch(o) {
             enc.copyBufferToBuffer(bufState, 0, bufStateRead, 0, bufState.size);
             device.queue.submit([enc.finish()]);
 
-            await Promise.all([
-                bufPosRead.mapAsync(GPUMapMode.READ),
-                bufStateRead.mapAsync(GPUMapMode.READ)
-            ]);
+            await safeMapAsync([bufPosRead, bufStateRead]);
 
             const posF32 = new Float32Array(bufPosRead.getMappedRange());
             positions.set(posF32.subarray(0, totalCoordFloats));
