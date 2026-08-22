@@ -668,6 +668,37 @@ function sharkoLp(tthDeg, pol) {
     return sharkoLorentzPolarization(tthDeg, sharkoPolarizationK(pol));
 }
 
+/**
+ * Lp from 2-theta and a DESCRIPTOR, returning NaN where the geometry is
+ * degenerate instead of 1.
+ *
+ * TWO POLICIES, BOTH DELIBERATE, BOTH NAMED.
+ *
+ * sharkoLp() answers 1 at a 2-theta of zero or 180, so a single bad angle
+ * leaves an intensity untouched rather than turning it into NaN and dropping
+ * the reflection out of a normalisation. That is what the observation and
+ * search paths want: they are reducing a whole pattern, and losing a row
+ * silently is worse than mis-scaling one.
+ *
+ * A REPORT OR AN EXPORT WANTS THE OPPOSITE. There, Lp = 1 is not a safe
+ * default -- it is the claim that no correction was needed, and it produces a
+ * finite |F|^2 that looks like a measurement. NaN propagates instead, and the
+ * callers already test for it and write "?" or omit the row.
+ *
+ * The two used to be one name with two behaviours: polarization.js defined its
+ * own lorentzPolarization() that returned NaN, while both workers defined a
+ * lorentzPolarization() that delegated here and returned 1. Same name, same
+ * arguments, different answer depending on which file you were standing in,
+ * and nothing said so. They are now one implementation with two entry points
+ * whose names state which policy you are asking for.
+ */
+function sharkoLpStrict(tthDeg, pol) {
+    const L = sharkoLorentzFactor(tthDeg);
+    if (!Number.isFinite(L)) return NaN;
+    const P = sharkoPolarizationFactor(tthDeg, sharkoPolarizationK(pol));
+    return Number.isFinite(P) ? L * P : NaN;
+}
+
 // ---------------------------------------------------------------------------
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
@@ -677,6 +708,6 @@ if (typeof module !== 'undefined' && module.exports) {
         metricTensor, fracDistance, cellVolume, cellBasis, fracToCart,
         buildInvDsq, invDsq, buildInvDsqEvaluator, dSpacing, updateHklPositions,
         SHARKO_POLARIZATION_DEFAULTS, sharkoPolarizationK, sharkoLorentzFactor,
-        sharkoPolarizationFactor, sharkoLorentzPolarization, sharkoLp
+        sharkoPolarizationFactor, sharkoLorentzPolarization, sharkoLp, sharkoLpStrict
     };
 }

@@ -454,54 +454,23 @@ function refreshHklMarkers(params, positioned) {
     if (ka2Dataset) ka2Dataset.data = ka2Markers;
 }
 
-function drawTheoreticalPreview() {
-    if (hasExperimentalData()) return; 
-    if (!currentSG) return;
-    if (!mainChart) initializeChart();
+// ===========================================================================
+//  drawTheoreticalPreview() USED TO BE DUPLICATED HERE.
+//
+//  powder5.html defines its own copy inside the DOMContentLoaded callback, and
+//  every caller of it lives in that same scope, so the inline copy shadowed
+//  this one and this one never ran.
+//
+//  The two had already drifted. The copy here skipped reflections with
+//  tth <= 0 as well as non-finite ones; the live copy skips only the
+//  non-finite. That guard is therefore NOT carried over by this deletion --
+//  removing dead code should not change what the program does, and adding the
+//  stricter test to the live copy would. If a preview peak at or below zero
+//  2-theta is worth suppressing (it can only arise from a zero shift large
+//  enough to push a low-angle reflection negative), add `|| hkl.tth <= 0` to
+//  the guard in powder5.html deliberately, as a change in its own right.
+// ===========================================================================
 
-    const params = getAllParams();
-    const list = computeTheoreticalHklList();
-    masterHklList = list;
-    lastGeneratedHklList = list;
-
-    const findDataset = (label) => mainChart.data.datasets.find(d => d.label === label);
-    const deg2rad = Math.PI / 180;
-    const z = params.zeroShift || 0;
-    const doubletEnabled = params.ratio > 1e-6 && params.lambda2 > 1e-6 &&
-                           Math.abs(params.lambda - params.lambda2) > 1e-6;
-    const lambdaRatio = doubletEnabled ? (params.lambda2 / params.lambda) : 1.0;
-
-    const ka1 = [], ka2 = [];
-    list.forEach(hkl => {
-        if (!Number.isFinite(hkl.tth) || hkl.tth <= 0) return;
-        const pos1 = hkl.tth + z;
-        if (pos1 >= THEO_TTH_MIN && pos1 <= THEO_TTH_MAX) {
-            ka1.push({ x: pos1, y: [1, 0], hkl: `${hkl.hkl_list[0]} [m=${hkl.multiplicity}]` });
-        }
-        if (doubletEnabled) {
-            const s2 = Math.sin(hkl.tth * deg2rad / 2) * lambdaRatio;
-            if (Math.abs(s2) < 1) {
-                const pos2 = 2 * Math.asin(s2) / deg2rad + z;
-                if (pos2 >= THEO_TTH_MIN && pos2 <= THEO_TTH_MAX) {
-                    ka2.push({ x: pos2, y: [0.6, 0], hkl: `${hkl.hkl_list[0]} Ka2` });
-                }
-            }
-        }
-    });
-
-    ['Experimental','Simulation (Manual)','Calculated','Background','Difference','Difference Zero']
-        .forEach(lbl => { const ds = findDataset(lbl); if (ds) ds.data = []; });
-    findDataset('Ka1').data = ka1;
-    const d2 = findDataset('Ka2'); if (d2) d2.data = ka2;
-
-    mainChart.options.scales.x.min = THEO_TTH_MIN;
-    mainChart.options.scales.x.max = THEO_TTH_MAX;
-    mainChart.options.scales.y.min = -0.12;
-    mainChart.options.scales.y.max = 1.12;
-    mainChart.options.scales.y.ticks.display = false;
-    mainChart.options.scales.y.title.text = 'Reflections (theoretical)';
-    mainChart.update('none');
-}
 
 function initCharting() {
     const RECT_ZOOM_MIN_PX = 8;

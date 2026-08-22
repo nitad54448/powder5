@@ -455,6 +455,17 @@ function polarizationK(pol) {
  * Lp from 2-theta and a polarisation DESCRIPTOR (object, or a bare number read
  * as a legacy monochromator 2-theta).
  *
+ * THE LENIENT POLICY, and that is a choice, not an accident. sharkoLp answers
+ * 1 where the geometry is degenerate rather than NaN, so one bad angle
+ * mis-scales a single reflection instead of dropping it out of the
+ * normalisation -- which is what a path reducing a whole pattern wants.
+ *
+ * The page wants the opposite and calls sharkoLpStrict, which returns NaN so a
+ * report or an export can write "?" instead of inventing a correction. Both
+ * policies live in crystal.js and are named for what they do; this file used
+ * to share the NAME lorentzPolarization with a page-side function that had the
+ * other behaviour, which is a difference nothing announced.
+ *
  * If you already hold the ratio K, call sharkoLorentzPolarization(tth, K)
  * instead. Passing K here would be wrong in a way that is easy to miss: K = 0,
  * which is what a neutron pattern needs, would be read as a monochromator
@@ -1992,6 +2003,14 @@ async function runChargeFlippingGPU(job) {
 }
 
 // Exposed for the node-side unit test; harmless in a browser worker.
+//
+// lorentzPolarization and polarizationK are re-exported as a CONVENIENCE for
+// tests that already import this module, not as an implementation. Both are
+// one-line delegates to crystal.js (sharkoLp and sharkoPolarizationK), so a
+// test asserting on them is asserting on crystal.js -- which is the point. A
+// test that wants the Lp arithmetic itself should import crystal.js and use
+// sharkoLp or sharkoLpStrict by name, so that it says which degenerate-angle
+// policy it expects.
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         fft1d, fft3d, buildReflectionModel, findSystematicAbsences,

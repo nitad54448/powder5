@@ -34,6 +34,29 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- Extracted CSS -->
     <link rel="stylesheet" href="style.css">
+    <!-- The Wyckoff solutions table.
+         Kept here rather than in style.css because it is the only markup this
+         change adds that style.css does not already cover: the table itself
+         reuses .cf-peak-table, and these rules only make its rows behave as
+         the pickers they are. -->
+    <style>
+      .wy-sol-table tbody tr.wy-sol-row { transition: background-color 0.12s ease; }
+      .wy-sol-table tbody tr.wy-sol-row:hover {
+          background: var(--system-gray-6, rgba(127,127,127,0.10));
+      }
+      .wy-sol-table tbody tr.wy-sol-row:focus-visible {
+          outline: 2px solid var(--system-blue, #0a84ff);
+          outline-offset: -2px;
+      }
+      /* The row on screen. A left rule rather than a fill, so it stays legible
+         in both colour schemes and does not fight the hover state. */
+      .wy-sol-table tbody tr.wy-sol-row-on td:first-child {
+          box-shadow: inset 3px 0 0 var(--system-blue, #0a84ff);
+      }
+      .wy-sol-table tbody tr.wy-sol-row-on {
+          background: var(--system-gray-6, rgba(127,127,127,0.14));
+      }
+    </style>
 </head>
 <body>
 
@@ -585,17 +608,65 @@
                         <input type="text" id="cf-wyckoff-formula" placeholder="e.g. PbSO4" class="control-input">
 
                         <label class="control-label" for="cf-wyckoff-z"
-                               title="Formula units per cell. Blank for automatic estimation from the cell volume.">Z</label>
-                        <input type="number" id="cf-wyckoff-z" min="1" max="192" step="1" placeholder="Auto" class="control-input">
+                               title="Formula units per cell, as a whole number of 1 or more. Leave blank for Auto, which searches every Z whose density falls inside the window below and proposes the best structure for each.">Z</label>
+                        <input type="number" id="cf-wyckoff-z" min="1" max="192" step="1" placeholder="Auto"
+                               class="control-input wy-int-input">
 
                         <label class="control-label" for="cf-wyckoff-max-repeat"
-                               title="How many independent atoms may share one Wyckoff position at different coordinates.">Max reuse / pos</label>
-                        <input type="number" id="cf-wyckoff-max-repeat" min="1" max="24" step="1" placeholder="Auto" class="control-input">
+                               title="How many independent atoms may share one Wyckoff position at different coordinates. A whole number of 1 or more; blank for Auto.">Max reuse / pos</label>
+                        <input type="number" id="cf-wyckoff-max-repeat" min="1" max="24" step="1" placeholder="Auto"
+                               class="control-input wy-int-input">
 
                         <label class="control-label" for="cf-wyckoff-max-sites"
-                               title="Most distinct Wyckoff positions one element may occupy.">Max sites / elem</label>
-                        <input type="number" id="cf-wyckoff-max-sites" min="1" max="24" step="1" placeholder="Auto" class="control-input">
+                               title="Most distinct Wyckoff positions one element may occupy. A whole number of 1 or more; blank for Auto.">Max sites / elem</label>
+                        <input type="number" id="cf-wyckoff-max-sites" min="1" max="24" step="1" placeholder="Auto"
+                               class="control-input wy-int-input">
                     </div>
+
+                    <!-- ==========================================================
+                         THE DENSITY WINDOW FOR Z = AUTO.
+                         Auto does not guess a Z: it takes every whole Z whose
+                         crystallographic density Z*M/(N_A*V) lands inside this
+                         window, searches each one, and proposes the best
+                         structure found for each. The window is what makes that
+                         affordable -- 1 to 22 g/cm^3 is every solid there is,
+                         and the person who prepared the sample knows far better
+                         than that. Whole numbers only, and the minimum is held
+                         below the maximum by the handlers.
+                         ========================================================== -->
+                    <div id="cf-wyckoff-density-block" class="parameter-grid-2col" style="margin-top: 10px;">
+                        <label class="control-label" for="cf-wyckoff-rho-min"
+                               title="Lower bound on the crystallographic density, in g/cm^3. Only used when Z is on Auto.">Density min (g/cm&sup3;)</label>
+                        <div class="slider-value-track">
+                            <input type="range" id="cf-wyckoff-rho-min" class="custom-slider" min="1" max="22" step="1" value="2">
+                            <span id="cf-wyckoff-rho-min-value" class="slider-value-display">2</span>
+                        </div>
+
+                        <label class="control-label" for="cf-wyckoff-rho-max"
+                               title="Upper bound on the crystallographic density, in g/cm^3. 22 is about osmium, the densest element there is. Only used when Z is on Auto.">Density max (g/cm&sup3;)</label>
+                        <div class="slider-value-track">
+                            <input type="range" id="cf-wyckoff-rho-max" class="custom-slider" min="1" max="22" step="1" value="10">
+                            <span id="cf-wyckoff-rho-max-value" class="slider-value-display">10</span>
+                        </div>
+
+                        <!-- The only control that bounds a scan's run time
+                             deterministically. The space group prunes hard in a
+                             centred setting and not at all in P1, where every Z
+                             genuinely is possible, so a cap has to exist. The
+                             candidates dropped are the least plausible on
+                             volume per atom, and the log names them. -->
+                        <label class="control-label" for="cf-wyckoff-max-z"
+                               title="How many values of Z a scan may search. Each one is a full swarm run, so this is what bounds the total time. The least plausible candidates are dropped first.">Max Z searched</label>
+                        <div class="slider-value-track">
+                            <input type="range" id="cf-wyckoff-max-z" class="custom-slider" min="1" max="12" step="1" value="6">
+                            <span id="cf-wyckoff-max-z-value" class="slider-value-display">6</span>
+                        </div>
+                    </div>
+                    <!-- Says which Z the window admits, before the run rather
+                         than in the log afterwards: a window that admits none
+                         is worth knowing about while it can still be widened. -->
+                    <div id="cf-wyckoff-density-hint" class="cf-hint"
+                         style="margin-top: 6px; font-size: 12px; line-height: 1.45;"></div>
 
                     <div class="parameter-grid-2col" style="margin-top: 10px;">
                         <label class="control-label" for="cf-wyckoff-chains"
@@ -921,7 +992,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 165, 20 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 166, 22 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -931,6 +1002,7 @@
     //14 aug, chenged the peak search in CF from interpolation to block integr
     //19 aug, version 164: auto finding Z in Wyckoff search
     //20 aug, added background fit
+    //22 aug, wyckoff search is now Z-aware
     //removed the cctbx dependencies, all data is in /sg and /scatter
 
     document.addEventListener('DOMContentLoaded', async () => {     
@@ -1167,6 +1239,82 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
         const mc = document.getElementById('cf-wyckoff-min-contact');
         if (mc) mc.addEventListener('change', () => clampNumberInput(mc, 1.0));
 
+        // ------------------------------------------------------------------
+        //  Z, MAX REUSE AND MAX SITES: WHOLE NUMBERS OF 1 OR MORE, OR AUTO.
+        //
+        //  <input type="number" min="1"> is a hint, not a rule -- the min and
+        //  step attributes are enforced only by form validation, which nothing
+        //  here runs, so "0", "2.5" and "-3" all reached the worker verbatim.
+        //  A Z of 0 or 2.5 then failed deep inside the assignment enumeration
+        //  with a message about multiplicities. EMPTY IS AUTO and is the only
+        //  non-integer state any of the three may hold.
+        // ------------------------------------------------------------------
+        document.querySelectorAll('.wy-int-input').forEach(el => {
+            const fix = () => {
+                const raw = String(el.value).trim();
+                if (!raw) return;                        // blank means Auto
+                let v = Math.round(parseFloat(raw));
+                if (!Number.isFinite(v)) { el.value = ''; return; }   // gibberish means Auto
+                const hi = parseFloat(el.max);
+                v = Math.max(1, v);
+                if (Number.isFinite(hi)) v = Math.min(hi, v);
+                el.value = String(v);
+            };
+            el.addEventListener('change', fix);
+            el.addEventListener('blur', fix);
+        });
+
+        // ------------------------------------------------------------------
+        //  THE DENSITY WINDOW.
+        //
+        //  Two sliders that cannot cross: pushing the minimum past the maximum
+        //  drags the maximum with it, and vice versa. The alternative -- refuse
+        //  the move and snap back -- makes a slider feel broken, and silently
+        //  swapping them at run time means the panel shows a range that is not
+        //  the one being scanned.
+        // ------------------------------------------------------------------
+        {
+            const lo = document.getElementById('cf-wyckoff-rho-min');
+            const hi = document.getElementById('cf-wyckoff-rho-max');
+            const loOut = document.getElementById('cf-wyckoff-rho-min-value');
+            const hiOut = document.getElementById('cf-wyckoff-rho-max-value');
+            if (lo && hi && loOut && hiOut) {
+                const sync = (moved) => {
+                    let a = parseInt(lo.value, 10), b = parseInt(hi.value, 10);
+                    if (!Number.isFinite(a)) a = 2;
+                    if (!Number.isFinite(b)) b = 10;
+                    // Strictly below, not merely not-above: a window of zero
+                    // width admits at most one Z and usually none.
+                    if (a >= b) {
+                        if (moved === 'min') b = Math.min(22, a + 1);
+                        else a = Math.max(1, b - 1);
+                        if (a >= b) { a = Math.max(1, b - 1); b = Math.min(22, a + 1); }
+                    }
+                    lo.value = String(a); hi.value = String(b);
+                    loOut.textContent = String(a); hiOut.textContent = String(b);
+                    wyUpdateDensityHint();
+                };
+                lo.addEventListener('input', () => sync('min'));
+                hi.addEventListener('input', () => sync('max'));
+                sync();
+            }
+            {
+                const mz = document.getElementById('cf-wyckoff-max-z');
+                const mzOut = document.getElementById('cf-wyckoff-max-z-value');
+                if (mz && mzOut) {
+                    const s = () => { mzOut.textContent = mz.value; wyUpdateDensityHint(); };
+                    mz.addEventListener('input', s);
+                    s();
+                }
+            }
+            // The hint depends on the formula, the refined cell and whether Z
+            // is on Auto, so all three re-run it.
+            const zEl = document.getElementById('cf-wyckoff-z');
+            if (zEl) zEl.addEventListener('input', wyUpdateDensityHint);
+            const fEl = document.getElementById('cf-wyckoff-formula');
+            if (fEl) fEl.addEventListener('input', wyUpdateDensityHint);
+        }
+
         // Read the rules back as sentences while they are being typed. The
         // element check needs the formula, so a change there re-runs it too:
         // "S O 4 1.35/1.65" is a valid line and a dead rule at the same time if
@@ -1333,11 +1481,34 @@ function integratedPeakArea(hkl, params, scaleFactor) {
     if (!(height > 0) || !Number.isFinite(hkl.tth)) return 0;
 
     let area;
-    // Le Bail extraction accumulates the integral of the profile as it was
-    // actually drawn (truncated and pedestal-subtracted), which is the honest
-    // number when it exists. Pawley runs never visit that path, so they take
-    // the analytic route.
-    if (typeof hkl.shapeArea === 'number' && hkl.shapeArea > 0) {
+    // ------------------------------------------------------------------
+    //  THE UNTRUNCATED AREA, because this function returns an INTEGRATED
+    //  INTENSITY and that is a property of the reflection, not of the window
+    //  the profile happened to be drawn in.
+    //
+    //  It used to return `height * shapeArea`, the integral of the profile AS
+    //  DRAWN -- truncated at 8 to 25 FWHM and pedestal-subtracted. That is the
+    //  right number for checking the plotted curve against itself, and the
+    //  wrong one for every caller this function actually has: structure
+    //  factors in data_io.js, the area column and ESD scaling in reporting.js,
+    //  the covariance conversion, and the intensities handed to charge
+    //  flipping and the Wyckoff search.
+    //
+    //  The error is small but it is NOT A CONSTANT SCALE, which is what makes
+    //  it worth removing. The fraction lost is the Lorentzian tail beyond the
+    //  window, so it grows with eta -- and eta grows with 2-theta. Losing
+    //  progressively more intensity toward high angle is indistinguishable
+    //  from thermal motion, so it lands in the Wilson B: about 0.008 A^2 on a
+    //  realistic eta(2-theta), against a typical B of 0.5 to 2. Measurable,
+    //  never dominant, and free to fix, since the extraction has been
+    //  computing the analytic area all along and nothing was reading it.
+    //
+    //  shapeArea is kept as the fallback for any reflection whose extraction
+    //  predates this field.
+    // ------------------------------------------------------------------
+    if (typeof hkl.shapeAreaAnalytic === 'number' && hkl.shapeAreaAnalytic > 0) {
+        area = height * hkl.shapeAreaAnalytic;
+    } else if (typeof hkl.shapeArea === 'number' && hkl.shapeArea > 0) {
         area = height * hkl.shapeArea;
     } else {
         area = height * getPseudoVoigtArea(hkl.tth, hkl, params);
@@ -1376,44 +1547,22 @@ function integratedPeakArea(hkl, params, scaleFactor) {
 //  form, so that branch integrates numerically.
 // ---------------------------------------------------------------------------
 
-// Numerical Recipes erfcc; fractional error below 1.2e-7 everywhere.
-function cfErfc(x) {
-    const z = Math.abs(x), t = 1 / (1 + 0.5 * z);
-    const ans = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 +
-        t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 +
-        t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
-    return x >= 0 ? ans : 2 - ans;
-}
-function cfNormPdf(t) { return Math.exp(-0.5 * t * t) / Math.sqrt(2 * Math.PI); }
-function cfNormCdf(t) { return 0.5 * cfErfc(-t / Math.SQRT2); }
-
-// Inverse Mills ratio φ(t)/Φ(t). Below t ≈ -6 the CDF underflows towards zero
-// and the direct quotient becomes 0/0, so switch to the asymptotic expansion
-// Φ(t) ≈ φ(t)/(-t) · (1 - 1/t² + 3/t⁴).
-function cfMillsRatio(t) {
-    if (t > -6) {
-        const c = cfNormCdf(t);
-        return c > 1e-300 ? cfNormPdf(t) / c : -t;
-    }
-    const t2 = t * t;
-    return -t * (1 + 1 / t2 - 2 / (t2 * t2));
-}
-
-// A reflection is centric when some symmetry operation maps h onto -h. With no
-// operators available every reflection is treated as acentric, which is the
-// conservative choice: the acentric prior is the narrower of the two, so it
-// moves weak intensities less.
-function cfIsCentric(h, k, l, symops) {
-    if (!Array.isArray(symops) || symops.length === 0) return false;
-    for (const op of symops) {
-        const r = op.r;
-        if (!r) continue;
-        if (h * r[0] + k * r[3] + l * r[6] === -h &&
-            h * r[1] + k * r[4] + l * r[7] === -k &&
-            h * r[2] + k * r[5] + l * r[8] === -l) return true;
-    }
-    return false;
-}
+// The five helpers that used to sit here -- cfErfc, cfNormPdf, cfNormCdf,
+// cfMillsRatio and cfIsCentric -- now live ONLY in js/polarization.js, beside
+// frenchWilsonCorrect(), which is the sole thing that calls them.
+//
+// They were duplicated: defined there and again here, and the two copies of
+// cfErfc DIFFERED. One digit of one coefficient -- -0.18628806 here against
+// -1.18628806 there -- which is not a precision difference but a different
+// function, giving erfc(0) = 0.368 where it must be 1.
+//
+// Nothing went wrong only because js/polarization.js is loaded at the top of
+// this file and this inline script runs afterwards, so the correct copy
+// overwrote the broken one. That is not a safeguard, it is a coincidence of
+// ordering, and the most likely edit anyone would make here -- deleting an
+// obviously redundant duplicate -- would have activated the bug. The
+// coefficient in polarization.js has been corrected and the duplicate removed,
+// so there is now one definition and it is right.
 
 // The intensity ESDs, taken from the same normal-equations matrix the report
 // uses. Returns a plain object keyed by the parameter name, or null when the
@@ -1753,6 +1902,11 @@ function wySetRunning(running) {
  * Wyckoff does nothing" so hard to diagnose.
  */
 function updateWyckoffHint() {
+    // The density window's hint quotes the refined cell volume and the formula
+    // mass, so it goes stale for exactly the same reasons this one does: a new
+    // fit, a new space group, a new composition. Refreshed here rather than
+    // wired separately to each of them.
+    if (typeof wyUpdateDensityHint === 'function') { try { wyUpdateDensityHint(); } catch (e) {} }
     const hint = document.getElementById('wyckoff-hint');
     const run = document.getElementById('run-wyckoff-btn');
     if (!hint || !run) return;
@@ -1893,6 +2047,362 @@ function wyDefaultIterations() { return 2000; }
 /** Iterations for the Wyckoff swarm. */
 function wyIterationsValue() { return logSliderValue('cf-wyckoff-iterations', wyDefaultIterations()); }
 
+/**
+ * The density window, as two whole numbers, minimum strictly below maximum.
+ *
+ * Read from the sliders every time rather than cached: the worker is handed
+ * these numbers and reports them back in the results, so the panel, the log
+ * and the run must all be quoting the same pair.
+ */
+function wyDensityBounds() {
+    const gi = (id, dflt) => {
+        const el = document.getElementById(id);
+        const v = el ? parseInt(el.value, 10) : NaN;
+        return Number.isFinite(v) ? Math.min(22, Math.max(1, v)) : dflt;
+    };
+    let lo = gi('cf-wyckoff-rho-min', 2);
+    let hi = gi('cf-wyckoff-rho-max', 10);
+    if (lo > hi) { const t = lo; lo = hi; hi = t; }
+    if (lo === hi) { if (hi < 22) hi += 1; else lo -= 1; }
+    return { min: lo, max: hi };
+}
+
+/**
+ * Formula mass in g/mol from the composition box, or null if it cannot be read.
+ *
+ * A DELIBERATE MIRROR of parseFormula() in wyckoff_assign.js, which lives in
+ * the worker's importScripts set and is not in page scope. The bracket
+ * handling and the subscript pattern are the same, so this and the worker
+ * cannot disagree about what "Ca(OH)2" contains -- and the panel is not
+ * reduced to saying nothing about the commonest way of writing a hydroxide.
+ *
+ * Returns null rather than a wrong number on anything it cannot read, because
+ * every caller here uses it to decide whether to SHOW a density or to BLOCK a
+ * run, and both are better left undone than done on a fabricated mass.
+ */
+function wyFormulaMassUI(formula) {
+    if (!formula || typeof WyckoffReport === 'undefined' || !WyckoffReport.EL) return null;
+    const src = String(formula).replace(/\s+/g, '');
+    if (!src) return null;
+
+    let mass = 0, bad = false, seen = 0;
+    const walk = (s, mult) => {
+        let i = 0;
+        while (i < s.length && !bad) {
+            if (s[i] === '(') {
+                let depth = 1, j = i + 1;
+                while (j < s.length && depth) {
+                    if (s[j] === '(') depth++;
+                    if (s[j] === ')') depth--;
+                    j++;
+                }
+                if (depth) { bad = true; return; }
+                const m = /^(\d+(?:\.\d+)?)/.exec(s.slice(j));
+                walk(s.slice(i + 1, j - 1), mult * (m ? parseFloat(m[1]) : 1));
+                i = j + (m ? m[1].length : 0);
+                continue;
+            }
+            const m = /^([A-Z][a-z]?)(\d+(?:\.\d+)?)?/.exec(s.slice(i));
+            if (!m) { bad = true; return; }
+            const row = WyckoffReport.EL[m[1]];
+            if (!row) { bad = true; return; }
+            mass += row[0] * mult * (m[2] ? parseFloat(m[2]) : 1);
+            seen++;
+            i += m[0].length;
+        }
+    };
+    walk(src, 1);
+    return (!bad && seen && mass > 0) ? mass : null;
+}
+
+/**
+ * The crystallographic density for a given Z, or null if any input is missing.
+ *
+ * One function so that the hint, the pre-run check and the results panel are
+ * incapable of quoting three different densities for the same structure.
+ * 1 amu / A^3 = 1.66054 g/cm^3.
+ */
+function wyDensityForZ(Z, formula) {
+    if (!Number.isFinite(Z) || Z < 1) return null;
+    const mass = wyFormulaMassUI(formula);
+    if (!mass) return null;
+    let vol = null;
+    try {
+        const p = (typeof fitResults !== 'undefined' && fitResults && fitResults.params) || null;
+        if (!p) return null;
+        const sg = (typeof sgUsedForFit !== 'undefined' && sgUsedForFit) ||
+                   (typeof currentSG !== 'undefined' ? currentSG : null);
+        const cell = fullCellFromParams(p, (sg && sg.system) || p.system || 'triclinic');
+        if (cell) vol = cellVolume(cell);
+    } catch (e) { return null; }
+    if (!Number.isFinite(vol) || vol <= 0) return null;
+    return { rho: 1.66053906660 * Z * mass / vol, mass, volume: vol };
+}
+
+// The bounds outside which a density is not a density. Lithium is 0.53 g/cm^3
+// and osmium 22.59, so nothing real sits outside these. Kept in step with
+// WY_RHO_ABS_MIN/MAX in wyckoff_worker.js, which refuses the same run at the
+// other end of the postMessage in case a job reaches it another way.
+const WY_UI_RHO_ABS_MIN = 0.5;
+const WY_UI_RHO_ABS_MAX = 22.5;
+
+/**
+ * What the density window admits, said before the run rather than after it.
+ *
+ * A window that admits no Z at all is the single most likely thing to go
+ * wrong with this control, and finding that out from an error message at the
+ * end of a launch is a poor way to learn it. When Z has been typed the window
+ * is not consulted at all, and the block says so and greys itself rather than
+ * sitting there looking live.
+ */
+function wyUpdateDensityHint() {
+    const hint = document.getElementById('cf-wyckoff-density-hint');
+    const block = document.getElementById('cf-wyckoff-density-block');
+    if (!hint) return;
+
+    const zEl = document.getElementById('cf-wyckoff-z');
+    const zRaw = zEl ? String(zEl.value).trim() : '';
+    const zTyped = zRaw !== '';
+    if (block) block.style.opacity = zTyped ? '0.45' : '';
+    if (block) block.querySelectorAll('input').forEach(el => { el.disabled = !!zTyped; });
+
+    const b = wyDensityBounds();
+    const formula = ((document.getElementById('cf-wyckoff-formula') || {}).value || '').trim();
+    const warn = (on) => { hint.style.color = on ? 'var(--system-orange, #c47f1a)' : ''; };
+
+    // ----------------------------------------------------------------------
+    //  A TYPED Z: SAY WHAT IT IMPLIES.
+    //
+    //  "The density window is not used" was true and useless. The number the
+    //  user needs is the one their Z produces, because a Z is almost always
+    //  wrong in a way that shows up in the density immediately -- counting
+    //  atoms instead of formula units, or reading a published Z for a
+    //  different setting. Recomputed on every keystroke in either the Z box or
+    //  the formula box, so typing the formula second works exactly as well as
+    //  typing it first.
+    // ----------------------------------------------------------------------
+    if (zTyped) {
+        const Z = Math.round(parseFloat(zRaw));
+        const d = wyDensityForZ(Z, formula);
+        if (!d) {
+            warn(false);
+            hint.textContent = !formula
+                ? `Z = ${zRaw} was given. Enter the formula to see the density it implies.`
+                : `Z = ${zRaw} was given. The density needs a formula this panel can read ` +
+                  `and a refined cell; it will appear once both are available.`;
+            return;
+        }
+        const impossible = d.rho < WY_UI_RHO_ABS_MIN || d.rho > WY_UI_RHO_ABS_MAX;
+        warn(impossible);
+        const base = `Z = ${Z} gives a density of ${d.rho.toFixed(2)} g/cm\u00b3 ` +
+                     `(${formula}, ${d.mass.toFixed(2)} g/mol, cell ${d.volume.toFixed(1)} \u00c5\u00b3).`;
+        if (impossible) {
+            hint.textContent = base +
+                ` That is outside ${WY_UI_RHO_ABS_MIN}\u2013${WY_UI_RHO_ABS_MAX} g/cm\u00b3, the range ` +
+                `every solid falls in, so the search will not run. Check that Z counts ` +
+                `formula units and not atoms, that the formula is the formula unit and not ` +
+                `the cell contents, and that the cell is the one you mean.`;
+        } else {
+            // Inside the possible range but outside the user's own window is
+            // worth a word -- not a refusal, since the window governs Auto and
+            // this Z was typed deliberately.
+            const odd = (d.rho < b.min || d.rho > b.max)
+                ? ` That is outside your ${b.min}\u2013${b.max} g/cm\u00b3 window, which is fine ` +
+                  `for a Z you typed \u2014 the window only governs Auto.`
+                : '';
+            hint.textContent = base + odd + ` Clear the Z box to scan the window instead.`;
+        }
+        return;
+    }
+
+    warn(false);
+    const mass = wyFormulaMassUI(formula);
+    const p = (typeof fitResults !== 'undefined' && fitResults && fitResults.params) || null;
+    let vol = null;
+    if (p) {
+        try {
+            const sg = (typeof sgUsedForFit !== 'undefined' && sgUsedForFit) ||
+                       (typeof currentSG !== 'undefined' ? currentSG : null);
+            const cell = fullCellFromParams(p, (sg && sg.system) || p.system || 'triclinic');
+            if (cell) vol = cellVolume(cell);
+        } catch (e) { vol = null; }
+    }
+
+    if (!mass || !Number.isFinite(vol) || vol <= 0) {
+        hint.textContent = `Z = Auto: every whole Z giving a density between ${b.min} and ` +
+                           `${b.max} g/cm\u00b3 will be searched, and the best structure for ` +
+                           `each proposed. The exact list appears once a formula and a refined ` +
+                           `cell are available.`;
+        return;
+    }
+
+    // Z = rho * V / (1.66054 * M), rounded INWARD at both ends so every Z the
+    // hint names has a density genuinely inside the window. The same
+    // arithmetic the worker does; a disagreement between this line and the
+    // scan in the log is a bug.
+    const zLo = Math.max(1, Math.ceil(vol * b.min / (1.66053906660 * mass) - 1e-9));
+    const zHi = Math.min(192, Math.floor(vol * b.max / (1.66053906660 * mass) + 1e-9));
+    if (zHi < zLo) {
+        const below = Math.max(1, Math.floor(vol * b.min / (1.66053906660 * mass)));
+        const rhoOf = z => (1.66053906660 * z * mass / vol).toFixed(2);
+        hint.textContent = `No whole Z gives a density between ${b.min} and ${b.max} g/cm\u00b3 ` +
+                           `for this cell and formula \u2014 Z = ${below} gives ${rhoOf(below)} and ` +
+                           `Z = ${below + 1} gives ${rhoOf(below + 1)}, so the window falls ` +
+                           `between them. Widen it.`;
+        return;
+    }
+
+    // WHAT THE SPACE GROUP ALLOWS, said here as well as in the log.
+    //
+    // In a centred or high-symmetry setting this is most of the answer: the
+    // window may span fourteen integers of which the group permits two. The
+    // rule is that every Wyckoff multiplicity is a multiple of some g, so each
+    // element's atom count -- being a sum of multiplicities -- must be too.
+    const step = wyZStepUI();
+    const list = [];
+    let nCandidates = 0;
+    for (let z = Math.max(step, Math.ceil(zLo / step) * step); z <= zHi; z += step) {
+        nCandidates++;
+        if (list.length < 12) list.push(z);
+    }
+    if (!list.length) {
+        const near = step * Math.max(1, Math.round(zLo / step));
+        const nearRho = 1.66053906660 * near * mass / vol;
+        // WIDENING IS ONLY ADVICE WHEN THE NEAREST Z IS A REAL DENSITY.
+        //
+        // In a high-symmetry group with a small cell the nearest allowed Z can
+        // imply 50 g/cm^3, and telling the user to widen the window towards it
+        // sends them to adjust the one control that cannot help. When nothing
+        // the group permits is physically possible, the formula, the cell or
+        // the space group is the thing that is wrong.
+        hint.textContent = (nearRho > WY_UI_RHO_ABS_MAX || nearRho < WY_UI_RHO_ABS_MIN)
+            ? `This space group allows Z only in multiples of ${step}, and the smallest of ` +
+              `them, Z = ${near}, already implies ${nearRho.toFixed(1)} g/cm\u00b3 \u2014 outside ` +
+              `what any solid can be. This cell, this formula and this space group do not ` +
+              `describe the same material; widening the window cannot fix it.`
+            : `This space group allows Z only in multiples of ${step}, and none of ` +
+              `them gives a density between ${b.min} and ${b.max} g/cm\u00b3 here. ` +
+              `The nearest is Z = ${near} at ${nearRho.toFixed(2)} g/cm\u00b3 \u2014 ` +
+              `widen the window to include it if that is plausible.`;
+        return;
+    }
+    const dens = z => (1.66053906660 * z * mass / vol).toFixed(1);
+    const cap = wyMaxZSearches();
+
+    // ONE CANDIDATE IS A DIFFERENT SENTENCE.
+    //
+    // The plural form read "Z = 8 (6.6-6.6 g/cm^3) ... Those that admit a legal
+    // assignment are each searched ... the best structure for each" -- a range
+    // with identical ends, and three plurals describing one thing. Where the
+    // window and the space group between them leave a single Z, that is the
+    // most informative outcome the scan has, and it should read like one.
+    if (list.length === 1) {
+        hint.textContent =
+            `Z = Auto: only Z = ${list[0]} fits, at ${dens(list[0])} g/cm\u00b3` +
+            (step > 1
+                ? `. It is the one multiple of ${step} this space group allows inside your ` +
+                  `${b.min}\u2013${b.max} g/cm\u00b3 window.`
+                : ` in your ${b.min}\u2013${b.max} g/cm\u00b3 window.`) +
+            ` It will be searched if it admits a legal Wyckoff assignment.`;
+        return;
+    }
+
+    // THE PRINTED LIST IS NOT ALWAYS THE WHOLE LIST. A wide window in a group
+    // that constrains nothing can admit forty values of Z, and a hint that
+    // printed twelve of them and stopped would read as a complete enumeration
+    // -- the user would take the last number for the largest Z considered.
+    const shown = (list.length < nCandidates)
+        ? `the first ${list.length} of ${nCandidates} values of Z \u2014 ` +
+          `${list.join(', ')}, up to Z = ${zHi}`
+        : `Z = ${list.join(', ')}`;
+
+    hint.textContent =
+        `Z = Auto will consider ${shown} ` +
+        `(${dens(list[0])}\u2013${dens(zHi)} g/cm\u00b3)` +
+        (step > 1 ? `, the multiples of ${step} this space group allows` : '') + `. ` +
+        `Those that admit a legal Wyckoff assignment are each searched in full` +
+        (nCandidates > cap ? `, up to the ${cap} most plausible` : '') +
+        `, and the best structure for each is listed in the results.`;
+}
+
+/**
+ * The step between the values of Z the current space group can host.
+ *
+ * The same argument as wyZStepFromGroup() in the worker: every atom count is a
+ * sum of Wyckoff multiplicities, so it is divisible by their greatest common
+ * divisor g, and Z must therefore be a multiple of g/gcd(g, k) for each
+ * element's subscript k. Returns 1 when the group constrains nothing, which is
+ * the honest answer for P1 and P-1.
+ */
+function wyZStepUI() {
+    try {
+        const sg = (typeof sgUsedForFit !== 'undefined' && sgUsedForFit) ||
+                   (typeof currentSG !== 'undefined' ? currentSG : null);
+        if (!sg) return 1;
+        const got = getSymopsForSetting(sg);
+        if (!got || got.error || !got.setting || !Array.isArray(got.setting.wyckoff)) return 1;
+        const mults = got.setting.wyckoff.map(w => w && w.multiplicity)
+            .filter(m => Number.isFinite(m) && m > 0);
+        if (!mults.length) return 1;
+        const gcd2 = (a, b) => { while (b) { const t = a % b; a = b; b = t; } return a; };
+        const g = mults.reduce((a, b) => gcd2(a, b));
+        if (g <= 1) return 1;
+
+        const formula = ((document.getElementById('cf-wyckoff-formula') || {}).value || '').trim();
+        const counts = wyElementCountsUI(formula);
+        // No readable formula, or a fractional subscript: the divisibility
+        // argument is an integer one and does not apply. Say nothing rather
+        // than exclude a Z that may be right.
+        if (!counts || !counts.length || !counts.every(Number.isInteger)) return 1;
+
+        let step = 1;
+        for (const k of counts) {
+            const need = g / gcd2(g, k);
+            step = step * need / gcd2(step, need);
+        }
+        return Math.max(1, step);
+    } catch (e) { return 1; }
+}
+
+/** Per-formula-unit subscripts, in the same bracket-aware way as the worker. */
+function wyElementCountsUI(formula) {
+    if (!formula) return null;
+    const counts = {};
+    let bad = false;
+    const walk = (s, mult) => {
+        let i = 0;
+        while (i < s.length && !bad) {
+            if (s[i] === '(') {
+                let depth = 1, j = i + 1;
+                while (j < s.length && depth) {
+                    if (s[j] === '(') depth++;
+                    if (s[j] === ')') depth--;
+                    j++;
+                }
+                if (depth) { bad = true; return; }
+                const m = /^(\d+(?:\.\d+)?)/.exec(s.slice(j));
+                walk(s.slice(i + 1, j - 1), mult * (m ? parseFloat(m[1]) : 1));
+                i = j + (m ? m[1].length : 0);
+                continue;
+            }
+            const m = /^([A-Z][a-z]?)(\d+(?:\.\d+)?)?/.exec(s.slice(i));
+            if (!m) { bad = true; return; }
+            const el = m[1].toUpperCase();
+            counts[el] = (counts[el] || 0) + mult * (m[2] ? parseFloat(m[2]) : 1);
+            i += m[0].length;
+        }
+    };
+    walk(String(formula).replace(/\s+/g, ''), 1);
+    return bad ? null : Object.values(counts);
+}
+
+/** How many values of Z a scan may search. */
+function wyMaxZSearches() {
+    const el = document.getElementById('cf-wyckoff-max-z');
+    const v = el ? parseInt(el.value, 10) : NaN;
+    return Number.isFinite(v) ? Math.min(24, Math.max(1, v)) : 6;
+}
+
 /** Cycles per charge-flipping trial. */
 function cfIterationsValue() { return logSliderValue('cf-iterations', 2000); }
 
@@ -1987,12 +2497,18 @@ function wyckoffProgress(msg) {
     // There are now three states: Preparing while the device and tables are
     // built, Processing once generations are arriving, and a result at the end.
     // The idle state is the en dash setWyckoffStatus() already falls back to.
+    // WHICH Z THIS IS, when there is more than one. A scan runs a full search
+    // per candidate, so the bar sweeps to the right once per Z; without the
+    // label that reads as a single search restarting itself over and over.
+    const zTag = (msg.zCount > 1 && Number.isFinite(msg.z))
+        ? `Z = ${msg.z} (${msg.zIndex}/${msg.zCount}) \u00b7 ` : '';
+
     if (msg.type === 'wy-start' || msg.type === 'cf-wyckoff-start') {
         if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; void bar.offsetWidth; }
-        if (gen) gen.textContent = 'Preparing\u2026';
+        if (gen) gen.textContent = zTag + 'Preparing\u2026';
         if (cc) cc.textContent = '--';
         wyckoffPhase = 'preparing';
-        setWyckoffStatus('Preparing\u2026');
+        setWyckoffStatus(zTag + 'Preparing\u2026');
         return;
     }
 
@@ -2829,10 +3345,46 @@ function cfPrepareIntensities() {
             const area = integratedPeakArea(r, p, 1);
             const height = r.intensity || 0;
             const widthFactor = Math.abs(height) > 1e-9 ? area / height : 0;
+            // ------------------------------------------------------------
+            //  THE UNCERTAINTY ON `area`, ON THE SAME BASIS AS `area`.
+            //
+            //  Three sources, in order of how directly each one measures the
+            //  quantity actually being used:
+            //
+            //   1. PAWLEY: the height is a least-squares parameter, so it has
+            //      a covariance entry. Scaling it by widthFactor = area/height
+            //      makes the uncertainty follow whatever basis the area is on,
+            //      automatically and for free.
+            //
+            //   2. LE BAIL: the extraction already propagated the counting
+            //      statistics through the partition fractions, and recorded
+            //      the result rescaled to the untruncated area as
+            //      I_sigma_full. That is the same integral, over the same
+            //      points, computed by the same pass that produced the
+            //      intensity -- and it honours the main thread's weighting
+            //      convention rather than assuming bare Poisson counts.
+            //
+            //   3. cfSigmaMap, the fallback. calculateAllObservedIntensities()
+            //      re-derives the same propagation independently, always from
+            //      Poisson counts and always over the TRUNCATED window. It was
+            //      previously used for every Le Bail reflection, which meant
+            //      two implementations of one quantity were in service at once
+            //      and the one being used was the cruder of the two. It is
+            //      kept only for the case that has nothing better: a Pawley
+            //      run whose normal matrix was singular, which exactly
+            //      overlapping reflections make common.
+            // ------------------------------------------------------------
             let sigma = NaN;
             const covSigma = cfEsds ? cfEsds[`I_(${r.h_orig},${r.k_orig},${r.l_orig})`] : undefined;
             if (typeof covSigma === 'number' && isFinite(covSigma) && widthFactor > 0) {
                 sigma = covSigma * widthFactor;          // height ESD -> area ESD
+            } else if (Number.isFinite(r.I_sigma_full)) {
+                sigma = r.I_sigma_full;
+            } else if (Number.isFinite(r.I_sigma) && Number.isFinite(r.shapeArea)
+                       && r.shapeArea > 1e-12 && Number.isFinite(r.shapeAreaAnalytic)) {
+                // An extraction predating I_sigma_full: rescale it here rather
+                // than pair a truncated sigma with an untruncated area.
+                sigma = r.I_sigma * (r.shapeAreaAnalytic / r.shapeArea);
             } else if (cfSigmaMap && r.hkl_list) {
                 const s = cfSigmaMap.get(r.hkl_list[0]);
                 if (typeof s === 'number' && isFinite(s) && s > 0) sigma = s;
@@ -4030,8 +4582,52 @@ function runWyckoffStandalone() {
     }
     vc.warnings.forEach(w => logEvent(`Distance constraints: ${w}`));
 
+    // ----------------------------------------------------------------------
+    //  A TYPED Z THAT CANNOT BE RIGHT DOES NOT GET A SEARCH.
+    //
+    //  Checked HERE, before the worker starts, because the cost of finding out
+    //  later is several minutes of GPU time spent fitting a structure whose
+    //  density is 300 g/cm^3 -- and the swarm will produce one, since nothing
+    //  in the objective knows what a density is. Lithium is 0.53 g/cm^3 and
+    //  osmium 22.59; outside 0.5 to 22.5 the Z, the formula and the cell are
+    //  not describing the same solid.
+    //
+    //  Only a TYPED Z is checked. Auto derives Z from a window that already
+    //  sits inside these bounds, so there is nothing there to catch.
+    // ----------------------------------------------------------------------
+    {
+        const zBox = document.getElementById('cf-wyckoff-z');
+        const zRaw = zBox ? String(zBox.value).trim() : '';
+        if (zRaw !== '') {
+            const Z = Math.round(parseFloat(zRaw));
+            const d = wyDensityForZ(Z, formula.trim());
+            // No mass and no volume means no check -- a formula this panel
+            // cannot read is not evidence that the Z is wrong, and blocking on
+            // it would make a hydrate impossible to search.
+            if (d && (d.rho < WY_UI_RHO_ABS_MIN || d.rho > WY_UI_RHO_ABS_MAX)) {
+                const m = `Z = ${Z} gives a density of ${d.rho.toFixed(2)} g/cm\u00b3 for ` +
+                          `${formula.trim()} in this cell, outside the ` +
+                          `${WY_UI_RHO_ABS_MIN}\u2013${WY_UI_RHO_ABS_MAX} g/cm\u00b3 that any solid ` +
+                          `can have. The search was not started.`;
+                setWyckoffStatus(m, 'warn');
+                showToast(m, 'error');
+                logEvent(`Wyckoff search: refused \u2014 Z = ${Z} implies ` +
+                         `${d.rho.toFixed(2)} g/cm\u00b3 (formula mass ${d.mass.toFixed(2)} g/mol, ` +
+                         `cell ${d.volume.toFixed(1)} \u00c5\u00b3).`);
+                return;
+            }
+        }
+    }
+
     setWyckoffStatus('Running Wyckoff search against the Pawley intensities\u2026');
-    logEvent(`Wyckoff search: start (${formula.trim()}, ${sg.symbol || sg.number})`);
+    {
+        const zBox = document.getElementById('cf-wyckoff-z');
+        const zTyped = zBox && String(zBox.value).trim() !== '';
+        const rb = wyDensityBounds();
+        logEvent(`Wyckoff search: start (${formula.trim()}, ${sg.symbol || sg.number}, ` +
+                 (zTyped ? `Z = ${String(zBox.value).trim()}`
+                         : `Z = Auto over ${rb.min}\u2013${rb.max} g/cm\u00b3`) + ')');
+    }
     if (vc.windows.length) {
         describeDistanceConstraints(vc.windows).forEach(s => logEvent(`  constraint: ${s}`));
     }
@@ -4048,6 +4644,13 @@ function runWyckoffStandalone() {
     const minContEl = document.getElementById('cf-wyckoff-min-contact');
     const windowsEl = document.getElementById('cf-wyckoff-windows');
     const iv = (el) => { const v = el ? parseInt(el.value, 10) : NaN; return Number.isNaN(v) ? null : v; };
+    // Z, MAX REUSE AND MAX SITES ARE WHOLE NUMBERS OF 1 OR MORE, OR AUTO.
+    // The input handlers already normalise on change, but a value can reach
+    // this point untouched -- restored from a session, or typed and submitted
+    // by keyboard without the field ever losing focus. Anything below 1 is not
+    // a smaller request, it is a missing one, so it means Auto.
+    const ivPos = (el) => { const v = iv(el); return (Number.isFinite(v) && v >= 1) ? Math.round(v) : null; };
+    const rhoBounds = wyDensityBounds();
 
     startWyckoffWorker();
     const done = () => {
@@ -4106,14 +4709,27 @@ function runWyckoffStandalone() {
                                  'coordinate refinement did run.', 'warn');
                 showToast('Stopped \u2014 best structure so far is shown.', 'info');
             } else {
-                setWyckoffStatus('Wyckoff search complete.');
+                const n = Array.isArray(msg.results && msg.results.solutions)
+                    ? msg.results.solutions.length : 1;
+                setWyckoffStatus(n > 1
+                    ? `Wyckoff search complete \u2014 ${n} solutions, one per value of Z. ` +
+                      `The best is shown; the others are listed above it.`
+                    : 'Wyckoff search complete.');
             }
             {
                 const r = (cfStructure.refinement) ||
                           (cfStructure.wyckoffResult && cfStructure.wyckoffResult.refinement) || {};
+                const sols = Array.isArray(cfStructure.solutions) ? cfStructure.solutions : null;
                 logEvent(`Wyckoff search: ${msg.results && msg.results.stopped ? 'stopped' : 'done'}` +
                          ` \u2014 ${(cfStructure.wyckoffResult || {}).assignment || '?'}` +
+                         (Number.isFinite(cfStructure.z) ? `, Z = ${cfStructure.z}` : '') +
                          (Number.isFinite(r.R) ? `, wR(F\u00b2) = ${(r.R * 100).toFixed(2)}%` : ''));
+                if (sols && sols.length > 1) {
+                    logEvent(`  ${sols.length} solutions, one per value of Z: ` +
+                        sols.map(s => `Z = ${s.z}` +
+                            (s.refinement && Number.isFinite(s.refinement.R)
+                                ? ` (${(s.refinement.R * 100).toFixed(1)}%)` : '')).join(', ') + '.');
+                }
             }
             rpSnapshotWyckoff(cfStructure, {
                 formula: formula.trim(), spaceGroup: sg,
@@ -4131,9 +4747,14 @@ function runWyckoffStandalone() {
         symops: got.symops,
         wyckoffTable: got.setting.wyckoff,
         targetComposition: formula.trim(),
-        wyckoffZ: iv(zEl),
-        wyckoffMaxSites: iv(maxSitesEl),
-        wyckoffMaxRepeat: iv(maxRepEl),
+        wyckoffZ: ivPos(zEl),
+        wyckoffMaxSites: ivPos(maxSitesEl),
+        wyckoffMaxRepeat: ivPos(maxRepEl),
+        // Only consulted when Z is on Auto, and sent regardless so the result
+        // can record the window it was found under.
+        densityMin: rhoBounds.min,
+        densityMax: rhoBounds.max,
+        maxZSearches: wyMaxZSearches(),
         swarmParticles: iv(partEl) || 512,
         swarmIterations: wyIterationsValue(),
         swarmRestarts: iv(restEl) || 4,
@@ -4443,9 +5064,16 @@ function exportStructureCIF(which) {
     const st = (which && which.sites) ? which : cfStructure;
     if (!st) { showToast('Build a structure first.', 'error'); return; }
     const c = st.cell, sg = st.spaceGroup;
+    // WHICH METHOD PRODUCED THIS. The filename already distinguished the two;
+    // the CONTENTS did not, so a Wyckoff structure was writing
+    // data_charge_flipping_solution and an _audit_creation_method naming a
+    // method that had never run. A CIF is the artefact that outlives the
+    // session and gets sent to someone else -- it is the last place that
+    // should be guessing at its own provenance.
+    const isWy = (st.source === 'wyckoff' || (st.sites || []).some(x => x.wyckoff));
     const L = [];
-    L.push('data_charge_flipping_solution');
-    L.push("_audit_creation_method        'Powder 5 charge flipping'");
+    L.push(isWy ? 'data_wyckoff_solution' : 'data_charge_flipping_solution');
+    L.push(`_audit_creation_method        'Powder 5 ${isWy ? 'Wyckoff direct-space search' : 'charge flipping'}'`);
     L.push(`_cell_length_a                ${c.a.toFixed(5)}`);
     L.push(`_cell_length_b                ${c.b.toFixed(5)}`);
     L.push(`_cell_length_c                ${c.c.toFixed(5)}`);
@@ -4462,9 +5090,29 @@ function exportStructureCIF(which) {
         st.symops.forEach(op => L.push(`  '${op}'`));
         L.push('');
     }
-    L.push('# Peak heights are on an arbitrary scale; occupancies are NOT refined.');
-    L.push('# Assign element types yourself — charge flipping gives electron');
-    L.push('# density, not chemistry.');
+    if (isWy) {
+        // A Z SCAN MAKES THIS ESSENTIAL, NOT DECORATIVE. One run can now yield
+        // several solutions that differ ONLY in Z, and without these two lines
+        // three downloaded CIFs are distinguishable only by counting atoms.
+        const formula = (st.wyckoffResult && st.wyckoffResult.formula) ||
+                        ((document.getElementById('cf-wyckoff-formula') || {}).value || '').trim();
+        if (formula) L.push(`_chemical_formula_sum         '${formula}'`);
+        if (Number.isFinite(st.z)) L.push(`_cell_formula_units_Z         ${st.z}`);
+        const ref = st.refinement ||
+                    (st.wyckoffResult && st.wyckoffResult.refinement) || null;
+        if (ref && Number.isFinite(ref.R)) {
+            L.push(`_refine_ls_wR_factor_gt       ${ref.R.toFixed(5)}`);
+        }
+        L.push('');
+        L.push('# Direct-space Wyckoff search against Pawley-extracted intensities.');
+        L.push('# Element types are an INPUT to this method, not inferred from density.');
+        L.push('# Coordinates are constrained to their Wyckoff positions; occupancies');
+        L.push('# are 1.0 throughout and are NOT refined.');
+    } else {
+        L.push('# Peak heights are on an arbitrary scale; occupancies are NOT refined.');
+        L.push('# Assign element types yourself — charge flipping gives electron');
+        L.push('# density, not chemistry.');
+    }
 
 L.push('loop_');
     L.push('_atom_site_label');
@@ -4473,10 +5121,18 @@ L.push('loop_');
     L.push('_atom_site_fract_y');
     L.push('_atom_site_fract_z');
     L.push('_atom_site_symmetry_multiplicity');
+    if (isWy) L.push('_atom_site_Wyckoff_symbol');
     L.push('_atom_site_occupancy');
     st.sites.forEach(s => {
         const elem = s.element || 'Q';
-        L.push(`  ${elem}${s.rank}  ${elem}  ${s.x.toFixed(5)}  ${s.y.toFixed(5)}  ${s.z.toFixed(5)}  ${s.multiplicity}  1.000`);
+        // '?' is the CIF null. `${undefined}` printed the literal text
+        // "undefined", which is not a value any parser will accept.
+        const mult = Number.isFinite(s.multiplicity) ? s.multiplicity : '?';
+        const letter = isWy
+            ? '  ' + (s.wyckoff ? String(s.wyckoff).replace(/^\d+/, '') || '?' : '?')
+            : '';
+        L.push(`  ${elem}${s.rank}  ${elem}  ${s.x.toFixed(5)}  ${s.y.toFixed(5)}  ` +
+               `${s.z.toFixed(5)}  ${mult}${letter}  1.000`);
     });
     // Named after the METHOD THAT PRODUCED IT, not after charge flipping. A
     // Wyckoff solution downloaded as charge_flipping_structure.cif is a
@@ -5881,11 +6537,29 @@ const minTth = parseFloat(controls.tthMinSlider.value);
                      params: Object.keys(workerPayload.initialParams).length
                 }); */
                  refinementWorker.postMessage(workerPayload);
+                 // ARMED HERE, NOT ONLY ON THE FIRST PROGRESS MESSAGE.
+                 //
+                 // The watchdog in refinement_controller.js is re-armed on
+                 // every 'progress' and nowhere else, so it does not exist
+                 // until the worker has already reported progress once. That
+                 // leaves the whole of startup unguarded -- importScripts
+                 // failing, a space group that throws during setup, a payload
+                 // big enough to wedge the structured clone -- and startup is
+                 // where a worker is most likely to die without ever sending a
+                 // message. The symptom is the one the watchdog exists to
+                 // prevent: "Refining..." forever, no error, no way back.
+                 //
+                 // Guarded on typeof because this function is defined inside
+                 // the DOMContentLoaded scope and armFitWatchdog is a global
+                 // from refinement_controller.js.
+                 if (typeof armFitWatchdog === 'function') armFitWatchdog();
                  controls.progressBar.style.width = '0%'; // Reset progress bar visually
                  controls.progressBar.style.transition = 'none'; // Disable transition for reset
             } catch (error) {
                 console.error("Error sending message to worker:", error);
                 showToast(`Error starting refinement: ${error.message}`, "error");
+                // Nothing is running; do not let it fire in two minutes.
+                if (typeof disarmFitWatchdog === 'function') disarmFitWatchdog();
                 isFitting = false;
                 setUIState(false);
             }
@@ -7422,8 +8096,73 @@ function rpClearAllRuns() {
     // The Wyckoff control panel keeps state of its own, outside the history.
     wyckoffPhase = 'idle';
     if (typeof setWyckoffStatus === 'function') setWyckoffStatus('–');
+    wyResetInputs();
 
     rpSwitchTab('plot');
+}
+
+/**
+ * The Wyckoff panel's inputs, back to their defaults.
+ *
+ * WHICH INPUTS, AND WHY THOSE.
+ *
+ * Everything here describes the SAMPLE: its formula, how many formula units
+ * are in the cell, how dense it is, how close its atoms may come, what its
+ * bond lengths are. Carried across to a different diffractogram, every one of
+ * them is a statement about the wrong material -- and the formula is the worst
+ * of them, because the search will run happily on it and return a structure.
+ *
+ * What is deliberately NOT reset is everything describing the MACHINE or the
+ * user's patience: chains, iterations, restarts and the cap on how many Z to
+ * search. Those were set once for this computer, they are still true of it
+ * after a new file is loaded, and clearing them would make the user re-tune
+ * the search on every sample.
+ */
+function wyResetInputs() {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+
+    set('cf-wyckoff-formula', '');
+    // Empty is Auto for all three, which is what the placeholders say.
+    set('cf-wyckoff-z', '');
+    set('cf-wyckoff-max-repeat', '');
+    set('cf-wyckoff-max-sites', '');
+    set('cf-wyckoff-min-contact', '1.0');
+    set('cf-wyckoff-windows', '');
+    set('cf-wyckoff-rho-min', '2');
+    set('cf-wyckoff-rho-max', '10');
+
+    // The slider read-outs are not bound to their inputs, so setting a value
+    // in code leaves the number beside the thumb showing the old one.
+    const echo = (id) => {
+        const el = document.getElementById(id);
+        const out = document.getElementById(id + '-value');
+        if (el && out) out.textContent = el.value;
+    };
+    echo('cf-wyckoff-rho-min');
+    echo('cf-wyckoff-rho-max');
+
+    // The density block greys itself while a Z is typed; the Z has just been
+    // cleared, so it has to be re-enabled or the sliders stay dead.
+    const block = document.getElementById('cf-wyckoff-density-block');
+    if (block) {
+        block.style.opacity = '';
+        block.querySelectorAll('input').forEach(el => { el.disabled = false; });
+    }
+
+    // Both read-backs describe inputs that have just changed underneath them.
+    if (typeof renderConstraintStatus === 'function') { try { renderConstraintStatus(); } catch (e) {} }
+    if (typeof wyUpdateDensityHint === 'function') { try { wyUpdateDensityHint(); } catch (e) {} }
+    if (typeof updateWyckoffHint === 'function') { try { updateWyckoffHint(); } catch (e) {} }
+
+    // The progress read-out belongs to a run on the previous pattern.
+    const bar = document.getElementById('wyckoff-progress-bar');
+    if (bar) bar.style.width = '0%';
+    const cont = document.getElementById('wyckoff-progress-container');
+    if (cont) cont.classList.add('hidden');
+    const gen = document.getElementById('wyckoff-gen-count');
+    if (gen) gen.textContent = '0 / 0';
+    const cc = document.getElementById('wyckoff-cc');
+    if (cc) cc.textContent = '--';
 }
 
 // Charge-flipping UI back to its pre-run state: no map, no structure, no
@@ -7584,7 +8323,16 @@ async function rpExportPDF(mode) {
     const entry = rpGetSelected(mode);
     if (!entry) { showToast('No run selected.', 'error'); return; }
     
-    const runData = (mode === 'cf' || mode === 'wyckoff') ? entry.result : entry.results;
+    // THE PDF REPORTS WHAT THE PANEL IS SHOWING.
+    //
+    // For a Wyckoff run that is not necessarily entry.result: a Z scan stores
+    // the best solution in the entry's top-level fields and all of them in
+    // `solutions`, and the user may well have selected one of the others. A
+    // report headed Z = 16 while the screen shows Z = 4 is worse than no
+    // report at all.
+    const runData = (mode === 'wyckoff') ? (rpWyckoffView(entry) || entry.result)
+                  : (mode === 'cf') ? entry.result
+                  : entry.results;
     window.__activeReportResults = runData;
     
     try {
@@ -7656,6 +8404,13 @@ function rpSnapshotWyckoff(structure, opts) {
                 (structure.wyckoffResult && structure.wyckoffResult.refinement))) || {};
     const tag = Number.isFinite(ref.R) ? `R=${(ref.R * 100).toFixed(1)}%`
                                        : ((opts && opts.formula) || 'no R');
+    // A Z SCAN IS ONE RUN WITH SEVERAL ANSWERS, and the picker has to say so:
+    // without this a run that found four structures is labelled exactly like
+    // one that found a single structure, and the only way to discover the
+    // other three is to select the run and notice the table.
+    const nSol = (structure && Array.isArray(structure.solutions)) ? structure.solutions.length : 1;
+    const zTag = (structure && Number.isFinite(structure.z))
+        ? ` \u00b7 Z=${structure.z}${nSol > 1 ? `/${nSol}` : ''}` : '';
     // The restraints the search actually ran under, stored ON the structure.
     //
     // The panel could read them from opts, but the PDF reporter is handed the
@@ -7669,14 +8424,159 @@ function rpSnapshotWyckoff(structure, opts) {
     }
     const entry = {
         id: rpRunCounter, when,
-        label: `#${rpRunCounter} \u00b7 ${tag} \u00b7 ${rpTimestamp(when)}`,
-        result: structure, opts: opts || {}
+        label: `#${rpRunCounter} \u00b7 ${tag}${zTag} \u00b7 ${rpTimestamp(when)}`,
+        result: structure, opts: opts || {},
+        // WHICH OF THE RUN'S SOLUTIONS IS ON SCREEN. A Z scan returns one
+        // structure per feasible Z, ranked; 0 is the best of them. Stored on
+        // the history entry rather than in a global so that flipping back to
+        // an older run restores the solution that was being looked at, instead
+        // of silently resetting to the winner.
+        solutionIndex: 0
     };
     rpHistory.wyckoff.push(entry);
     rpSelected.wyckoff = entry.id;
     rpRefreshRunSelect('wyckoff');
     rpRenderWyckoffRun();
     rpMarkTabHasData('wyckoff');
+}
+
+/**
+ * The structure a Wyckoff history entry is currently showing.
+ *
+ * A run with Z on Auto searches every feasible Z and returns one structure per
+ * Z, ranked by wR(F^2). The entry's `result` carries the best one in its top
+ * level fields and all of them in `solutions`, so the panel has to assemble the
+ * view rather than render `result` directly -- otherwise selecting Z = 4 would
+ * change the highlighted row and nothing else on the page.
+ *
+ * The base object supplies everything that is a property of the RUN rather than
+ * of the solution: the cell, the space group, the operator matrices, the
+ * restraints. Only the coordinates and the figures of merit come from the
+ * chosen solution.
+ */
+function rpWyckoffView(entry) {
+    const base = (entry && entry.result) || cfStructure;
+    if (!base) return null;
+    const sols = Array.isArray(base.solutions) ? base.solutions : null;
+    if (!sols || !sols.length) return base;
+
+    const i = Math.min(Math.max(0, entry && Number.isFinite(entry.solutionIndex)
+                                    ? entry.solutionIndex : 0), sols.length - 1);
+    const s = sols[i];
+    if (!s || !Array.isArray(s.sites) || !s.sites.length) return base;
+
+    return {
+        ...base,
+        sites: s.sites,
+        refinement: s.refinement,
+        z: s.z,
+        rawPeakCount: s.sites.length,
+        stopped: !!s.stopped,
+        wyckoffResult: {
+            ...(base.wyckoffResult || {}),
+            assignment: s.assignment,
+            sites: s.sites,
+            searchSites: s.searchSites,
+            searchCC: s.searchCC,
+            searchScore: s.searchScore,
+            refinement: s.refinement,
+            z: s.z,
+            stopped: !!s.stopped,
+            // The candidate list belongs to the search that produced the BEST
+            // solution, not to this one. Carrying it over would attach one Z's
+            // rejected assignments to another Z's answer.
+            candidates: (i === 0) ? (base.wyckoffResult || {}).candidates : null
+        }
+    };
+}
+
+/**
+ * The ranked solution table: one row per value of Z that produced a structure.
+ *
+ * Shown only when there is more than one, because a single row is a fact
+ * already stated by the summary grid above it. The point of the table is the
+ * COMPARISON -- when two values of Z both give a respectable fit, that is
+ * something the user has to be shown and decide about, not something the
+ * program should quietly resolve on their behalf.
+ */
+function rpWyckoffSolutionsTable(st, entry) {
+    const sols = (st && Array.isArray(st.solutions)) ? st.solutions : null;
+    const fails = (st && Array.isArray(st.zFailures)) ? st.zFailures : [];
+    if (!sols || sols.length < 2) {
+        // One solution, but the scan still has something to say if other
+        // values of Z were tried and failed.
+        if (sols && sols.length === 1 && fails.length) {
+            return `<p style="font-size:12px;color:var(--system-secondary-label);margin:0 0 12px 0;">` +
+                   `Z = Auto searched ${sols.length + fails.length} value(s) of Z; only ` +
+                   `Z = ${sols[0].z} produced a structure. The others: ` +
+                   escapeHtml(fails.map(f => `Z = ${f.Z} (${f.why})`).join('; ')) + `.</p>`;
+        }
+        return '';
+    }
+
+    const sel = Math.min(Math.max(0, entry && Number.isFinite(entry.solutionIndex)
+                                      ? entry.solutionIndex : 0), sols.length - 1);
+    const num = (v, n) => Number.isFinite(v) ? v.toFixed(n) : '\u2013';
+
+    const rows = sols.map((s, i) => {
+        const R = (s.refinement && Number.isFinite(s.refinement.R)) ? s.refinement.R : null;
+        const on = (i === sel);
+        return `<tr class="wy-sol-row${on ? ' wy-sol-row-on' : ''}" data-sol="${i}" ` +
+               `tabindex="0" role="button" ` +
+               `title="Show this solution in the tables and the plot below." ` +
+               `style="cursor:pointer;${on ? 'font-weight:600;' : ''}">` +
+               `<td>${i + 1}</td>` +
+               `<td>${s.z}</td>` +
+               `<td>${num(s.rho, 2)}</td>` +
+               `<td>${Number.isFinite(s.nAtoms) ? s.nAtoms : '\u2013'}</td>` +
+               `<td>${escapeHtml(s.assignment || '?')}</td>` +
+               `<td>${Number.isFinite(s.searchCC) ? s.searchCC.toFixed(4) : '\u2013'}</td>` +
+               `<td>${R !== null ? (R * 100).toFixed(2) + '%' : '\u2013'}</td>` +
+               `<td>${on ? 'shown' : '<span style="color:var(--system-blue,#0a84ff);">show</span>'}</td>` +
+               `</tr>`;
+    }).join('');
+
+    // WHY THE ORDER IS THE ORDER. Ranking on wR and ranking on CC are not the
+    // same ranking, and a reader who sees rows sorted by a column that is not
+    // monotonic down the page will assume the table is broken rather than that
+    // two different figures of merit are in play.
+    const mixed = sols.some(s => !(s.refinement && Number.isFinite(s.refinement.R)));
+
+    // THE WORKER'S OWN SENTENCE, not a restatement of it.
+    //
+    // The step and the gcd are not the same number whenever the subscripts
+    // share a factor with it -- g = 4 with a formula like Fe2O4 gives a step of
+    // 2, not 4 -- so a note written here from `zStep` alone would state the
+    // rule incorrectly in exactly the cases where it is least obvious.
+    const scan = (st && st.zScan) || null;
+    const stepNote = (scan && scan.zStep > 1 && scan.zStepWhy)
+        ? ' ' + escapeHtml(scan.zStepWhy) +
+          (Number.isFinite(scan.skippedByGroup) && scan.skippedByGroup > 0
+            ? ` That removed ${scan.skippedByGroup} value(s) from the window before any ` +
+              `search ran.` : '')
+        : '';
+
+    return `<h3 style="font-size:13px;margin:0 0 6px 0;">Solutions (${sols.length})</h3>` +
+        `<p style="font-size:12px;color:var(--system-secondary-label);margin:0 0 8px 0;">` +
+        `Z was on Auto, so every value of Z whose density falls between ` +
+        `${st.densityMin ?? '?'} and ${st.densityMax ?? '?'} g/cm\u00b3 and which admits a legal ` +
+        `Wyckoff assignment was searched in full.` + stepNote +
+        ` The best structure for each is below, ` +
+        `ranked by wR(F&sup2;)` +
+        (mixed ? ` where there is one; solutions whose refinement did not run are ranked ` +
+                 `below those that have an R, on search CC, and the two figures are not comparable`
+               : '') +
+        `. Click a row to show that solution in the tables and the plot below.` +
+        (fails.length ? ` Values of Z that produced nothing: ` +
+                        escapeHtml(fails.map(f => `${f.Z} (${f.why})`).join(', ')) + `.` : '') +
+        `</p>` +
+        `<div class="cf-table-scroll"><table class="cf-peak-table wy-sol-table">` +
+        `<thead><tr><th>#</th><th>Z</th><th>&rho; (g/cm&sup3;)</th><th>Atoms/cell</th>` +
+        `<th>Assignment</th><th>Search CC</th><th>wR(F&sup2;)</th><th></th></tr></thead>` +
+        `<tbody>${rows}</tbody></table></div>` +
+        `<p style="font-size:12px;color:var(--system-secondary-label);margin:6px 0 14px 0;">` +
+        `A better wR does not by itself make a Z right: check the contacts and the bond ` +
+        `valences below, and whether the density is the one you expect for this material.</p>`;
 }
 
 function rpRenderWyckoffRun() {
@@ -7687,7 +8587,8 @@ function rpRenderWyckoffRun() {
     // Render the SELECTED history entry, falling back to the live structure.
     // Without this the picker would change the label and nothing else.
     const entry = rpHistory.wyckoff.find(e => e.id === rpSelected.wyckoff);
-    const st = (entry && entry.result) || cfStructure;
+    // The selected SOLUTION within the selected run -- see rpWyckoffView.
+    const st = rpWyckoffView(entry) || cfStructure;
     const haveWyckoff = !!(st && Array.isArray(st.sites) && st.sites.length &&
                            st.sites.some(x => x.wyckoff));
     if (pdfBtn) pdfBtn.disabled = !haveWyckoff;
@@ -7704,6 +8605,17 @@ function rpRenderWyckoffRun() {
     const c = st.cell || {};
     const pct = v => (v * 100).toFixed(2) + '%';
     const num = (v, n) => Number.isFinite(v) ? v.toFixed(n) : '\u2013';
+    // The density of the solution ON SCREEN, not of the run's best one. Taken
+    // from the scan where it recorded one, so this figure and the solutions
+    // table cannot disagree.
+    const rhoOfView = (() => {
+        const sols = Array.isArray(st.solutions) ? st.solutions : null;
+        if (sols) {
+            const hit = sols.find(s => s.z === (wy.z || st.z));
+            if (hit && Number.isFinite(hit.rho)) return hit.rho;
+        }
+        return null;
+    })();
 
     const fom = Number.isFinite(ref.R)
         ? `wR(F&sup2;) = <b>${pct(ref.R)}</b> against ${ref.nObs} observation(s), ` +
@@ -7760,11 +8672,23 @@ function rpRenderWyckoffRun() {
     ).join('');
 
     body.innerHTML =
+        // THE SHORTLIST FIRST, when there is one. Everything below this line
+        // describes ONE solution, and a reader who does not know that several
+        // were found will read the first table as the answer rather than as
+        // the top-ranked answer.
+        rpWyckoffSolutionsTable(st, entry) +
         `<div class="cf-summary-grid" style="margin-bottom:12px;">` +
         `<dt>Space group</dt><dd>${sg.symbol || '\u2013'}${sg.number ? ' (No. ' + sg.number + ')' : ''}</dd>` +
         `<dt>Cell</dt><dd>${num(c.a,4)} \u00d7 ${num(c.b,4)} \u00d7 ${num(c.c,4)} \u00c5</dd>` +
         `<dt>Assignment</dt><dd>${wy.assignment || '\u2013'}</dd>` +
-        `<dt>Formula units Z</dt><dd>${wy.z || '\u2013'}</dd>` +
+        `<dt>Formula units Z</dt><dd>${(wy.z || st.z || '\u2013')}` +
+        // The density is the reason this Z was a candidate at all, so it
+        // belongs next to it rather than only in the solutions table -- which
+        // is not shown when a single Z was searched.
+        (Number.isFinite(rhoOfView)
+            ? ` <span style="color:var(--system-secondary-label);">` +
+              `(${rhoOfView.toFixed(2)} g/cm\u00b3)</span>` : '') +
+        `${st.autoZ ? ' <span style="color:var(--system-secondary-label);">\u00b7 Auto</span>' : ''}</dd>` +
         `</div>` +
         // BOTH RESULTS, side by side.
         //
@@ -7823,6 +8747,44 @@ function rpRenderWyckoffRun() {
 
     const cif = document.getElementById('wyckoff-export-cif');
     if (cif) cif.addEventListener('click', () => exportStructureCIF(st));
+
+    // ----------------------------------------------------------------------
+    //  PICKING A SOLUTION.
+    //
+    //  The click records the choice on the history entry and re-renders, so
+    //  everything below -- the coordinates, the R factor, the CIF export, the
+    //  contacts, the bond valences and the structure plot -- comes from the
+    //  chosen Z rather than from the run's best one.
+    //
+    //  cfStructure is re-pointed HERE and not inside the renderer: the
+    //  charge-flipping route calls rpRenderWyckoffRun() immediately before
+    //  renderStructure(cfStructure), so assigning it on every render would
+    //  hand the 3D viewer a Wyckoff structure in the middle of a CF run. An
+    //  explicit click carries no such ambiguity.
+    // ----------------------------------------------------------------------
+    if (entry && Array.isArray(st.solutions) && st.solutions.length > 1) {
+        const pick = (row) => {
+            const i = Number(row.dataset.sol);
+            if (!Number.isFinite(i) || i === entry.solutionIndex) return;
+            entry.solutionIndex = i;
+            rpRenderWyckoffRun();
+            const view = rpWyckoffView(entry);
+            if (view) {
+                cfStructure = view;
+                const s = st.solutions[i];
+                const r = (s.refinement && Number.isFinite(s.refinement.R))
+                    ? `, wR(F\u00b2) = ${(s.refinement.R * 100).toFixed(2)}%` : '';
+                logEvent(`Wyckoff: showing the Z = ${s.z} solution (${s.assignment || '?'}${r}).`);
+            }
+        };
+        body.querySelectorAll('.wy-sol-row').forEach(row => {
+            row.addEventListener('click', () => pick(row));
+            // The rows are focusable, so they have to answer the keyboard too.
+            row.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(row); }
+            });
+        });
+    }
 
     if (typeof WyckoffReport !== 'undefined') {
         try {

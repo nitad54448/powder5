@@ -451,6 +451,7 @@ blockquote {
             <li><a href="#cf-wyckoff">Wyckoff Search</a></li>
             <li><a href="#wy-objective" class="sub-link">The Objective</a></li>
             <li><a href="#wy-controls" class="sub-link">Controls &amp; Capacities</a></li>
+            <li><a href="#wy-z" class="sub-link">Z, Density Window &amp; the Scan</a></li>
             <li><a href="#wy-how-many-sites" class="sub-link">How Many Sites</a></li>
             <li><a href="#wy-refinement" class="sub-link">Coordinate Refinement</a></li>
             <li><a href="#wy-geometry" class="sub-link">Plot, Contacts &amp; Bond Valence</a></li>
@@ -2232,9 +2233,11 @@ blockquote {
                 <thead><tr><th>Control</th><th>Description &amp; defaults</th></tr></thead>
                 <tbody>
                     <tr><td><strong>Formula</strong></td><td>Target composition, e.g. <code>PbSO4</code>. Required; the Search button stays disabled and says why until one is entered.</td></tr>
-                    <tr><td><strong>Z</strong></td><td>Formula units per cell. Blank for automatic estimation from the cell volume.</td></tr>
-                    <tr><td><strong>Max sites / elem</strong></td><td>Most distinct Wyckoff positions one element may occupy. This is a <em>per-element</em> cap and says nothing about the total &mdash; see the capacity note below.</td></tr>
-                    <tr><td><strong>Max reuse / pos</strong></td><td>Most independent atoms sharing one Wyckoff position.</td></tr>
+                    <tr><td><strong>Z</strong></td><td>Formula units per cell, as a whole number of 1 or more. <strong>Blank means Auto</strong>, which is a <em>scan</em> over every plausible \(Z\) rather than a single estimate &mdash; see <a href="#wy-z">Z, the density window and the scan</a>. A typed \(Z\) is used exactly as typed, and the panel shows the density it implies as you type it.</td></tr>
+                    <tr><td><strong>Max sites / elem</strong></td><td>Most distinct Wyckoff positions one element may occupy, as a whole number of 1 or more; blank means Auto. This is a <em>per-element</em> cap and says nothing about the total &mdash; see the capacity note below.</td></tr>
+                    <tr><td><strong>Max reuse / pos</strong></td><td>Most independent atoms sharing one Wyckoff position, as a whole number of 1 or more; blank means Auto.</td></tr>
+                    <tr><td><strong>Density min / max (g/cm&sup3;)</strong></td><td>The window \(Z\) = Auto scans, in whole g/cm&sup3;, from 1 to 22, default <strong>2 to 10</strong>. The minimum is held strictly below the maximum. Ignored when \(Z\) is typed. Narrowing it is the cheapest way to shorten a scan: it is the only part of the calculation that knows what kind of material you have.</td></tr>
+                    <tr><td><strong>Max Z searched</strong></td><td>How many values of \(Z\) one scan may search (1&ndash;12, default 6). Each is a full swarm run, so this is what bounds the total time. The candidates dropped are the least plausible on volume per atom, and the log names them.</td></tr>
                     <tr><td><strong>Chains</strong></td><td>Independent trial structures. Capped automatically against the device's storage-buffer and dispatch limits and snapped to a multiple of 64.</td></tr>
                     <tr><td><strong>Iterations</strong></td><td>Steps per chain (100&ndash;10000, default 2000).</td></tr>
                     <tr><td><strong>Restarts</strong></td><td>Independent restarts (1&ndash;20, default 4).</td></tr>
@@ -2298,6 +2301,17 @@ blockquote {
             </div>
 
             <div class="note">
+                <strong>Loading a new pattern resets this panel.</strong> The formula, \(Z\),
+                the two site caps, the minimum contact, the distance constraints and the density
+                window all describe the <em>sample</em>, and carried across to a different
+                diffractogram every one of them is a statement about the wrong material &mdash;
+                the formula worst of all, because the search will run happily on it and return a
+                structure. The run histories go with them. What is deliberately kept is
+                everything describing the <em>machine</em> or your patience: chains, iterations,
+                restarts and <strong>Max Z searched</strong> were set once for this computer and
+                are still true of it afterwards.
+            </div>
+            <div class="note">
                 <strong>Stopping returns the best structure found so far.</strong> The swarm
                 keeps a running best for every assignment, so pressing Stop finishes the run
                 early and reports what it had rather than discarding it.
@@ -2313,6 +2327,165 @@ blockquote {
                 <strong>ranking</strong> that chose this candidate over the others, which was
                 made on the same partial figure. Treat a stopped run as a preview of where the
                 search was heading rather than as a finished answer.
+            </div>
+
+            <h3 id="wy-z">\(Z\), the density window, and the scan</h3>
+            <p>
+                \(Z\) is the number of formula units in the cell, and it is the one input to
+                this search that is neither measured nor refined. Get it wrong and everything
+                downstream is wrong in a way no figure of merit will name: the stoichiometry is
+                enforced by construction, so the swarm will dutifully fit the wrong number of
+                atoms and report a correlation for it.
+            </p>
+            <p>
+                Leaving the box blank selects <strong>Auto</strong>, which does not estimate
+                \(Z\) &mdash; it <strong>scans</strong>. Every plausible value is searched in
+                full and the best structure for each is offered, because a rule of thumb about
+                cell volume is a <em>prior</em> and the intensities are <em>evidence</em>, and
+                the evidence has to be allowed to overrule the prior.
+            </p>
+
+            <h4>Where the candidate list comes from</h4>
+            <p>
+                The crystallographic density fixes the relationship between \(Z\) and the cell:
+            </p>
+            <p style="text-align:center;">
+                \( \rho = \dfrac{Z M}{N_A V} \qquad\Longleftrightarrow\qquad
+                   Z = \dfrac{\rho V}{1.66054\, M} \)
+            </p>
+            <p>
+                with \(M\) the formula mass in g/mol, \(V\) the cell volume in
+                &Aring;<sup>3</sup> and \(\rho\) in g/cm<sup>3</sup>. Inverting it turns a
+                density <em>window</em> into a \(Z\) <em>range</em>. The candidate list is then
+                cut down twice more before any GPU time is spent:
+            </p>
+            <ol>
+                <li><strong>The density window.</strong> Two sliders, whole g/cm<sup>3</sup>,
+                    1 to 22, default 2 to 10. The bounds are rounded <em>inward</em>, so every
+                    candidate's density genuinely lies inside what the sliders say &mdash; a
+                    maximum of 10 will not admit a \(Z\) at 10.3. This is the only step that
+                    uses knowledge the program does not have, so it is the one you set.</li>
+                <li><strong>What the space group permits.</strong> Pure arithmetic, described
+                    below, and in a centred or high-symmetry setting it removes most of the
+                    window at a stroke.</li>
+                <li><strong>Whether a legal assignment exists.</strong> Each survivor is put
+                    through the same assignment enumeration the search itself uses, capped at
+                    one solution, so a \(Z\) that cannot be built at all is discarded in
+                    milliseconds instead of failing half a second into a run.</li>
+            </ol>
+
+            <h4>What the space group says about \(Z\)</h4>
+            <p>
+                Every atom of one element occupies some set of Wyckoff positions, so the number
+                of them in the cell is a <strong>sum of multiplicities</strong>, repeats
+                allowed. Let \(g\) be the greatest common divisor of every multiplicity the
+                setting offers. A sum of multiples of \(g\) is a multiple of \(g\), so for each
+                element with subscript \(k_e\) in the formula unit,
+            </p>
+            <p style="text-align:center;">
+                \( Z\,k_e \equiv 0 \pmod{g} \qquad\Longrightarrow\qquad
+                   Z \equiv 0 \pmod{\;\operatorname{lcm}_e \dfrac{g}{\gcd(g,\,k_e)}\;} \)
+            </p>
+            <p>
+                Worked through for a pyrochlore A<sub>2</sub>B<sub>2</sub>O<sub>7</sub> in
+                \(Fd\bar{3}m\): the multiplicities are 8, 16, 32, 48, 96 and 192, so \(g = 8\).
+                The oxygen requires \(7Z \equiv 0 \pmod 8\), and since 7 and 8 are coprime,
+                <strong>\(Z\) must be a multiple of 8</strong>. A 2&ndash;10 g/cm<sup>3</sup>
+                window spans \(Z = 3\ldots11\) for a typical pyrochlore cell; the rule removes
+                ten of those eleven before anything is enumerated, and \(Z = 8\) is the only
+                candidate left.
+            </p>
+            <div class="note">
+                <strong>The step and \(g\) are not always the same number.</strong> They
+                coincide whenever some element has a subscript coprime to \(g\), which is the
+                common case, but not otherwise: in \(Pnma\) (\(g = 4\)) a formula like
+                Fe<sub>2</sub>O<sub>4</sub> gives a step of 2, not 4, because both subscripts
+                already share a factor with \(g\). The log states the derivation rather than
+                just the answer, so the two can be told apart.
+            </div>
+            <div class="note">
+                <strong>In \(P1\) and \(P\bar{1}\) the rule says nothing</strong>, because
+                \(g = 1\). That is correct and not a gap: a triclinic cell really can hold any
+                \(Z\), and pruning there would risk discarding the true answer to save time.
+                It is also why low-symmetry problems are the expensive ones &mdash; the space
+                group offers no help, and <strong>Max Z searched</strong> is what bounds the
+                run instead. A fractional subscript (a solid solution written
+                Fe<sub>0.5</sub>Ni<sub>0.5</sub>) also voids the argument, which is an integer
+                one, and the rule is skipped.
+            </div>
+
+            <h4>One search per \(Z\), and a list of solutions</h4>
+            <p>
+                Every surviving \(Z\) gets its own complete search &mdash; all the restarts, the
+                resolution ramp, the closing quench, the contact filter and the coordinate
+                refinement &mdash; and the best structure it produced is kept. The plausibility
+                ranking (volume per atom nearest 16&nbsp;&Aring;<sup>3</sup>, with a mild
+                preference for a \(Z\) commensurate with the group order) decides only the
+                <em>order</em> of the searches, so stopping part-way through means the most
+                likely candidates have already been done.
+            </p>
+            <p>
+                The results tab then opens with a <strong>Solutions</strong> table: one row per
+                \(Z\), with its density, atoms per cell, assignment, search CC and
+                \(wR(F^2)\). <strong>Click a row</strong> and everything below it &mdash; the
+                coordinate tables, the R factor, the CIF export, the contacts, the bond valences,
+                the structure plot and the PDF report &mdash; switches to that solution. The
+                run-history label carries both numbers: <code>Z=8/3</code> means the best of
+                three solutions was \(Z = 8\).
+            </p>
+            <p>
+                The ranking is by \(wR(F^2)\). A solution whose refinement did not run has no
+                \(wR\), and is placed <em>below</em> every solution that has one and ranked
+                among its peers on search CC &mdash; the two are different quantities measured
+                against different things, and mixing them on a common scale would invent a
+                comparison that does not exist. Values of \(Z\) that produced nothing are listed
+                with their reasons rather than quietly omitted.
+            </p>
+            <div class="warning-note">
+                <strong>A better \(wR\) does not by itself make a \(Z\) right.</strong> More
+                atoms means more free parameters, so a larger \(Z\) has more freedom to fit the
+                same data and will often score better for that reason alone. Read the solutions
+                table alongside the density &mdash; which you know something about and the
+                refinement does not &mdash; and the contacts and bond valences below it. Two
+                values of \(Z\) that both fit respectably is a real result and the reason the
+                list exists; it is not something the program should resolve on your behalf.
+            </div>
+            <div class="warning-note">
+                <strong>A scan costs roughly \(N\) times a single run.</strong> With the default
+                2&ndash;10 window a typical compound yields one to four candidates, but a light
+                formula in a low-symmetry group can fill the cap. If a scan is taking too long,
+                narrow the density window first &mdash; it is the only control that carries
+                information about your sample &mdash; then lower <strong>Max Z searched</strong>.
+            </div>
+
+            <h4>Typing a \(Z\) instead</h4>
+            <p>
+                A typed \(Z\) is honoured exactly as typed and the density window is not
+                consulted. The panel still computes what that \(Z\) implies and shows it as you
+                type, in either order &mdash; entering the formula after the \(Z\) works as well
+                as before it:
+            </p>
+            <p style="text-align:center;">
+                <code>Z = 8 gives a density of 6.73 g/cm&sup3; (Gd2Ti2O7, 522.23 g/mol,
+                cell 1030.3 &Aring;&sup3;).</code>
+            </p>
+            <div class="warning-note">
+                <strong>A \(Z\) implying an impossible density is refused before the run
+                starts.</strong> Lithium is 0.53&nbsp;g/cm<sup>3</sup> and osmium 22.59, so
+                outside <strong>0.5 to 22.5&nbsp;g/cm<sup>3</sup></strong> the \(Z\), the
+                formula and the cell are not describing the same solid. The search would still
+                produce a structure &mdash; nothing in the objective knows what a density is
+                &mdash; after several minutes of GPU time, so it is refused instead, with a
+                toast naming the number. The commonest cause by far is \(Z\) counting
+                <em>atoms</em> rather than <em>formula units</em>; the next is a formula that is
+                the cell contents rather than the formula unit.
+            </div>
+            <div class="note">
+                <strong>A typed \(Z\) that breaks the space-group rule is warned about, not
+                blocked.</strong> If it is not a multiple of the step derived above, the search
+                will almost certainly find no legal assignment &mdash; but it runs anyway,
+                because you asked for that \(Z\), and swapping in a different one behind your
+                back would be worse than failing.
             </div>
 
             <h3 id="wy-how-many-sites">How many sites a structure needs</h3>
@@ -2410,7 +2583,9 @@ blockquote {
                     onto a special position during refinement generates fewer distinct images,
                     and the counted value is the one the contacts and the mass are actually
                     built from. A density far from what the compound should have usually means
-                    the wrong \(Z\), not a wrong coordinate.</li>
+                    the wrong \(Z\), not a wrong coordinate &mdash; and if the search ran
+                    on <a href="#wy-z">\(Z\) = Auto</a>, the other values of \(Z\) are
+                    already sitting in the Solutions table above.</li>
                 <li><strong>Net formal charge.</strong> Shown only when the oxidation states do
                     not cancel over the cell. An imbalance means either the assignment below is
                     wrong for this compound or the composition given to the search was, and

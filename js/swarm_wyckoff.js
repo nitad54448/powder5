@@ -731,11 +731,34 @@ async function runWyckoffSearch(o) {
 
 
 
-const S = GPUBufferUsage.STORAGE;
-    const bufGen   = swBuffer(device, T.genPack, S);
-    const bufRefl  = swBuffer(device, refl.reflPack, S);
+// ------------------------------------------------------------------
+    //  EVERY GPU BUFFER BELOW IS RELEASED WHETHER THIS FUNCTION RETURNS OR
+    //  THROWS.
+    //
+    //  The ten destroy() calls used to sit on the normal exit path only, and
+    //  there are two explicit `throw`s and ten `await`s between here and there
+    //  -- any of which (a lost device, a failed mapAsync, a validation error)
+    //  skipped the cleanup entirely.
+    //
+    //  That was invisible while a run did ONE search: the caller destroyed the
+    //  whole device afterwards and the buffers went with it. It stopped being
+    //  invisible when the caller began scanning Z, because the device is now
+    //  created once and reused across every candidate, and a candidate that
+    //  fails is CAUGHT AND SWALLOWED so the scan can continue. Each failed Z
+    //  therefore stranded ten buffers in a context that stayed alive for the
+    //  rest of the scan.
+    //
+    //  Declared with `let` before the try so the finally can see them; each is
+    //  guarded because the throw may happen before the later ones exist.
+    // ------------------------------------------------------------------
+    const S = GPUBufferUsage.STORAGE;
+    let bufGen, bufRefl, bufGroup, bufStatic, bufPos, bufAssign,
+        bufState, bufPosRead, bufStateRead, bufParams;
+    try {
+    bufGen   = swBuffer(device, T.genPack, S);
+    bufRefl  = swBuffer(device, refl.reflPack, S);
     
-    const bufGroup = swBuffer(device, groupData, S);
+    bufGroup = swBuffer(device, groupData, S);
     
     const symLen = symPacked.length;
     const tabLen = restraints.tables.length;
@@ -744,7 +767,7 @@ const S = GPUBufferUsage.STORAGE;
     staticFloats.set(symPacked, 0);
     staticFloats.set(restraints.tables, symLen);
     staticFloats.set(T.siteProj, symLen + tabLen);
-    const bufStatic = swBuffer(device, staticFloats, S);
+    bufStatic = swBuffer(device, staticFloats, S);
 
     const coordsPerParticle = T.maxSites * 3;
     const totalCoordFloats = numParticles * coordsPerParticle;
@@ -788,20 +811,20 @@ const S = GPUBufferUsage.STORAGE;
             `maxStorageBufferBindingSize of ${device.limits.maxStorageBufferBindingSize}. ` +
             `Reduce numParticles or the number of sites per assignment.`);
     }
-    const bufPos = device.createBuffer({
+    bufPos = device.createBuffer({
         size: bufPosBytes,
         usage: S | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
     });
-    const bufAssign = swBuffer(device, new Uint32Array(numParticles), S);
+    bufAssign = swBuffer(device, new Uint32Array(numParticles), S);
     // Persistent readback buffers, reused for every synchronous readback
     // instead of being created and destroyed inside the generation loop -
     // creating a MAP_READ buffer per sync was another source of driver
     // overhead this design removes.
-    const bufPosRead = device.createBuffer({
+    bufPosRead = device.createBuffer({
         size: bufPosBytes,
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
     });
-    const bufStateRead = device.createBuffer({
+    bufStateRead = device.createBuffer({
         size: numParticles * SW_STATE_STRIDE,
         usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
     });
@@ -817,7 +840,7 @@ const S = GPUBufferUsage.STORAGE;
     });
     const params = new Float32Array(44);
     
-    const bufParams = device.createBuffer({
+    bufParams = device.createBuffer({
         size: params.byteLength,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
@@ -912,7 +935,7 @@ const S = GPUBufferUsage.STORAGE;
     params[PARAM.tablesOff] = symLen;
     params[PARAM.projOff] = symLen + tabLen;
 
-    const bufState = device.createBuffer({
+    bufState = device.createBuffer({
         size: numParticles * SW_STATE_STRIDE,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
     });
@@ -1630,8 +1653,6 @@ let needCurrentEval = true, firstEval = (wi === 0);
         }
     }
 
-  for (const b of [bufGen, bufStatic, bufRefl, bufGroup, bufPos, bufAssign,
-                     bufState, bufPosRead, bufStateRead, bufParams]) { try { b.destroy(); } catch (e) {} }
     /* ---- 9. Report ---- */
     // Ranked by CC alone - the agreement between the observed and calculated
     // Patterson maps, which is the quantity that actually means something.
@@ -1690,6 +1711,15 @@ let needCurrentEval = true, firstEval = (wi === 0);
              // Kept so the caller can compute an R factor for whichever
              // candidate is selected, without re-normalising the file.
              obsRows: obs.rows, demand };
+    } finally {
+        // Guarded individually: a throw before the later buffers were created
+        // leaves those undefined, and a cleanup that itself throws would mask
+        // the error that caused it.
+        for (const b of [bufGen, bufStatic, bufRefl, bufGroup, bufPos, bufAssign,
+                         bufState, bufPosRead, bufStateRead, bufParams]) {
+            if (b) { try { b.destroy(); } catch (e) {} }
+        }
+    }
 }
 
 if (typeof module !== 'undefined' && module.exports) {

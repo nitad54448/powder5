@@ -68,17 +68,19 @@ function twoThetaFromD(d, lambda) {
  * smooth error reaching 50% at 90 degrees that looks like a temperature factor.
  */
 function obsLorentzPolarization(tthDeg, K) {
-    if (typeof sharkoLorentzPolarization === 'function') {
-        return sharkoLorentzPolarization(tthDeg, K);
-    }
-    if (!Number.isFinite(tthDeg) || tthDeg <= 0 || tthDeg >= 180) return 1;
-    const d2r = Math.PI / 180;
-    const th = 0.5 * tthDeg * d2r;
-    const s = Math.sin(th), c = Math.cos(th);
-    if (s < 1e-6 || c < 1e-6) return 1;
-    const k = (Number.isFinite(K) && K >= 0) ? K : 1;
-    const P = (1 + k * Math.cos(tthDeg * d2r) ** 2) / (1 + k);
-    return P / (s * s * c);
+    // THE LAST COPY OF THE Lp ARITHMETIC IN THIS PROGRAM USED TO BE HERE.
+    //
+    // It sat behind a `typeof sharkoLorentzPolarization === 'function'` guard
+    // as a fallback, and the guard never failed: crystal.js is loaded before
+    // this file by the page and by every worker's importScripts, so the branch
+    // below it was unreachable. What it was, in practice, was a second
+    // implementation of the formula that nothing exercised and no test would
+    // ever have caught drifting -- which is exactly how the two copies of
+    // cfErfc came to differ by a digit for who knows how long.
+    //
+    // If crystal.js is genuinely absent the honest outcome is a
+    // ReferenceError naming the missing module, not a silent second opinion.
+    return sharkoLorentzPolarization(tthDeg, K);
 }
 
 /**

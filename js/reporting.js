@@ -511,6 +511,10 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                     const sh = esds[`I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`];
                     return Number.isFinite(sh) ? sh * widthFactor : NaN;
                 }
+                // I_sigma_full, not I_sigma: the area this is paired with is
+                // the untruncated one, so the uncertainty has to be too. See
+                // the same note in data_io.js.
+                if (Number.isFinite(hkl.I_sigma_full)) return hkl.I_sigma_full * mainScaleFactor;
                 return Number.isFinite(hkl.I_sigma) ? hkl.I_sigma * mainScaleFactor : NaN;
             };
             for (const r of reflectionStructureFactors(hklList, finalParams,
@@ -614,7 +618,10 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                      // propagated through the partition fractions. That
                      // is computed during the extraction (peak.I_sigma)
                      // and is what other Rietveld packages report here.
-                     const sig = hkl.I_sigma;
+                     // I_sigma_full so this column matches the I_hkl column
+                     // beside it, which is built from the untruncated area.
+                     const sig = Number.isFinite(hkl.I_sigma_full) ? hkl.I_sigma_full
+                                                                   : hkl.I_sigma;
                      const scaled = (typeof sig === 'number') ? sig * mainScaleFactor : NaN;
                      esd_I_str = isFinite(scaled) ? scaled.toFixed(1) : '-';
                 }

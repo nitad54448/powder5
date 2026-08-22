@@ -114,6 +114,21 @@ function createRefinementWorker() {
             window.setUIState(false);
             try { if (refinementWorker) refinementWorker.terminate(); } catch (err) { /* already gone */ }
             refinementWorker = null;
+            // REBUILT, exactly as the watchdog path already does.
+            //
+            // The comment at the top of this file says the factory exists
+            // because "any onerror permanently nulled the worker so every
+            // later fit was refused". The watchdog was given the rebuild;
+            // THIS path was not -- so the bug the header describes as fixed
+            // survived on the commonest route into it. An uncaught throw
+            // anywhere inside the worker fires onerror, and from then on
+            // runFit answers "Refinement worker is not available" until the
+            // page is reloaded: one transient fault, permanently.
+            //
+            // Guarded, so a worker that cannot be constructed at all does
+            // not throw out of an error handler.
+            try { createRefinementWorker(); }
+            catch (rebuildErr) { console.error("Worker rebuild failed:", rebuildErr); }
         };
 
     } catch (e) {
@@ -129,124 +144,27 @@ function createRefinementWorker() {
 
 createRefinementWorker();
 
-// master HKL, 1.0.3 et ensuite
-// This function now uses the cache to get raw indices and then calculates positions.
-function generateMasterHklList() {
-    if (fullExperimentalData.tth.length === 0) {
-        masterHklList = [];
-        updatePreviewPattern();
-        return;
-    }
-
-    const selectedSg = currentSG;
-    if (!selectedSg) {
-        masterHklList = [];
-        console.error("Cannot generate HKL list: no space group resolved.");
-        updatePreviewPattern();
-        return;
-    }
-
-    const maxTth = fullExperimentalData.tth.reduce((m, v) => (v > m ? v : m), -Infinity) + 2.0; 
-    const params = getAllParams();
-
-    const rawHklIndices = generateAndCacheHklIndices(selectedSg, maxTth, params);
-    let workingHklList = JSON.parse(JSON.stringify(rawHklIndices));
-    updateHklPositions(workingHklList, params, selectedSg.system);
-
-    masterHklList = workingHklList
-        .filter(peak => peak.tth !== null && peak.tth <= maxTth)
-        .sort((a, b) => a.tth - b.tth);
-
-    masterHklList.forEach(peak => {
-        peak.intensity = peak.intensity || 1000;
-    });
-
-    updatePreviewPattern();
-}
-
-function runFit(refinementMode) {
-    if (isFitting) {
-         console.warn("Fit already in progress.");
-         return;
-    }
-     if (!refinementWorker) {
-         showToast("Refinement worker is not available. Cannot start fit.", "error");
-         return; 
-     }
-
-    if (!currentSG) {
-        showToast('Please select a space group first ("Space Group »" button).', "error");
-        return;
-    }
-
-    isFitting = true;
-    window.setUIState(true);
-    updateWorkingData(); 
-
-    if (masterHklList.length === 0) {
-         showToast("No reflections in range. Check lattice parameters and 2-theta range.", "error");
-         isFitting = false; window.setUIState(false); return;
-    }
-
-    const currentParams = getAllParams();
-    if (currentParams.__invalidFields && currentParams.__invalidFields.length > 0) {
-        showToast(
-            `Cannot start: these fields are empty or not a number - ${currentParams.__invalidFields.join(', ')}.`,
-            "error"
-        );
-        isFitting = false; window.setUIState(false); return;
-    }
-    delete currentParams.__invalidFields;
-
-    const fitFlags = window.getFitFlags();
-    const selectedSg = currentSG;
-    const selectedSgNumber = selectedSg.number;
-    sgUsedForFit = selectedSg;
-
-    const system = selectedSg.system; 
-    const maxIterations = parseInt(controls.iterationsSlider.value);
-    const algorithm = controls.algorithmSelect.value;
-
-    if (!workingData.isValid || workingData.tth.length === 0) {
-        showToast("No data in the selected 2-theta range. Aborting fit.", "error");
-        isFitting = false; window.setUIState(false); return;
-    }
-
-     workerWorkingData = {
-         tth: workingData.tth.slice(), 
-         intensity: workingData.intensity.slice(),
-         weights: workingData.weights.slice(),
-         startIndex: workingData.startIndex
-     };
-
-     const minTth = parseFloat(controls.tthMinSlider.value);
-     const maxTth = parseFloat(controls.tthMaxSlider.value);
-     const fittedHklList = masterHklList.filter(
-         peak => peak.tth !== null && peak.tth >= minTth && peak.tth <= maxTth
-     );
-
-     const workerPayload = {
-         initialParams: currentParams,
-         fitFlags: fitFlags,
-         workingData: workerWorkingData, 
-         masterHklList: JSON.parse(JSON.stringify(fittedHklList)), 
-         selectedSgNumber: selectedSgNumber,
-         selectedSgQuery:  selectedSg.hall || String(selectedSgNumber),
-         system: system,
-         maxIterations: maxIterations,
-         algorithm: algorithm,
-         refinementMode: refinementMode,
-         backgroundAnchors: JSON.parse(JSON.stringify(backgroundAnchors)) 
-     };
-
-    try {
-         refinementWorker.postMessage(workerPayload);
-         controls.progressBar.style.width = '0%'; 
-         controls.progressBar.style.transition = 'none'; 
-    } catch (error) {
-        console.error("Error sending message to worker:", error);
-        showToast(`Error starting refinement: ${error.message}`, "error");
-        isFitting = false;
-        window.setUIState(false);
-    }
-}
+// ===========================================================================
+//  generateMasterHklList() AND runFit() USED TO BE DUPLICATED HERE.
+//
+//  powder5.html defines its own copy of each, inside the DOMContentLoaded
+//  callback near the top of its inline script. Everything from there down
+//  shares one function scope, the Le Bail and Pawley button handlers live in
+//  it, and a function declared in that scope shadows the global of the same
+//  name for every caller inside it. These two were therefore never reached.
+//
+//  They had already drifted apart. The inline copies write the background
+//  anchor heights into the parameter set before posting the job; the copies
+//  here did not, so they were an older revision preserved by the shadowing
+//  rather than a second opinion about anything.
+//
+//  This is not theoretical. The watchdog fix for the unguarded startup window
+//  was applied to the copy here first and had no effect at all, because
+//  nothing runs it; it now lives in the inline copy, where it works.
+//
+//  Removed rather than annotated: nothing outside the shadowing scope
+//  referenced either name, neither was placed on `window`, and the whole
+//  point of deleting them is that the next person to fix runFit cannot
+//  accidentally fix the wrong one. This file now owns the worker lifecycle
+//  and the watchdog, and nothing else.
+// ===========================================================================

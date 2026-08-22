@@ -17,19 +17,41 @@ function normalizePolarization(pol) {
     return { mode, monoTth, polFrac, K };
 }
 
+// ---------------------------------------------------------------------------
+//  EVERY Lp IN THIS PROGRAM COMES FROM crystal.js.
+//
+//  These are named wrappers over sharko* and nothing else -- no arithmetic
+//  lives in this file. The formula existed in one place already; what did not
+//  was the DEGENERATE-ANGLE POLICY. lorentzPolarization() here returned NaN at
+//  a 2-theta of zero or 180, while a function of the same name in each of the
+//  two workers delegated to sharkoLp() and returned 1. One name, two answers,
+//  decided by which file the caller happened to be in.
+//
+//  Both policies were correct for their own callers, so neither was removed:
+//  they are now sharkoLp (lenient, for reducing a pattern) and sharkoLpStrict
+//  (NaN, for a report or an export that must not invent a correction), and the
+//  page takes the strict one, which is what it has always used.
+// ---------------------------------------------------------------------------
+
+/** Lorentz factor alone. NaN where the geometry is degenerate. */
 function lorentzFactor(tthDeg) {
     return sharkoLorentzFactor(tthDeg);
 }
 
+/** Polarisation factor alone, from a descriptor. */
 function polarizationFactor(tthDeg, pol) {
     return sharkoPolarizationFactor(tthDeg, normalizePolarization(pol).K);
 }
 
+/**
+ * Lp for the page: reporting, exports and structure-factor conversion.
+ *
+ * NaN at a degenerate angle, deliberately -- see sharkoLpStrict. Callers here
+ * test for it and write a CIF "?" or drop the row; substituting 1 would put a
+ * finite, wrong |F|^2 into a file someone else will read as a measurement.
+ */
 function lorentzPolarization(tthDeg, pol) {
-    const L = lorentzFactor(tthDeg);
-    if (!Number.isFinite(L)) return NaN;
-    const P = polarizationFactor(tthDeg, pol);
-    return Number.isFinite(P) ? L * P : NaN;
+    return sharkoLpStrict(tthDeg, normalizePolarization(pol));
 }
 
 function getPolarizationSettings() {
@@ -67,15 +89,43 @@ function polarizationFormulaLines(pol) {
     ];
 }
 
+/**
+ * Lp for the solution paths, where a bad angle must not drop a reflection.
+ *
+ * The lenient policy, reached through the strict one so that "not finite" is
+ * decided in exactly one place. Equivalent to sharkoLp(); kept as a name
+ * because charge flipping, the Wyckoff launcher and the space-group test all
+ * call it and the name says which policy they are choosing.
+ */
 function cfLorentzPolarization(tthDeg, pol) {
     const lp = lorentzPolarization(tthDeg, pol);
     return (Number.isFinite(lp) && lp > 0) ? lp : 1;
 }
 
+/**
+ * Complementary error function, Numerical Recipes' erfcc.
+ *
+ * THE FIFTH COEFFICIENT IS -0.18628806, NOT -1.18628806.
+ *
+ * It was the latter here, which is not an inaccuracy but a different function:
+ * erfc(0) must be exactly 1 and came out as 0.368, an error of 63%. The whole
+ * approximation is wrong across the range that matters -- 34% at x = 0.5, 18%
+ * at x = 1 -- and it is worst in the middle, where a weak reflection's
+ * posterior actually lives.
+ *
+ * It never fired, because powder5.html carried a byte-identical copy of this
+ * function apart from that digit, and its inline script is evaluated after
+ * this file. Load order was the only thing standing between the French-Wilson
+ * correction and a broken normal CDF: reorder the script tags, or delete the
+ * inline copy as the redundant duplicate it appears to be, and every weak
+ * reflection silently gets the wrong posterior intensity. The duplicate has
+ * now been removed from powder5.html and this is the single definition, so the
+ * digit below is no longer covered by anything.
+ */
 function cfErfc(x) {
     const z = Math.abs(x), t = 1 / (1 + 0.5 * z);
     const ans = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 +
-        t * (0.09678418 + t * (-1.18628806 + t * (0.27886807 + t * (-1.13520398 +
+        t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 +
         t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
     return x >= 0 ? ans : 2 - ans;
 }

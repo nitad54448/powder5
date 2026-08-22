@@ -474,9 +474,25 @@ function writePdCIF(b) {
                 const sh = esds[key];
                 if (Number.isFinite(sh)) return sh * widthFactor;
             }
-            if (Number.isFinite(hkl.I_sigma)) {
-                return hkl.I_sigma * (Number.isFinite(b.scaleFactor) ? b.scaleFactor : 1);
-            }
+            // I_sigma_full, NOT I_sigma.
+            //
+            // The extraction records BOTH: I_sigma is accumulated over the
+            // profile as DRAWN -- truncated at the calculation window and
+            // pedestal-subtracted -- while I_sigma_full is that value rescaled
+            // to the untruncated analytic area, exactly as I_integrated_full
+            // is. The two differ by about 1%, varying with 2-theta because the
+            // truncated fraction follows the Lorentzian content.
+            //
+            // integratedPeakArea() returns the UNTRUNCATED area, so pairing it
+            // with the truncated sigma puts the numerator and the denominator
+            // of every Le Bail I/sigma on different bases. The Pawley route
+            // cannot make this mistake: its sigma is the height ESD multiplied
+            // by widthFactor = area/height, so it tracks whatever basis the
+            // area uses automatically. The Le Bail route stores an absolute
+            // value, so it has to be told.
+            const sc = Number.isFinite(b.scaleFactor) ? b.scaleFactor : 1;
+            if (Number.isFinite(hkl.I_sigma_full)) return hkl.I_sigma_full * sc;
+            if (Number.isFinite(hkl.I_sigma))      return hkl.I_sigma * sc;
             return NaN;
         };
         const sf = reflectionStructureFactors(refl, b.params, {

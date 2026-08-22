@@ -191,7 +191,14 @@ function expandForContacts(sites, symOps, range = 1) {
             }
             if (dup) continue;
 
-            const img = { site: si, element: s.element, x, y, z };
+            // `idx` identifies THIS IMAGE, as distinct from the site it came
+            // from. The loops below skip a zero distance as "the atom itself",
+            // which is true only when the two really are the same image: two
+            // DIFFERENT sites that have landed on the same point are also zero
+            // apart, and that is the single worst contact a structure can have
+            // rather than something to step over. Identity is the right test
+            // for identity; distance is not.
+            const img = { site: si, idx: inCell.length, element: s.element, x, y, z };
             mine.push(img);
             inCell.push(img);
         }
@@ -202,7 +209,11 @@ function expandForContacts(sites, symOps, range = 1) {
         for (let b = -rb; b <= rb; b++)
             for (let c = -rc; c <= rc; c++)
                 for (const p of inCell)
-                    out.push({ site: p.site, element: p.element,
+                    // `idx` travels with the translated copy: the skip tests
+                    // below ask "is this the same atom", and a copy that lost
+                    // its identity would answer no and be treated as a
+                    // neighbour of itself.
+                    out.push({ site: p.site, idx: p.idx, element: p.element,
                                x: p.x + a, y: p.y + b, z: p.z + c,
                                home: (a === 0 && b === 0 && c === 0) });
     return { inCell, all: out };
@@ -238,7 +249,9 @@ function contactsForSite(siteIdx, sites, symOps, orth, options = {}) {
         const dx = q.x - ref.x, dy = q.y - ref.y, dz = q.z - ref.z;
         if (Math.abs(dx) > BX || Math.abs(dy) > BY || Math.abs(dz) > BZ) continue;
         const d = cartDistance(dx, dy, dz, orth);
-        if (d < 1e-4 || d > cutoff) continue;      // 0 is the atom itself
+        if (d > cutoff) continue;
+        // Its own image, at any translation -- not merely something zero away.
+        if (d < 1e-4 && q.idx === ref.idx) continue;
         out.push({ element: q.element, site: q.site, d,
                    symmetryRelated: q.site === siteIdx });
     }
@@ -284,7 +297,10 @@ function contactSummary(sites, symOps, orth, windows = [], options = {}) {
             const dx = q.x - p.x, dy = q.y - p.y, dz = q.z - p.z;
             if (Math.abs(dx) > BX || Math.abs(dy) > BY || Math.abs(dz) > BZ) continue;
             const d = cartDistance(dx, dy, dz, orth);
-            if (d < 1e-4) continue;
+            // Same image = the atom itself. Same distance, DIFFERENT image =
+            // two atoms sharing one point, which is what a degenerate solution
+            // looks like and must be reported, not skipped.
+            if (d < 1e-4 && q.idx === p.idx) continue;
             if (d < shortest) { shortest = d; shortestPair = `${p.element}-${q.element}`; }
             const fl = floorOf(p.element, q.element);
             if (fl > 0 && d < fl) {
