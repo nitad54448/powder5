@@ -172,13 +172,86 @@ function enforceSymmetryConstraintsWorker(params, system) {
  * @param {Float64Array|number[]} b
  * @returns {number[]|null} Solution, or null if A is not usable.
  */
+
 function solveLinearSystem(A, b) {
     const n = A.length;
     if (n === 0) return [];
 
-    const x = solveCholesky(A, b, n);
-    if (x) return x;
-    return solveLU(A, b, n);
+    // Removed the solveLU fallback. If Cholesky fails, the matrix is ill-conditioned 
+    // and LM must cleanly increase lambda. LU returns non-descent directions and takes O(N^3).
+    return solveCholesky(A, b, n);
+}
+
+/**
+ * In-place-free Cholesky: A = L L^T, then two triangular solves.
+ * Modified to use a Skyline/Envelope solver to skip zeros.
+ * @returns {number[]|null} null if A is not positive definite.
+ */
+function solveCholesky(A, b, n) {
+    // Packed lower triangle, row-major: L[i*(i+1)/2 + j] for j <= i.
+    const L = new Float64Array((n * (n + 1)) / 2);
+    const firstNonZero = new Int32Array(n);
+
+    // Compute the skyline envelope (first non-zero index of each row)
+    for (let i = 0; i < n; i++) {
+        let fnz = i;
+        for (let j = 0; j <= i; j++) {
+            if (A[i][j] !== 0) {
+                fnz = j;
+                break;
+            }
+        }
+        firstNonZero[i] = fnz;
+    }
+
+    for (let i = 0; i < n; i++) {
+        const rowA = A[i];
+        const bi = (i * (i + 1)) / 2;
+        const fi = firstNonZero[i];
+        
+        for (let j = fi; j <= i; j++) {
+            const bj = (j * (j + 1)) / 2;
+            const fj = firstNonZero[j];
+            let s = rowA[j];
+            if (!isFinite(s)) return null;
+            
+            // Only loop over the overlapping envelope
+            const startK = Math.max(fi, fj);
+            for (let k = startK; k < j; k++) {
+                s -= L[bi + k] * L[bj + k];
+            }
+            
+            if (i === j) {
+                const floor = 1e-14 * Math.max(1, Math.abs(rowA[j]));
+                if (!(s > floor)) return null;
+                L[bi + j] = Math.sqrt(s);
+            } else {
+                L[bi + j] = s / L[bj + j];
+            }
+        }
+    }
+
+    const y = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+        const bi = (i * (i + 1)) / 2;
+        let s = b[i];
+        for (let k = firstNonZero[i]; k < i; k++) {
+            s -= L[bi + k] * y[k];
+        }
+        y[i] = s / L[bi + i];
+    }
+    const x = new Float64Array(n);
+    for (let i = n - 1; i >= 0; i--) {
+        let s = y[i];
+        for (let k = i + 1; k < n; k++) {
+            if (firstNonZero[k] <= i) {
+                s -= L[(k * (k + 1)) / 2 + i] * x[k];
+            }
+        }
+        x[i] = s / L[(i * (i + 1)) / 2 + i];
+    }
+    for (let i = 0; i < n; i++) if (!isFinite(x[i])) return null;
+    return Array.from(x);
 }
 
 /**
@@ -188,15 +261,37 @@ function solveLinearSystem(A, b) {
 function solveCholesky(A, b, n) {
     // Packed lower triangle, row-major: L[i*(i+1)/2 + j] for j <= i.
     const L = new Float64Array((n * (n + 1)) / 2);
+    const firstNonZero = new Int32Array(n);
+
+    // Compute the skyline envelope (first non-zero index of each row)
+    for (let i = 0; i < n; i++) {
+        let fnz = i;
+        for (let j = 0; j <= i; j++) {
+            if (A[i][j] !== 0) {
+                fnz = j;
+                break;
+            }
+        }
+        firstNonZero[i] = fnz;
+    }
 
     for (let i = 0; i < n; i++) {
         const rowA = A[i];
         const bi = (i * (i + 1)) / 2;
-        for (let j = 0; j <= i; j++) {
+        const fi = firstNonZero[i];
+        
+        for (let j = fi; j <= i; j++) {
             const bj = (j * (j + 1)) / 2;
+            const fj = firstNonZero[j];
             let s = rowA[j];
             if (!isFinite(s)) return null;
-            for (let k = 0; k < j; k++) s -= L[bi + k] * L[bj + k];
+            
+            // Only loop over the overlapping envelope
+            const startK = Math.max(fi, fj);
+            for (let k = startK; k < j; k++) {
+                s -= L[bi + k] * L[bj + k];
+            }
+            
             if (i === j) {
                 // A tolerance relative to the diagonal entry, not an absolute
                 // one: the scaled matrix has a unit diagonal plus lambda, so
@@ -215,13 +310,19 @@ function solveCholesky(A, b, n) {
     for (let i = 0; i < n; i++) {
         const bi = (i * (i + 1)) / 2;
         let s = b[i];
-        for (let k = 0; k < i; k++) s -= L[bi + k] * y[k];
+        for (let k = firstNonZero[i]; k < i; k++) {
+            s -= L[bi + k] * y[k];
+        }
         y[i] = s / L[bi + i];
     }
     const x = new Float64Array(n);
     for (let i = n - 1; i >= 0; i--) {
         let s = y[i];
-        for (let k = i + 1; k < n; k++) s -= L[(k * (k + 1)) / 2 + i] * x[k];
+        for (let k = i + 1; k < n; k++) {
+            if (firstNonZero[k] <= i) {
+                s -= L[(k * (k + 1)) / 2 + i] * x[k];
+            }
+        }
         x[i] = s / L[(i * (i + 1)) / 2 + i];
     }
     for (let i = 0; i < n; i++) if (!isFinite(x[i])) return null;
@@ -871,6 +972,7 @@ const scratch_bkg = new Float64Array(n_points);
     const colDot = (a, b) => {
         const lo = Math.max(a.start, b.start);
         const hi = Math.min(a.start + a.values.length, b.start + b.values.length);
+        if (lo >= hi) return 0;
         let acc = 0;
         for (let k = lo; k < hi; k++) acc += a.values[k - a.start] * b.values[k - b.start];
         return acc;
@@ -988,7 +1090,15 @@ const scratch_bkg = new Float64Array(n_points);
             Jtr[i] = s_r;
 
             for (let j = i; j < n_params; j++) {
-                const s = colDot(ci, columns[j]);
+                const cj = columns[j];
+                const lo = Math.max(ci.start, cj.start);
+                const hi = Math.min(ci.start + ci.values.length, cj.start + cj.values.length);
+                if (lo >= hi) {
+                    JtJ[i][j] = 0;
+                    JtJ[j][i] = 0;
+                    continue;
+                }
+                const s = colDot(ci, cj);
                 if (!isFinite(s)) ok = false;
                 JtJ[i][j] = s;
                 JtJ[j][i] = s;

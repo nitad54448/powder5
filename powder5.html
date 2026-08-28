@@ -992,7 +992,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 167, 22 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 168, 28 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1004,6 +1004,7 @@
     //20 aug, added background fit
     //22 aug, wyckoff search is now Z-aware
     //removed the cctbx dependencies, all data is in /sg and /scatter
+    //28 aug, changed JtJ in the PAwley fit
 
     document.addEventListener('DOMContentLoaded', async () => {     
     
@@ -5197,6 +5198,7 @@ function exportChargeFlipMap() {
          *
          * Returns { cov, undetermined } or null if the system is degenerate.
          */
+
         function covarianceFromJtJ(JtJ) {
             const n = JtJ.length;
             if (n === 0) return { cov: [], undetermined: [] };
@@ -5209,97 +5211,112 @@ function exportChargeFlipMap() {
                 else d[i] = Math.sqrt(v);
             }
 
-            // Normalised matrix B = D^-1 (JtJ) D^-1, unit diagonal.
-            const B = [];
+            const dropped = new Set(undetermined);
+            
+            // Skyline envelope
+            const firstNonZero = new Int32Array(n);
             for (let i = 0; i < n; i++) {
-                const row = new Float64Array(n);
-                for (let j = 0; j < n; j++) {
-                    const v = JtJ[i][j] / (d[i] * d[j]);
-                    row[j] = isFinite(v) ? v : (i === j ? 1 : 0);
+                let fnz = i;
+                for (let j = 0; j <= i; j++) {
+                    if (JtJ[i][j] !== 0) {
+                        fnz = j;
+                        break;
+                    }
                 }
-                B.push(row);
-            }
-            for (const i of undetermined) {
-                for (let j = 0; j < n; j++) { B[i][j] = 0; B[j][i] = 0; }
-                B[i][i] = 1;
+                firstNonZero[i] = fnz;
             }
 
-            // Cholesky: B = L L^T.
-            //
-            // FIX: a non-positive pivot no longer throws the WHOLE covariance
-            // away. It used to `return null`, and the caller then reported no
-            // ESD for any parameter at all -- one near-degenerate direction and
-            // the entire uncertainty column of the report went blank.
-            //
-            // In a Pawley fit that is the normal case, not an exception: two
-            // reflections that overlap within their profile width are, to the
-            // data, one measurement, so the pair is exactly the kind of
-            // direction the normal equations cannot separate. Refusing to
-            // report anything because two intensities are correlated hides the
-            // sigmas of the cell and profile parameters, which are perfectly
-            // well determined.
-            //
-            // A parameter whose pivot collapses is now marked undetermined --
-            // the same treatment a zero diagonal already got -- its row and
-            // column are removed from the factorisation, and everything else
-            // is reported normally. The caller already knows how to display an
-            // undetermined parameter (cov = -1).
-            const L = [];
-            for (let i = 0; i < n; i++) L.push(new Float64Array(n));
-            const dropped = new Set(undetermined);
+            const L = new Float64Array(n * n);
             for (let i = 0; i < n; i++) {
-                if (dropped.has(i)) { L[i][i] = 1; continue; }
-                for (let j = 0; j <= i; j++) {
-                    if (dropped.has(j)) { L[i][j] = 0; continue; }
-                    let s = B[i][j];
-                    for (let k = 0; k < j; k++) s -= L[i][k] * L[j][k];
+                if (dropped.has(i)) { L[i * n + i] = 1; continue; }
+                const fi = firstNonZero[i];
+                for (let j = fi; j <= i; j++) {
+                    if (dropped.has(j)) { L[i * n + j] = 0; continue; }
+                    
+                    let s = JtJ[i][j] / (d[i] * d[j]);
+                    if (!isFinite(s)) s = (i === j ? 1 : 0);
+                    
+                    const fj = firstNonZero[j];
+                    const startK = Math.max(fi, fj);
+                    const rowI = i * n;
+                    const rowJ = j * n;
+                    
+                    for (let k = startK; k < j; k++) {
+                        s -= L[rowI + k] * L[rowJ + k];
+                    }
+                    
                     if (i === j) {
                         if (!(s > 1e-12)) {
-                            // Not resolvable against the rest of the model.
                             dropped.add(i);
                             undetermined.push(i);
-                            for (let k = 0; k <= i; k++) L[i][k] = 0;
-                            L[i][i] = 1;
+                            for (let k = 0; k <= i; k++) L[rowI + k] = 0;
+                            L[rowI + i] = 1;
                             break;
                         }
-                        L[i][i] = Math.sqrt(s);
+                        L[rowI + i] = Math.sqrt(s);
                     } else {
-                        L[i][j] = s / L[j][j];
+                        L[rowI + j] = s / L[rowJ + j];
                     }
                 }
             }
 
-            // Linv (lower triangular), then B^-1 = Linv^T Linv
-            const Li = [];
-            for (let i = 0; i < n; i++) Li.push(new Float64Array(n));
-            for (let i = 0; i < n; i++) {
-                Li[i][i] = 1 / L[i][i];
-                for (let j = 0; j < i; j++) {
+            // Takahashi sparse inverse subset
+            const Z = new Float64Array(n * n);
+            for (let j = n - 1; j >= 0; j--) {
+                if (dropped.has(j)) continue;
+                
+                const l_jj = L[j * n + j];
+                
+                for (let i = n - 1; i > j; i--) {
+                    if (j < firstNonZero[i] || dropped.has(i)) continue;
+                    
                     let s = 0;
-                    for (let k = j; k < i; k++) s -= L[i][k] * Li[k][j];
-                    Li[i][j] = s / L[i][i];
+                    for (let k = j + 1; k <= i; k++) {
+                        if (j >= firstNonZero[k]) {
+                            s += Z[i * n + k] * L[k * n + j];
+                        }
+                    }
+                    for (let k = i + 1; k < n; k++) {
+                        if (j >= firstNonZero[k]) {
+                            s += Z[k * n + i] * L[k * n + j];
+                        }
+                    }
+                    Z[i * n + j] = -s / l_jj;
                 }
+                
+                let s = 0;
+                for (let k = j + 1; k < n; k++) {
+                    if (j >= firstNonZero[k]) {
+                        s += Z[k * n + j] * L[k * n + j];
+                    }
+                }
+                Z[j * n + j] = (1 / l_jj - s) / l_jj;
             }
 
             const cov = [];
             for (let i = 0; i < n; i++) {
-                const row = new Array(n).fill(0);
-                for (let j = 0; j < n; j++) {
-                    let s = 0;
-                    for (let k = Math.max(i, j); k < n; k++) s += Li[k][i] * Li[k][j];
-                    row[j] = s / (d[i] * d[j]);      // undo the normalisation
+                const row = new Float64Array(n);
+                if (dropped.has(i)) {
+                    row[i] = -1;
+                    cov.push(row);
+                    continue;
+                }
+                for (let j = firstNonZero[i]; j <= i; j++) {
+                    if (dropped.has(j)) continue;
+                    const val = Z[i * n + j] / (d[i] * d[j]);
+                    row[j] = val;
+                    if (i !== j && cov[j]) cov[j][i] = val; 
                 }
                 cov.push(row);
             }
-            // Flagged, not NaN. A dropped parameter's off-diagonal entries are
-            // meaningless too, so clear the whole row and column rather than
-            // leaving the values the substitution happened to produce.
+            
             for (const i of undetermined) {
-                for (let j = 0; j < n; j++) { cov[i][j] = 0; cov[j][i] = 0; }
                 cov[i][i] = -1;
             }
+
             return { cov, undetermined };
         }
+
 
         // MOVED to constants.js. The comment that used to sit here said this
         // helper "mirrors the identical helper in refinement_worker.js" -- a
