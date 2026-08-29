@@ -7634,6 +7634,14 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
             const said = [];
 
             // 1. Space group. Rebuilds the lattice inputs, so it goes first.
+            //
+            // "First" is not a style choice: step 2 writes the cell into boxes
+            // that updateUIForSystemChange() creates from the current system.
+            // If nothing sets a system, there are no boxes, and the cell is
+            // silently dropped -- a file with a perfectly good cell and no
+            // symmetry then appears not to load at all. So this step must
+            // ALWAYS end with a system applied, even when the file names none.
+            let sgApplied = false;
             if (pd.spaceGroup && globalThis.SG_ENGINE) {
                 try {
                     const want = String(pd.spaceGroup.symbol || '').replace(/\s+/g, '');
@@ -7657,11 +7665,35 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                     }
                     if (rec) {
                         handleSpaceGroupApplied(rec);
+                        sgApplied = true;
                         said.push(`space group ${rec.symbol} (No. ${rec.number})`);
-                    } else if (want) {
+                    } else if (want && want !== '?') {
                         said.push(`space group "${pd.spaceGroup.symbol}" not found in the database`);
                     }
                 } catch (e) { said.push('space group could not be applied: ' + e.message); }
+            }
+
+            // No usable symmetry, but a cell to load: fall back to P 1.
+            //
+            // P 1 is the honest default -- it asserts no symmetry at all, which
+            // is exactly the state of knowledge -- and it is triclinic, so it
+            // creates all six lattice boxes and the whole cell survives. Any
+            // other choice would either drop parameters (a cubic system keeps
+            // only a) or claim symmetry the file never stated.
+            //
+            // Two files reach here: one with no space group tags, and one whose
+            // symbol is an extinction class rather than a space group (Brutus
+            // writes '?' for those now, but older exports put the class label
+            // in the H-M tag, where no lookup can match it).
+            if (!sgApplied && pd.cell && globalThis.SG_ENGINE) {
+                try {
+                    const p1 = (SG_ENGINE.listSettings(1) || [])[0];
+                    if (p1) {
+                        handleSpaceGroupApplied(p1);
+                        sgApplied = true;
+                        said.push('no space group in the file — assuming P 1 so the cell can be loaded');
+                    }
+                } catch (e) { said.push('could not fall back to P 1: ' + e.message); }
             }
 
             // 2. Cell, into whichever boxes the system above just created.
@@ -7675,7 +7707,16 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                             input.value = pd.cell[name].toFixed(5); n++;
                         }
                     });
-                if (n) said.push(`${n} lattice parameter(s)`);
+                if (n) {
+                    said.push(`${n} lattice parameter(s)`);
+                } else {
+                    // The file had a cell and none of it landed. That should now
+                    // be unreachable -- the P 1 fallback above guarantees boxes
+                    // exist -- so if it ever fires, say so rather than leaving
+                    // the user to notice the cell never changed.
+                    said.push('WARNING: the file has a cell but no lattice boxes to put it in ' +
+                              '(no crystal system is active)');
+                }
             }
 
             // 3. Wavelengths. lambda2 and the ratio are written even when the
