@@ -81,6 +81,11 @@
     --system-fill:                rgba(60,70,80,0.08);
     --system-secondary-fill:      rgba(60,70,80,0.05);
     --system-shadow:              rgba(0,0,0,0.10);
+    /* The one --system-* alias that was never declared. Both uses carried a
+       hard-coded #ff9f0a fallback, so it rendered -- but the fallback is a
+       literal, which meant this was the only colour in the file that did NOT
+       re-map in dark mode. Aliased to --warning like every other token. */
+    --system-orange:              var(--warning);
 }
 
 [data-theme="dark"] {
@@ -270,14 +275,11 @@ input[type="text"].sg-search-row input,
     border-left: 1px solid var(--rule);
 }
 
-/* App version footer (model-number tag) */
+/* App version footer (model-number tag).
+   No longer absolutely positioned: it is the right-hand half of the status
+   footer now. Leaving `position: absolute` here would have lifted it straight
+   back out of that flex row and floated it over the results content. */
 #app-version-footer {
-    position: absolute;
-    bottom: 8px;
-    right: 14px;
-    font-size: 9.5px !important;
-    letter-spacing: 0.10em;
-    text-transform: uppercase;
     color: var(--fg-3) !important;
     user-select: none;
     pointer-events: none;
@@ -458,6 +460,9 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 
 #main-chart { cursor: crosshair; }
 
+/* Created at runtime by initCharting() in js/charting.js, which sets only
+   geometry and `display` -- position, border and fill all come from here, so
+   this rule is load-bearing even though no markup mentions the id. */
 #zoom-selection-box {
     position: absolute;
     display: none;
@@ -470,34 +475,8 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 
 /* ---------- File input ---------- */
 
-.file-input-label {
-    display: block;
-    padding: 10px 14px;
-    background: var(--accent);
-    color: #fff;
-    border-radius: var(--r-1);
-    text-align: center;
-    cursor: pointer;
-    transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
-    font-weight: 600;
-    font-size: 12px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    border: 1px solid var(--accent);
-    box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, var(--shadow-1);
-}
-.file-input-label:hover {
-    background: var(--accent-hover);
-    border-color: var(--accent-hover);
-    color: #fff;
-}
-.file-input-label:active {
-    background: var(--accent-hover);
-    box-shadow: 0 1px 2px rgba(0,0,0,0.20) inset;
-}
-[data-theme="dark"] .file-input-label:hover {
-    background: var(--accent-hover);
-}
+/* .file-input-label removed: the file input is now a hidden
+   <input id="file-input"> driven by a button, so no element carries it. */
 
 /* ---------- Results grid (numeric readout cards) ---------- */
 
@@ -837,7 +816,6 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 .bottom-actions > .control-group > h2,
 .bottom-actions > .control-group > .slider-group,
 .bottom-actions > .control-group > .parameter-grid-2col,
-.bottom-actions > .control-group > #progress-bar-container,
 .bottom-actions > .control-group > .results-grid {
     grid-column: 1 / -1;
 }
@@ -862,13 +840,27 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     font-weight: 600;
     font-size: 16px;
     font-family: var(--font-mono);
-    cursor: help;
+    /* `pointer`, not `help`: the panel is a click toggle now, and the
+       question-mark cursor promised something that appeared on hover. */
+    cursor: pointer;
+    user-select: none;
     transition: color 0.12s, border-color 0.12s, background 0.12s;
     box-shadow: var(--shadow-1);
 }
 .help-icon:hover {
     color: var(--accent);
     border-color: var(--accent);
+}
+/* Open state: the icon stays lit while its panel is up, so it is clear which
+   control put the panel there and which one will take it away. */
+.help-icon[aria-expanded="true"] {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--bg-inset);
+}
+.help-icon:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 .tooltip-content {
@@ -925,21 +917,100 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 
 .hidden { display: none !important; }
 
-/* ---------- Progress bar ---------- */
+/* ---------- Progress ----------
+   #progress-bar-container is the refinement's own bar in the results header.
+   It is hidden: the status footer below reports every long-running process
+   from any tab, and two bars for the same run was one too many. The element
+   stays because refinement_controller.js still writes to it, and it costs
+   nothing to leave a write target in place. */
 
-#progress-bar-container {
-    height: 4px;
+#progress-bar-container { display: none !important; }
+#progress-bar {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.25s ease;
+    box-shadow: 0 0 6px var(--accent-ring);
+}
+
+/* ---------- Unified status footer ----------
+   One bar and one comment line for the refinement, charge flipping and the
+   Wyckoff search, plus the version stamp. Left half is the bar and its
+   comment, right half the version. See js/status_bar.js. */
+
+#app-status-footer {
+    /* Negative side margins cancel #results-area's 20px padding so the rule
+       above the footer spans the full panel width, as a footer should. */
+    margin: 0 -20px -22px -20px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    /* HEIGHT: the one number to change. 26px was the original, 20px was too
+       tight, 40px is what it is now. The bar and the two text sizes below are
+       scaled to match -- if you retune this, they are the three that follow. */
+    gap: 12px;
+    height: 40px;
+    padding: 0 14px;
+    border-top: 1px solid var(--rule);
+    background: var(--bg-stage);
+    font-size: 11px;
+    color: var(--fg-3);
+    /* Sticky, not absolute: the version stamp used to be positioned against
+       #app-container and overlapped the results content at short viewport
+       heights. */
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+}
+#app-status-footer .asf-left {
+    flex: 1 1 50%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+#app-status-footer .asf-right {
+    flex: 1 1 50%;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#app-status-bar {
+    flex: 0 0 160px;
+    height: 5px;
     background: var(--bg-inset);
     border: 1px solid var(--rule);
     border-radius: var(--r-1);
     overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.2s ease;
 }
-#progress-bar {
+#app-status-footer.busy #app-status-bar { opacity: 1; }
+#app-status-bar-fill {
     height: 100%;
+    width: 0%;
     background: var(--accent);
-    border-radius: 0;
-    transition: width 0.25s ease;
-    box-shadow: 0 0 6px var(--accent-ring);
+    transition: width 0.15s linear;
+}
+/* A phase that cannot report a fraction -- building Wyckoff tables, compiling
+   a shader -- stripes the bar rather than freezing at 0%, which reads as a
+   hang. */
+#app-status-bar.indeterminate #app-status-bar-fill {
+    background-image: linear-gradient(90deg, var(--accent) 0 40%, transparent 40% 100%);
+    background-size: 28px 100%;
+    animation: asf-sweep 0.9s linear infinite;
+}
+@keyframes asf-sweep {
+    from { background-position: -28px 0; }
+    to   { background-position: 0 0; }
+}
+#app-status-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
 }
 
 /* ---------- Placeholder (empty stage) ---------- */
@@ -1240,13 +1311,24 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     .sg-modal-left { border-right: none; border-bottom: 1px solid var(--rule); }
 }
 
-/* ---------- Mode toggle (top-right of stage) ---------- */
+/* ---------- Stage corner controls (top-right) ----------
+   Theme toggle, report button and help icon. They used to be positioned
+   independently -- two of them from inline style attributes in powder5.html,
+   which then had to be nudged by hand every time one changed width. One flex
+   row positions all three, so adding or removing a control cannot leave the
+   others overlapping. */
 
-#mode-toggle {
+#stage-corner {
     position: absolute;
     top: 12px;
-    right: 50px;
+    right: 14px;
     z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#mode-toggle {
     display: inline-flex;
     align-items: center;
     gap: 0;
@@ -1280,45 +1362,44 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 [data-theme="dark"] #mode-toggle button.active { background: var(--bg-elevated); }
 #mode-toggle svg { width: 13px; height: 13px; display: block; }
 
-/* ---------- Brand mark / model number, top-left of stage ---------- */
-
-#brand-mark {
-    position: absolute;
-    top: 14px;
-    left: 22px;
-    z-index: 55;
-    display: flex;
-    align-items: baseline;
-    gap: 10px;
-    pointer-events: none;
-    user-select: none;
-}
-#brand-mark .mark {
-    font-family: var(--font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.30em;
-    text-transform: uppercase;
-    color: var(--fg-2);
-}
-#brand-mark .model {
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.14em;
+/* The report button reads as one more control in the same cluster, so it
+   borrows the toggle's metrics rather than inventing its own: the same 22px
+   height, the same tokens, the same 13px glyph. It carries the group border
+   itself, since unlike the toggle it is a single button and has no wrapper. */
+#print-report-btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 28px;
+    padding: 0;
+    background: var(--bg-inset);
+    border: 1px solid var(--rule);
+    border-radius: var(--r-1);
+    box-shadow: var(--shadow-1);
     color: var(--fg-3);
-    text-transform: uppercase;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
-#brand-mark .led {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--led);
-    box-shadow: 0 0 4px var(--led-glow);
-    align-self: center;
+#print-report-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
 }
+#print-report-btn:active { background: var(--bg-inset-2); }
+#print-report-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+#print-report-btn svg { width: 14px; height: 14px; display: block; }
 
-/* Don't show brand mark when chart fills the stage — would overlap. Keep
-   subtle: it stays, but with a very low contrast over chart area. */
+/* The help icon sat on its own absolute position; it is now the last item in
+   the corner cluster. */
+.stage-corner-help { display: inline-flex; }
+
+/* The #brand-mark block (and its .mark / .model / .led children) was removed:
+   verified unreferenced across all 22 source files, not just the markup. It
+   was kept in round 9 only because eight scripts were unavailable then. */
 
 /* ---------- Misc safety: tighten anything inline-styled in old CSS ----- */
 
@@ -1533,7 +1614,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 .cf-hint { font-size: 11px; color: var(--system-secondary-label); }
 .cf-warn {
     font-size: 11px; margin-top: 8px; padding: 6px 8px; border-radius: 6px;
-    background: rgba(255,159,10,0.12); color: var(--system-orange, #ff9f0a);
+    background: rgba(255,159,10,0.12); color: var(--system-orange);
 }
 /* Neutral toast variant used by the charge-flipping cancel path.
    (.toast.error and .toast.success are defined above.) */
@@ -1632,8 +1713,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 .rp-tab-flash { animation: rpFlash 1.2s ease; }
 /* #3: compact, evenly-sized export buttons in the CF results, instead
    of three stacked full-width bars. */
-.cf-btn-row { display: flex; gap: 8px; margin-top: 12px; }
-.cf-btn-row .btn { flex: 1; }
+/* .cf-btn-row removed: no element carries this class. */
 /* A disabled left-panel tab (e.g. Charge before a Pawley fit exists)
    must read clearly as unavailable. */
 .tab-btn:disabled,
@@ -1738,7 +1818,7 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
 
 /* Background Spline Active Point Row Styling */
 .anchor-point-item.editing-point {
-    border-left: 3px solid var(--system-orange, #ff9f0a) !important;
+    border-left: 3px solid var(--system-orange) !important;
     background-color: var(--system-fill, rgba(255, 159, 10, 0.12));
 }
 

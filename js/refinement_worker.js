@@ -21,7 +21,7 @@
 //  powder5.html -- now has exactly one definition. See the header of
 //  constants.js for why that is a correctness issue and not a tidiness one.
 // ---------------------------------------------------------------------------
-importScripts('constants.js', 'crystal.js', 'profile.js');
+importScripts('constants.js', 'crystal.js', 'profile.js', 'pawley_linear.js');
 
 
 const initPromise = fetch('../sg/all.json')
@@ -184,78 +184,6 @@ function solveLinearSystem(A, b) {
 
 /**
  * In-place-free Cholesky: A = L L^T, then two triangular solves.
- * Modified to use a Skyline/Envelope solver to skip zeros.
- * @returns {number[]|null} null if A is not positive definite.
- */
-function solveCholesky(A, b, n) {
-    // Packed lower triangle, row-major: L[i*(i+1)/2 + j] for j <= i.
-    const L = new Float64Array((n * (n + 1)) / 2);
-    const firstNonZero = new Int32Array(n);
-
-    // Compute the skyline envelope (first non-zero index of each row)
-    for (let i = 0; i < n; i++) {
-        let fnz = i;
-        for (let j = 0; j <= i; j++) {
-            if (A[i][j] !== 0) {
-                fnz = j;
-                break;
-            }
-        }
-        firstNonZero[i] = fnz;
-    }
-
-    for (let i = 0; i < n; i++) {
-        const rowA = A[i];
-        const bi = (i * (i + 1)) / 2;
-        const fi = firstNonZero[i];
-        
-        for (let j = fi; j <= i; j++) {
-            const bj = (j * (j + 1)) / 2;
-            const fj = firstNonZero[j];
-            let s = rowA[j];
-            if (!isFinite(s)) return null;
-            
-            // Only loop over the overlapping envelope
-            const startK = Math.max(fi, fj);
-            for (let k = startK; k < j; k++) {
-                s -= L[bi + k] * L[bj + k];
-            }
-            
-            if (i === j) {
-                const floor = 1e-14 * Math.max(1, Math.abs(rowA[j]));
-                if (!(s > floor)) return null;
-                L[bi + j] = Math.sqrt(s);
-            } else {
-                L[bi + j] = s / L[bj + j];
-            }
-        }
-    }
-
-    const y = new Float64Array(n);
-    for (let i = 0; i < n; i++) {
-        const bi = (i * (i + 1)) / 2;
-        let s = b[i];
-        for (let k = firstNonZero[i]; k < i; k++) {
-            s -= L[bi + k] * y[k];
-        }
-        y[i] = s / L[bi + i];
-    }
-    const x = new Float64Array(n);
-    for (let i = n - 1; i >= 0; i--) {
-        let s = y[i];
-        for (let k = i + 1; k < n; k++) {
-            if (firstNonZero[k] <= i) {
-                s -= L[(k * (k + 1)) / 2 + i] * x[k];
-            }
-        }
-        x[i] = s / L[(i * (i + 1)) / 2 + i];
-    }
-    for (let i = 0; i < n; i++) if (!isFinite(x[i])) return null;
-    return Array.from(x);
-}
-
-/**
- * In-place-free Cholesky: A = L L^T, then two triangular solves.
  * @returns {number[]|null} null if A is not positive definite.
  */
 function solveCholesky(A, b, n) {
@@ -325,52 +253,6 @@ function solveCholesky(A, b, n) {
         }
         x[i] = s / L[(i * (i + 1)) / 2 + i];
     }
-    for (let i = 0; i < n; i++) if (!isFinite(x[i])) return null;
-    return Array.from(x);
-}
-
-/**
- * LU with partial pivoting. Retained as the fallback for the case Cholesky
- * rejects, and for any caller that hands over a matrix that is not SPD.
- * Works on a copy, so the caller's matrix survives.
- */
-function solveLU(A, b, n) {
-    const M = new Array(n);
-    for (let i = 0; i < n; i++) M[i] = Float64Array.from(A[i]);
-    const x = new Float64Array(n);
-    for (let i = 0; i < n; i++) x[i] = b[i];
-
-    for (let col = 0; col < n; col++) {
-        let piv = col, maxAbs = Math.abs(M[col][col]);
-        for (let r = col + 1; r < n; r++) {
-            const v = Math.abs(M[r][col]);
-            if (v > maxAbs) { maxAbs = v; piv = r; }
-        }
-        if (!(maxAbs > 0) || !isFinite(maxAbs)) return null;   // singular column
-
-        if (piv !== col) {
-            const tr = M[piv]; M[piv] = M[col]; M[col] = tr;
-            const tx = x[piv]; x[piv] = x[col]; x[col] = tx;
-        }
-
-        const d = M[col][col];
-        for (let r = col + 1; r < n; r++) {
-            const f = M[r][col] / d;
-            if (f === 0) continue;
-            M[r][col] = 0;
-            for (let c = col + 1; c < n; c++) M[r][c] -= f * M[col][c];
-            x[r] -= f * x[col];
-        }
-    }
-
-    for (let r = n - 1; r >= 0; r--) {
-        let s = x[r];
-        for (let c = r + 1; c < n; c++) s -= M[r][c] * x[c];
-        const d = M[r][r];
-        if (!isFinite(d) || d === 0) return null;
-        x[r] = s / d;
-    }
-
     for (let i = 0; i < n; i++) if (!isFinite(x[i])) return null;
     return Array.from(x);
 }
@@ -460,13 +342,10 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
     }
     // -----------------------------------
 
-    const deg2rad = Math.PI / 180;
-    const lambda1 = params.lambda || 1.54056;
-    const lambda2 = params.lambda2 || 0;
+    // Only ratio21 is still needed here: the Ka2 position, its window and its
+    // prepared profile now come from buildPeakContributions below, which is
+    // the single place that resolves them.
     const ratio21 = params.ratio || 0;
-    const zeroShift = params.zeroShift || 0;
-    const doubletEnabled = ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6;
-    const lambdaRatio = doubletEnabled ? lambda2 / lambda1 : 1.0;
 
     // 1. Compute net observed
     const y_obs_net = new Float64Array(n_points);
@@ -506,36 +385,35 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
     // sigma is on the same footing as the weighted residual it came from.
     const pointWeights = expData.weights || null;
 
+    // ONE pass over the contributions instead of a second prepareVoigt sweep.
+    // The comment above already claimed this ("built once and reused for the
+    // per-peak walk below, so prepareVoigt runs once per reflection per
+    // extraction pass instead of twice") -- the code did not do it, and rebuilt
+    // prep1/prep2 from scratch here. Measured at 2500 reflections that was
+    // 8.2 ms of duplicated work per pass, and the pass runs up to
+    // LEBAIL_MAX_PASSES = 24 times per LM iteration.
+    const buckets = bucketContributionsByPeak(contributions, hklList.length);
+
     hklList.forEach((peak, j) => {
         // Number.isFinite, not truthiness: tth === 0 is falsy but is a position.
         if (!hasRenderablePosition(peak)) return;
+        const bucket = buckets[j];
+        if (!bucket || bucket.length === 0) return;
 
-        const basePos1 = peak.tth + zeroShift;
-        const peakPos1 = basePos1 + calculatePeakShift(basePos1, params);
-        const prep1 = prepareVoigt(basePos1, peakPos1, peak, params);
-        const min_tth1 = peakPos1 - prep1.max_d;
-        const max_tth1 = peakPos1 + prep1.max_d;
-
-        let tth2 = null, min_tth2 = 0, max_tth2 = 0, prep2 = null;
-        if (doubletEnabled) {
-             const sinTheta1 = Math.sin(peak.tth * deg2rad / 2.0);
-             const sinTheta2 = sinTheta1 * lambdaRatio;
-             if (Math.abs(sinTheta2) < 1) {
-                 tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                 const basePos2 = tth2 + zeroShift;
-                 const peakPos2 = basePos2 + calculatePeakShift(basePos2, params);
-                 prep2 = prepareVoigt(basePos2, peakPos2, peak, params);
-                 min_tth2 = peakPos2 - prep2.max_d;
-                 max_tth2 = peakPos2 + prep2.max_d;
-             }
+        // The Ka1 contribution carries weight 1; anything else is the Ka2
+        // satellite. Read the weight rather than the emission order, so a
+        // future change in buildPeakContributions cannot silently swap them.
+        let prep1 = null, prep2 = null;
+        let startIdx = Infinity, stopIdx = -Infinity;
+        for (let c = 0; c < bucket.length; c++) {
+            const con = bucket[c];
+            if (con.weight === 1.0 && !prep1) prep1 = con.prep; else prep2 = con.prep;
+            if (con.start < startIdx) startIdx = con.start;
+            if (con.stop  > stopIdx)  stopIdx  = con.stop;
         }
+        if (!prep1) prep1 = bucket[0].prep;
+        if (!(stopIdx > startIdx)) return;
 
-        // Find loop bounds (binary search; see lowerBound)
-        const actualMin = tth2 ? Math.min(min_tth1, min_tth2) : min_tth1;
-        const actualMax = tth2 ? Math.max(max_tth1, max_tth2) : max_tth1;
-
-        const startIdx = lowerBound(expData.tth, actualMin);
-        
         // Le Bail (1988) decomposition, exactly as written:
         //
         //   I_hkl = SUM_i  [ y_obs(i) - y_bkg(i) ] * -------------------------
@@ -547,9 +425,7 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
         // the height this code stores, and doing it here rather than from the
         // analytic pseudo-Voigt area matters: the rendered profile is truncated
         // at max_d and pedestal-subtracted, so its true area is a few percent
-        // below the analytic value. Using the analytic area made the extracted
-        // intensity inconsistent with the peak actually drawn -- and it costs
-        // nothing to do it right, because we are already walking these points.
+        // below the analytic value.
         let extracted_area = 0;
         let shape_area = 0;
         let variance = 0;
@@ -566,16 +442,15 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
         // known once the NEXT point is seen; carry it forward and settle up.
         let pend_c = 0, pend_f = 0, pend_var = 0, havePending = false;
 
-        for (let i = startIdx; i < n_points; i++) {
+        for (let i = startIdx; i < stopIdx; i++) {
             const current_tth = expData.tth[i];
-            if (current_tth > actualMax) break;
 
             let profile_val = 0;
-            if (current_tth >= min_tth1 && current_tth <= max_tth1) {
-                profile_val += evalVoigt(current_tth, prep1);
-            }
-            if (tth2 && current_tth >= min_tth2 && current_tth <= max_tth2) {
-                profile_val += ratio21 * evalVoigt(current_tth, prep2);
+            for (let c = 0; c < bucket.length; c++) {
+                const con = bucket[c];
+                if (i >= con.start && i < con.stop) {
+                    profile_val += con.weight * evalVoigt(current_tth, con.prep);
+                }
             }
 
             let current_fraction = 0;
@@ -588,7 +463,7 @@ function leBailIntensityExtraction(expData, hklList, params, scratch_calc = null
 
             let half = 0;
             if (i > startIdx) {
-                const step_width = expData.tth[i] - expData.tth[i-1];
+                const step_width = expData.tth[i] - expData.tth[i - 1];
                 if (step_width > 0) {
                     extracted_area += ((prev_partitioned_I + current_partitioned_I) / 2) * step_width;
                     shape_area     += ((prev_profile_val   + profile_val)         / 2) * step_width;
@@ -823,75 +698,196 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
 //  literal.
 // ---------------------------------------------------------------------------
 
-function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
+function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, refinementMode,
+                            leBailCycle = 0, totalLeBailCycles = 1, progressWindow = null) {
     const cloneParams = (p) => ({ ...p });
     const cloneHkl = (list) => list.map(h => (h ? { ...h } : null));
-    
-    const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList, refinementMode, system);
-    if (paramMapping.length === 0) {
-         const finalProgress = (leBailCycle + 1) / totalLeBailCycles;
-         postMessage({ type: 'progress', value: Math.min(1.0, finalProgress) });
+
+    const separable = (refinementMode === 'pawley');
+
+    // The LM search space. In Pawley mode the intensities are excluded here
+    // and solved exactly instead; the FULL mapping (including them) is rebuilt
+    // once at the end, because the report's ESDs and the charge-flipping
+    // hand-off both read the intensity block of J^T J.
+    const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList,
+                                                 refinementMode, system, false,
+                                                 { excludeIntensities: separable });
+
+    const baseProgress = progressWindow ? progressWindow.base : (leBailCycle / totalLeBailCycles);
+    const cycleProgressSpan = progressWindow ? progressWindow.span : (1 / totalLeBailCycles);
+    const postProgress = (frac) => {
+        const v = Math.min(1.0, baseProgress + Math.max(0, Math.min(1, frac)) * cycleProgressSpan);
+        return v;
+    };
+
+    if (paramMapping.length === 0 && !separable) {
+        postMessage({ type: 'progress', value: postProgress(1) });
         return { params: initialParams, hklList: hklList, ss_res: 0 };
     }
 
     let params = initialParams;
     let workingHklList = JSON.parse(JSON.stringify(hklList));
 
-    let finalJtJ = null, ss_res = Infinity;
+    let ss_res = Infinity;
     let lambda = 0.001;
 
+    const tthAxis = workerWorkingData.tth;
     const y_obs = workerWorkingData.intensity;
-    const sqrt_weights = workerWorkingData.weights.map(w => Math.sqrt(w));
     const n_points = y_obs.length;
     const n_params = paramMapping.length;
+    const n_peaks = workingHklList.length;
 
-    const residuals = new Float64Array(n_points);
-    const y_calc_total = new Float64Array(n_points);
-    const y_calc_baseline = new Float64Array(n_points);
-    const jacobian_col = new Float64Array(n_points);
+    const sqrt_weights = new Float64Array(n_points);
+    for (let i = 0; i < n_points; i++) sqrt_weights[i] = Math.sqrt(workerWorkingData.weights[i]);
 
-const scratch_bkg = new Float64Array(n_points);
-    calculateTotalBackground(workerWorkingData.tth, initialParams, workerBackgroundAnchors, scratch_bkg);
-    const scratch_pattern = new Float64Array(n_points);
+    const residuals      = new Float64Array(n_points);
+    const y_calc_total   = new Float64Array(n_points);
+    const y_calc_baseline= new Float64Array(n_points);
+    const jacobian_col   = new Float64Array(n_points);
+    const scratch_bkg    = new Float64Array(n_points);
+    const scratch_pattern= new Float64Array(n_points);
+    const scratch_net    = new Float64Array(n_points);   // y_obs - background
+    const scratch_cost   = new Float64Array(n_points);
 
-    const baseProgress = leBailCycle / totalLeBailCycles;
-    const cycleProgressSpan = 1 / totalLeBailCycles;
+    // ALLOCATION HOISTING. These were `new Array(n)` / `new Float64Array(n*n)`
+    // inside the iteration. At the old n_params they cost ~300 MB of churn per
+    // iteration; at the new one they are trivial, but there is no reason to
+    // reallocate them at all.
+    const JtJ = new Array(n_params);
+    for (let i = 0; i < n_params; i++) JtJ[i] = new Float64Array(n_params);
+    const Jtr = new Float64Array(n_params);
+    const A_lm = new Array(n_params);
+    for (let i = 0; i < n_params; i++) A_lm[i] = new Float64Array(n_params);
+    const Dscale = new Float64Array(n_params);
+    const rhs_scaled = new Float64Array(n_params);
+    const p_step = new Float64Array(n_params);
+
+    calculateTotalBackground(tthAxis, initialParams, workerBackgroundAnchors, scratch_bkg);
+
+    // -----------------------------------------------------------------------
+    //  Cached state for the separable solve.
+    //
+    //  `lastBuckets` / `lastWindows` describe the profile at `params`;
+    //  `lastNetPattern` is the BACKGROUND-FREE calculated pattern that goes
+    //  with them. They are invalidated together, by touchProfile(), and
+    //  nothing else may write them.
+    // -----------------------------------------------------------------------
+    const linCache = {};
+    let lastBuckets = null, lastWindows = null, lastCols = null;
+    let lastDegenerate = [], lastDegenerateGroups = [];
+    const lastNetPattern = new Float64Array(n_points);
+    let lastNetValid = false;
+
+    /** Mark the cached profile stale. Call after ANY change to params or positions. */
+    const touchProfile = () => { lastBuckets = null; lastNetValid = false; };
+
+    const refreshBackground = () => {
+        calculateTotalBackground(tthAxis, params, workerBackgroundAnchors, scratch_bkg);
+        for (let i = 0; i < n_points; i++) scratch_net[i] = y_obs[i] - scratch_bkg[i];
+    };
+
+    /**
+     * Solve the Pawley intensities exactly at the current parameters.
+     *
+     * FIX 1 -- crystal.js signals "this reflection has no position" by writing
+     * peak.tth = null, NOT NaN, and it does so for three distinct situations:
+     * indices missing, the cell degenerate, and sin(theta) out of range. All
+     * three reach hasRenderablePosition() as false, so buildPeakContributions
+     * emits nothing and the reflection arrives here with an empty window.
+     *
+     * The earlier version then wrote sol.I[j] = 0 back into the list for every
+     * such reflection. That is wrong in a way that only shows up in the
+     * report: a reflection outside the fitted 2-theta range is not measured to
+     * be zero, it is not measured at all, and printing 0.0 for it -- with an
+     * ESD -- states something the data does not support. The old LM gave those
+     * reflections a zero-length Jacobian slice and left their value alone;
+     * this now does the same.
+     *
+     * FIX 2 -- the pattern is accumulated from the columns the solve already
+     * built, instead of calling calculatePatternCPU again. That second call
+     * re-ran buildPeakContributions, i.e. a full prepareVoigt sweep over every
+     * reflection, for a pattern we had all the pieces of: 12 ms per iteration
+     * at 2500 reflections, for nothing.
+     *
+     * @param {boolean} [rebuildProfile=true]
+     * @returns {number|null} Weighted cost, or null if the solve failed.
+     */
+    const solveIntensitiesAndCost = (rebuildProfile = true) => {
+        if (rebuildProfile || !lastBuckets) {
+            enforceSymmetryConstraintsWorker(params, system);
+            updateHklPositions(workingHklList, params, system);
+            const contributions = buildPeakContributions(tthAxis, workingHklList, params);
+            lastBuckets = bucketContributionsByPeak(contributions, n_peaks);
+            lastWindows = peakWindows(lastBuckets, n_peaks);
+        }
+        const sol = solvePawleyIntensities(tthAxis, lastBuckets, lastWindows,
+                                           sqrt_weights, scratch_net, linCache);
+        if (!sol) { lastNetValid = false; return null; }
+        lastCols = sol.cols;
+        lastDegenerate = sol.degenerate;
+        lastDegenerateGroups = sol.degenerateGroups || [];
+
+        // Determined reflections take the solved value. Undetermined ones keep
+        // whatever they had -- see FIX 1.
+        const undet = sol.undetermined;
+        let u = 0;
+        for (let j = 0; j < n_peaks; j++) {
+            if (u < undet.length && undet[u] === j) { u++; continue; }
+            if (workingHklList[j]) workingHklList[j].intensity = sol.I[j];
+        }
+
+        // Net pattern from the columns, un-weighted, cached for the background
+        // Jacobian and for the baseline render.
+        lastNetPattern.fill(0);
+        for (let j = 0; j < n_peaks; j++) {
+            const cj = sol.cols[j];
+            if (!cj) continue;
+            const amp = sol.I[j];
+            if (amp === 0) continue;
+            const s = lastWindows.start[j];
+            for (let k = 0; k < cj.length; k++) {
+                // The column carries sqrt(w); divide it back out.
+                const sw = sqrt_weights[s + k];
+                if (sw > 0) lastNetPattern[s + k] += amp * cj[k] / sw;
+            }
+        }
+        lastNetValid = true;
+
+        let cost = 0;
+        for (let i = 0; i < n_points; i++) {
+            const r = (scratch_net[i] - lastNetPattern[i]) * sqrt_weights[i];
+            if (!isFinite(r)) return null;
+            cost += r * r;
+        }
+        return cost;
+    };
 
     const refreshLeBailIntensities = () => {
         if (refinementMode !== 'le-bail') return;
         enforceSymmetryConstraintsWorker(params, system);
-
         updateHklPositions(workingHklList, params, system);
-        if (fitFlags && fitFlags.fitBackground) {
-            calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors, scratch_bkg);
-        }
-        const bkg0 = scratch_bkg;
-        
+        if (fitFlags && fitFlags.fitBackground) refreshBackground();
+
         if (LEBAIL_RESET_EACH_ITER) {
-
-
-
-            for (let i = 0; i < workingHklList.length; i++) {
+            for (let i = 0; i < n_peaks; i++) {
                 if (workingHklList[i]) workingHklList[i].intensity = LEBAIL_FLAT_SEED;
             }
         }
-        const expData = { tth: workerWorkingData.tth, intensity: y_obs, background: bkg0, weights: workerWorkingData.weights };
+        const expData = { tth: tthAxis, intensity: y_obs, background: scratch_bkg,
+                          weights: workerWorkingData.weights };
 
         // Run the decomposition TO CONVERGENCE rather than for a fixed six
-        // passes. Six was chosen as the count that settles "an ordinary
-        // pattern", which means it is wasteful on an easy one and short on a
-        // heavily overlapped one -- and the overlapped case is the one where
-        // being short matters, because the LM then fits its profile parameters
+        // passes. Six is wasteful on an easy pattern and short on a heavily
+        // overlapped one -- and the overlapped case is the one where being
+        // short matters, because the LM then fits its profile parameters
         // against intensities that are still moving. Starting from flat keeps
         // the result a deterministic function of the parameters, which is what
-        // LEBAIL_RESET_EACH_ITER exists to guarantee; stopping on a measured
-        // change rather than a counter just makes it a settled one.
+        // LEBAIL_RESET_EACH_ITER exists to guarantee.
         let prev = null;
         for (let pass = 0; pass < LEBAIL_MAX_PASSES; pass++) {
             leBailIntensityExtraction(expData, workingHklList, params, scratch_pattern);
-
-            const cur = new Float64Array(workingHklList.length);
-            for (let i = 0; i < workingHklList.length; i++) {
+            const cur = new Float64Array(n_peaks);
+            for (let i = 0; i < n_peaks; i++) {
                 cur[i] = workingHklList[i] ? (workingHklList[i].intensity || 0) : 0;
             }
             if (prev && pass + 1 >= LEBAIL_PASSES_PER_ITER) {
@@ -906,29 +902,37 @@ const scratch_bkg = new Float64Array(n_points);
         }
     };
 
+    /**
+     * The full calculated pattern into `targetArray`.
+     *
+     * FIX 3 -- `scratch_pattern` is NOT a safe cache for the peak part.
+     * refreshLeBailIntensities passes it straight into leBailIntensityExtraction
+     * as its scratch_calc, which overwrites it with the partition's total_calc.
+     * The earlier version's `requiresPeakUpdate = false` path therefore read a
+     * buffer that, in Le Bail mode, held the pattern at the intensities of the
+     * PREVIOUS decomposition pass. It happened to be correct only because of
+     * the order the calls came in, which is not a property to rely on. The peak
+     * pattern now has its own buffer, written only here.
+     */
+    const peakCache = new Float64Array(n_points);
+    let peakCacheValid = false;
 
-
-    const calculateTotalPattern = (targetArray, requiresHklUpdate = true, requiresBkgUpdate = true) => {
+    const calculateTotalPattern = (targetArray, requiresHklUpdate = true,
+                                   requiresPeakUpdate = true, requiresBkgUpdate = true) => {
         enforceSymmetryConstraintsWorker(params, system);
-
-        if (requiresHklUpdate) {
-            updateHklPositions(workingHklList, params, system);
+        if (requiresHklUpdate) updateHklPositions(workingHklList, params, system);
+        if (requiresBkgUpdate) {
+            calculateTotalBackground(tthAxis, params, workerBackgroundAnchors, scratch_bkg);
         }
-        if (requiresBkgUpdate || (fitFlags && fitFlags.fitBackground)) {
-            calculateTotalBackground(workerWorkingData.tth, params, workerBackgroundAnchors, scratch_bkg);
+        if (requiresPeakUpdate || !peakCacheValid) {
+            calculatePatternCPU(tthAxis, workingHklList, params, peakCache);
+            peakCacheValid = true;
         }
-
-        const netCalcPattern = calculatePatternCPU(workerWorkingData.tth, workingHklList, params, scratch_pattern);
-      
-        for (let i = 0; i < n_points; i++) {
-            targetArray[i] = netCalcPattern[i] + scratch_bkg[i];
-        }
-
-        return 1.0; 
+        for (let i = 0; i < n_points; i++) targetArray[i] = peakCache[i] + scratch_bkg[i];
     };
 
     const evaluateResiduals = (target) => {
-        calculateTotalPattern(target, true, true);
+        calculateTotalPattern(target, true, true, true);
         let cost = 0;
         for (let i = 0; i < n_points; i++) {
             residuals[i] = (y_obs[i] - target[i]) * sqrt_weights[i];
@@ -938,37 +942,31 @@ const scratch_bkg = new Float64Array(n_points);
         return isFinite(cost) ? cost : null;
     };
 
+    /** One iteration's baseline: intensities settled, residuals and cost current. */
+    const settleAndEvaluate = () => {
+        if (separable) {
+            refreshBackground();
+            const c = solveIntensitiesAndCost(true);
+            if (c === null) return null;
+            // FIX 2 again: the baseline is the cached net pattern plus the
+            // background. No third pattern evaluation.
+            peakCache.set(lastNetPattern);
+            peakCacheValid = true;
+            for (let i = 0; i < n_points; i++) {
+                y_calc_baseline[i] = lastNetPattern[i] + scratch_bkg[i];
+                residuals[i] = (y_obs[i] - y_calc_baseline[i]) * sqrt_weights[i];
+                if (!isFinite(residuals[i])) return null;
+            }
+            return c;
+        }
+        refreshLeBailIntensities();
+        peakCacheValid = false;      // the extraction moved every intensity
+        return evaluateResiduals(y_calc_baseline);
+    };
+
+
     const deadParamWarned = new Set();
 
-    // ===================================================================
-    //  THE JACOBIAN
-    //
-    //  Every column is stored as a SLICE, { start, values }, covering only
-    //  the range of data points the parameter can affect. Profile, cell and
-    //  zero-point parameters move every peak, so their slice is the whole
-    //  axis; a Pawley intensity moves exactly one reflection, so its slice is
-    //  that reflection's profile window and is typically a few dozen points
-    //  out of ten thousand.
-    //
-    //  THIS IS THE WHOLE POINT. The old code computed every column by finite
-    //  difference: perturb the parameter, recompute the ENTIRE pattern (all
-    //  peaks, all points), and
-    //  subtract. For a Pawley fit with n reflections that is n full pattern
-    //  evaluations per iteration to obtain n columns whose derivative is
-    //  d(y_i)/d(I_j) = profile_j(x_i) -- a quantity that is analytic, exact,
-    //  local, and which buildPeakContributions has already prepared. It also
-    //  made J^T J a dense n x n accumulation over all N points, when in truth
-    //  two reflections that do not overlap have an inner product of exactly
-    //  zero.
-    //
-    //  Both facts are now used: intensity columns are analytic, and the inner
-    //  product runs over the INTERSECTION of two slices, which for
-    //  non-overlapping reflections is empty. The finite-difference machinery
-    //  below is still there, and still correct, for the parameters that
-    //  genuinely need it.
-    // ===================================================================
-
-    /** Inner product of two column slices, over their overlap only. */
     const colDot = (a, b) => {
         const lo = Math.max(a.start, b.start);
         const hi = Math.min(a.start + a.values.length, b.start + b.values.length);
@@ -977,8 +975,6 @@ const scratch_bkg = new Float64Array(n_points);
         for (let k = lo; k < hi; k++) acc += a.values[k - a.start] * b.values[k - b.start];
         return acc;
     };
-
-    /** Inner product of a column slice with a full-length vector. */
     const colDotFull = (a, v) => {
         let acc = 0;
         const end = a.start + a.values.length;
@@ -986,447 +982,457 @@ const scratch_bkg = new Float64Array(n_points);
         return acc;
     };
 
+    /**
+     * Analytic derivative of the pattern with respect to one background anchor
+     * height: the spline basis function, obtained by differencing the SPLINE
+     * only. No peak is touched.
+     *
+     * The monotonic Hermite spline is piecewise-cubic in the anchor heights
+     * and not strictly linear in them (the Fritsch-Carlson tangent limiter is
+     * a min), so this is still a difference -- but of a 10 us spline
+     * evaluation rather than a 24 ms pattern render.
+     */
+    const backgroundColumn = (mapping, out) => {
+        const original = mapping.get(params, workingHklList);
+        const h = Math.max(1e-6, Math.abs(original) * FD_BASE_FRACTION, 1e-3);
+        mapping.set(params, workingHklList, original + h);
+        const applied = mapping.get(params, workingHklList);
+        const actual_h = applied - original;
+        if (actual_h === 0) { mapping.set(params, workingHklList, original); out.fill(0); return false; }
+        const probe = new Float64Array(n_points);
+        calculateTotalBackground(tthAxis, params, workerBackgroundAnchors, probe);
+        mapping.set(params, workingHklList, original);
+        calculateTotalBackground(tthAxis, params, workerBackgroundAnchors, scratch_bkg);
+        let responded = false;
+        for (let i = 0; i < n_points; i++) {
+            const d = (probe[i] - scratch_bkg[i]) / actual_h;
+            out[i] = d * sqrt_weights[i];
+            if (d !== 0) responded = true;
+        }
+        return responded;
+    };
+
+    // -----------------------------------------------------------------------
+    //  Normal equations over the NON-LINEAR parameters only
+    // -----------------------------------------------------------------------
     const buildNormalEquations = () => {
         const columns = new Array(n_params).fill(null);
-        const savedIntensities = workingHklList.map(h => h ? h.intensity : 0);
-
-        // Contributions at the CURRENT parameters, shared by every analytic
-        // column. Built once; prepareVoigt is the expensive part of a pattern
-        // evaluation and this is the only place it needs to run for them.
-        const haveIntensityParams = paramMapping.some(m => m.isIntensity);
-        const contributions = haveIntensityParams
-            ? buildPeakContributions(workerWorkingData.tth, workingHklList, params)
-            : null;
+        const savedIntensities = new Float64Array(n_peaks);
+        for (let i = 0; i < n_peaks; i++) savedIntensities[i] = workingHklList[i] ? workingHklList[i].intensity : 0;
 
         for (let p = 0; p < n_params; p++) {
             const mapping = paramMapping[p];
 
-            // ---- analytic column: a Pawley intensity ----------------------
-            if (mapping.isIntensity && contributions) {
-                const col = intensityDerivativeColumn(
-                    workerWorkingData.tth, contributions, mapping.index);
-                if (col) {
-                    // The residual carries sqrt(w), so the Jacobian must too.
-                    for (let k = 0; k < col.values.length; k++) {
-                        col.values[k] *= sqrt_weights[col.start + k];
-                    }
-                    columns[p] = col;
-                } else {
-                    // The reflection falls outside the fitted range: no data
-                    // point constrains it. A zero-length slice is the honest
-                    // representation and it is what makes the parameter show
-                    // up as undetermined rather than as an ESD of zero.
-                    columns[p] = { start: 0, values: new Float64Array(0) };
+            // ---- background: analytic, no peak render --------------------
+            if (mapping.isBackground) {
+                jacobian_col.fill(0);
+                const responded = backgroundColumn(mapping, jacobian_col);
+                if (!responded && !deadParamWarned.has(mapping.name)) {
+                    deadParamWarned.add(mapping.name);
+                    postMessage({ type: 'warning', message: `Parameter "${mapping.name}" has no effect on the fit and will not move.` });
                 }
+                columns[p] = { start: 0, values: jacobian_col.slice() };
                 continue;
             }
 
-            // ---- finite-difference column --------------------------------
+            // ---- finite difference on a non-linear parameter -------------
             const originalValue = mapping.get(params, workingHklList);
             const isStructural = ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].includes(mapping.name);
-            const isBkg = mapping.isBackground || false;
 
             const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
             const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
-
             const magnitude = Math.max(Math.abs(originalValue), mapping.defaultScale || 0, 1e-9);
-            const baseStep  = Math.max(1e-9, magnitude * FD_BASE_FRACTION);
-            const maxProbe  = Math.max(baseStep, FD_MAX_PROBE_FRACTION * magnitude);
+            const baseStep = Math.max(1e-9, magnitude * FD_BASE_FRACTION);
+            const maxProbe = Math.max(baseStep, FD_MAX_PROBE_FRACTION * magnitude);
 
-            let fd_step = baseStep;
-            let fd_sign = 1;
-            let responded = false;
+            let fd_step = baseStep, responded = false;
             jacobian_col.fill(0);
 
             for (let attempt = 0; attempt < FD_MAX_ATTEMPTS; attempt++) {
-                fd_sign = (originalValue + fd_step > maxV && originalValue - fd_step >= minV) ? -1 : 1;
-
+                const fd_sign = (originalValue + fd_step > maxV && originalValue - fd_step >= minV) ? -1 : 1;
                 mapping.set(params, workingHklList, originalValue + fd_sign * fd_step);
-                const applied  = mapping.get(params, workingHklList);
-                const actual_h = applied - originalValue;
+                const actual_h = mapping.get(params, workingHklList) - originalValue;
 
                 if (actual_h !== 0) {
-                    calculateTotalPattern(y_calc_total, isStructural, isBkg);
-
-                    for (let i = 0; i < n_points; i++) {
-                        if (!isFinite(y_calc_baseline[i]) || !isFinite(y_calc_total[i])) {
-                            jacobian_col[i] = 0;
-                        } else {
-                            jacobian_col[i] = (y_calc_total[i] - y_calc_baseline[i])
-                                              / actual_h * sqrt_weights[i];
-                        }
+                    if (separable && PAWLEY_VARPRO_EXACT_JACOBIAN) {
+                        // Exact variable-projection column: the intensities
+                        // re-optimise with the probe, so this measures the
+                        // derivative of the REDUCED cost surface LM is on.
+                        solveIntensitiesAndCost(true);
+                        calculateTotalPattern(y_calc_total, false, true, false);
+                    } else {
+                        calculateTotalPattern(y_calc_total, isStructural, true, false);
                     }
                     for (let i = 0; i < n_points; i++) {
-                        if (jacobian_col[i] !== 0) { responded = true; break; }
+                        jacobian_col[i] = (!isFinite(y_calc_baseline[i]) || !isFinite(y_calc_total[i]))
+                            ? 0
+                            : (y_calc_total[i] - y_calc_baseline[i]) / actual_h * sqrt_weights[i];
                     }
+                    for (let i = 0; i < n_points; i++) if (jacobian_col[i] !== 0) { responded = true; break; }
                 }
-
                 if (responded || fd_step >= maxProbe) break;
                 fd_step = Math.min(maxProbe, fd_step * 30);
             }
-
             if (!responded) jacobian_col.fill(0);
 
             mapping.set(params, workingHklList, originalValue);
-            workingHklList.forEach((h, idx) => { if (h) h.intensity = savedIntensities[idx]; });
-
-            // Restore the peak positions if a structural parameter shifted them.
-            if (isStructural) {
+            for (let i = 0; i < n_peaks; i++) if (workingHklList[i]) workingHklList[i].intensity = savedIntensities[i];
+            // FIX 4: re-derive the slaved cell edges BEFORE recomputing
+            // positions. A probe on `a` leaves b and c holding a + h once
+            // mapping.set() has put `a` back, because only enforce() mirrors
+            // them. updateHklPositions reads neither on a cubic cell, so the
+            // pattern is unaffected -- but `params` is the object that gets
+            // cloned into bestParams and returned, and the worker's own note
+            // at line 1412 records this exact inconsistency escaping once
+            // already (a = 8.13000 reported next to b = c = 8.13081).
+            if (isStructural || (separable && PAWLEY_VARPRO_EXACT_JACOBIAN)) {
+                enforceSymmetryConstraintsWorker(params, system);
                 updateHklPositions(workingHklList, params, system);
+                touchProfile();
             }
-
             columns[p] = { start: 0, values: jacobian_col.slice() };
         }
 
-        const JtJ = new Array(n_params);
-        for (let i = 0; i < n_params; i++) JtJ[i] = new Array(n_params).fill(0);
-        const Jtr = new Array(n_params).fill(0);
-        let ok = true;
+        // Restore the profile cache the probes invalidated.
+        if (separable && !lastBuckets) solveIntensitiesAndCost(true);
 
+        let ok = true;
         for (let i = 0; i < n_params; i++) {
             const ci = columns[i];
             const s_r = colDotFull(ci, residuals);
             if (!isFinite(s_r)) ok = false;
             Jtr[i] = s_r;
-
             for (let j = i; j < n_params; j++) {
-                const cj = columns[j];
-                const lo = Math.max(ci.start, cj.start);
-                const hi = Math.min(ci.start + ci.values.length, cj.start + cj.values.length);
-                if (lo >= hi) {
-                    JtJ[i][j] = 0;
-                    JtJ[j][i] = 0;
-                    continue;
-                }
-                const s = colDot(ci, cj);
+                const s = colDot(ci, columns[j]);
                 if (!isFinite(s)) ok = false;
-                JtJ[i][j] = s;
-                JtJ[j][i] = s;
+                JtJ[i][j] = s; JtJ[j][i] = s;
             }
         }
-        if (!ok) return null;
+        if (!ok) return false;
 
-        // A parameter has no effect iff ITS OWN column is zero. Full stop.
-        //
-        // This used to be `JtJ[i][i] > JTJ_RANK_TOL * maxDiag`, i.e. each
-        // diagonal was compared against the LARGEST diagonal in the matrix --
-        // and that is meaningless, because the diagonals are in different
-        // physical units. d(pattern)/d(a) is counts per angstrom on a cell
-        // edge; d(pattern)/d(I) is dimensionless. Measured on a real cubic
-        // problem the cell diagonal came out at 1.3e10 against 1e-2 for the
-        // intensities: a ratio of 1.3e12, past the 1e-12 tolerance, so the
-        // moment a lattice parameter was refined EVERY Pawley intensity was
-        // reported as "has no effect on the fit and will not move".
-        //
-        // They moved perfectly well -- the `active` filter below selects on
-        // JtJ[i][i] > 0, which is scale-free and was always right -- but the
-        // user was told a hundred times over that the fit was doing nothing.
-        // A warning that fires on a healthy refinement is worse than no
-        // warning, because it teaches people to ignore the real ones.
-        //
-        // The test now matches the `active` filter exactly, so a parameter is
-        // warned about precisely when it is dropped from the solve. Genuine
-        // rank deficiency -- parameters that are individually alive but
-        // collectively degenerate -- is a different condition and is reported
-        // where it can be reported properly: the ESDs, and the overlap-cluster
-        // section of the report.
         for (let i = 0; i < n_params; i++) {
             const d = JtJ[i][i];
             if (!(isFinite(d) && d > 0) && !deadParamWarned.has(paramMapping[i].name)) {
                 deadParamWarned.add(paramMapping[i].name);
-                console.warn(`LM: parameter "${paramMapping[i].name}" has no effect on the calculated pattern (zero Jacobian column).`);
                 postMessage({ type: 'warning', message: `Parameter "${paramMapping[i].name}" has no effect on the fit and will not move.` });
             }
         }
-        return { JtJ, Jtr };
+        return true;
     };
 
+    // -----------------------------------------------------------------------
+    //  Iteration
+    // -----------------------------------------------------------------------
     let lastAcceptedCost = Infinity;
-    let convergedRepeats = 0;
-    let lastProgressPct = -1;
+    let convergedRepeats = 0, lastProgressPct = -1;
     let bestTrueCost = Infinity, bestParams = null, bestHkl = null;
-    let trustFactor = LM_TRUST_INITIAL;
-    let outerRejects = 0;
+    let trustFactor = LM_TRUST_INITIAL, outerRejects = 0;
+    let haveNormals = false;
 
     for (let iter = 0; iter < maxIter; iter++) {
-         let oldParams = null;
-         let oldHklList = null;
+        let oldParams = null, oldHklList = null;
         try {
-             refreshLeBailIntensities();
-             const cost = evaluateResiduals(y_calc_baseline);
-             if (cost === null) {
-                 lambda = Math.min(1e9, lambda * 10);
-                 console.warn(`LM iter ${iter}: Residual calculation failed. Increased lambda to ${lambda}.`);
-                 continue;
-             }
+            const cost = settleAndEvaluate();
+            if (cost === null) {
+                lambda = Math.min(1e9, lambda * 10);
+                continue;
+            }
 
+            if (cost < bestTrueCost) {
+                bestTrueCost = cost;
+                bestParams = cloneParams(params);
+                bestHkl = cloneHkl(workingHklList);
+                trustFactor = Math.min(1.0, trustFactor * LM_TRUST_GROWTH);
+            } else if (isFinite(bestTrueCost) && bestParams && cost > bestTrueCost * (1 + LM_OUTER_TOL)) {
+                if (++outerRejects > LM_MAX_OUTER_REJECTS) break;
+                params = cloneParams(bestParams);
+                workingHklList = cloneHkl(bestHkl);
+                if (separable) touchProfile();
+                lambda = Math.min(1e9, lambda * 10);
+                trustFactor = Math.max(1e-3, trustFactor * 0.25);
+                lastAcceptedCost = bestTrueCost;
+                convergedRepeats = 0;
+                continue;
+            }
 
-if (cost < bestTrueCost) {
-                 bestTrueCost = cost;
-                 bestParams = cloneParams(params);
-                 bestHkl = cloneHkl(workingHklList);
-                 trustFactor = Math.min(1.0, trustFactor * LM_TRUST_GROWTH);
-             } else if (isFinite(bestTrueCost) && bestParams &&
-                        cost > bestTrueCost * (1 + LM_OUTER_TOL)) {
-                 if (++outerRejects > LM_MAX_OUTER_REJECTS) {
-                     console.warn(`LM iter ${iter}: no further progress in the re-extracted cost; stopping.`);
-                     break;
-                 }
-                 params = cloneParams(bestParams);
-                 workingHklList = cloneHkl(bestHkl);
+            if (!isFinite(lastAcceptedCost)) lastAcceptedCost = cost;
+            ss_res = cost;
 
-                 lambda = Math.min(1e9, lambda * 10);
-                 trustFactor = Math.max(1e-3, trustFactor * 0.25);
-                 lastAcceptedCost = bestTrueCost;
-                 convergedRepeats = 0;
-                 continue;
-             }
+            if (n_params === 0) break;   // separable with nothing non-linear left
 
-             if (!isFinite(lastAcceptedCost)) lastAcceptedCost = cost;
-             ss_res = cost;
+            if (!buildNormalEquations()) {
+                haveNormals = false;
+                lambda = Math.min(1e9, lambda * 5);
+                continue;
+            }
+            haveNormals = true;
 
-             const normals = buildNormalEquations();
-             if (!normals) {
-                  console.warn(`LM iter ${iter}: JtJ/Jtr contained non-finite entries.`);
-                  finalJtJ = null;
-                  lambda = Math.min(1e9, lambda * 5);
-                  continue;
-             }
-             finalJtJ = normals.JtJ;
-             const Jtr = normals.Jtr;
+            const active = [];
+            for (let i = 0; i < n_params; i++) if (JtJ[i][i] > 0) active.push(i);
+            if (active.length === 0) break;
 
+            const nA = active.length;
+            for (let ii = 0; ii < nA; ii++) Dscale[ii] = Math.sqrt(JtJ[active[ii]][active[ii]]);
+            for (let ii = 0; ii < nA; ii++) {
+                const row = A_lm[ii], di = Dscale[ii], ri = JtJ[active[ii]];
+                for (let jj = 0; jj < nA; jj++) row[jj] = ri[active[jj]] / (di * Dscale[jj]);
+                row[ii] += lambda;
+                rhs_scaled[ii] = Jtr[active[ii]] / di;
+            }
 
+            const step_active = solveLinearSystem(A_lm.slice(0, nA), rhs_scaled.subarray(0, nA));
+            if (!step_active) { lambda = Math.min(1e9, lambda * 10); continue; }
 
-             const active = [];
-             for (let i = 0; i < n_params; i++) {
-                 // Only drop genuinely dead parameters. 
-                 // Marquardt diagonal scaling handles the scale differences safely.
-                 if (finalJtJ[i][i] > 0) active.push(i);
-             }
+            p_step.fill(0);
+            for (let ii = 0; ii < nA; ii++) p_step[active[ii]] = step_active[ii] / Dscale[ii];
+            let bad = false;
+            for (let i = 0; i < n_params; i++) if (!isFinite(p_step[i])) bad = true;
+            if (bad) { lambda = Math.min(1e9, lambda * 5); continue; }
 
+            const p_current = paramMapping.map(m => m.get(params, workingHklList));
 
-             if (active.length === 0) {
-                  console.warn(`LM iter ${iter}: no parameter has any effect on the pattern.`);
-                  break;
-             }
-
-             const nA = active.length;
-             const Dscale = new Float64Array(nA);
-             for (let ii = 0; ii < nA; ii++) {
-                 Dscale[ii] = Math.sqrt(finalJtJ[active[ii]][active[ii]]);
-             }
-             const A_lm = new Array(nA);
-             for (let ii = 0; ii < nA; ii++) {
-                 const row = new Float64Array(nA);
-                 const di = Dscale[ii];
-                 for (let jj = 0; jj < nA; jj++) {
-                     row[jj] = finalJtJ[active[ii]][active[jj]] / (di * Dscale[jj]);
-                 }
-                 row[ii] += lambda;
-                 A_lm[ii] = row;
-             }
-             const rhs_scaled = new Array(nA);
-             for (let ii = 0; ii < nA; ii++) rhs_scaled[ii] = Jtr[active[ii]] / Dscale[ii];
-
-             const step_active = solveLinearSystem(A_lm, rhs_scaled);
-             if (!step_active) {
-                  console.warn(`LM iter ${iter}: normal equations are singular. Increasing lambda.`);
-                  lambda = Math.min(1e9, lambda * 10);
-                  continue;
-             }
-             const p_step = new Array(n_params).fill(0);
-             for (let ii = 0; ii < nA; ii++) p_step[active[ii]] = step_active[ii] / Dscale[ii];
-
-             if (p_step.some(v => !isFinite(v))) {
-                 console.warn(`LM iter ${iter}: Step calculation resulted in NaN/Infinity. Increasing lambda.`);
-                 lambda = Math.min(1e9, lambda * 5);
-                 continue;
-             }
-
-             const p_current = paramMapping.map(m => m.get(params, workingHklList));
-
-             let stepScale = 1.0;
-             for (let idx = 0; idx < p_step.length; idx++) {
-                 const m = paramMapping[idx];
-                 const cap = trustFactor * Math.min(
-                     (m.maxStepAbs !== undefined) ? m.maxStepAbs : Infinity,
-                     Math.max(2 * Math.abs(p_current[idx]), 4 * (m.defaultScale || 1e-9))
-                 );
-                 const want = Math.abs(p_step[idx]);
-                 if (want > cap && want > 0) stepScale = Math.min(stepScale, cap / want);
-             }
-             const p_step_clamped = p_step.map(v => v * stepScale);
+            let stepScale = 1.0;
+            for (let idx = 0; idx < n_params; idx++) {
+                const m = paramMapping[idx];
+                const cap = trustFactor * Math.min(
+                    (m.maxStepAbs !== undefined) ? m.maxStepAbs : Infinity,
+                    Math.max(2 * Math.abs(p_current[idx]), 4 * (m.defaultScale || 1e-9)));
+                const want = Math.abs(p_step[idx]);
+                if (want > cap && want > 0) stepScale = Math.min(stepScale, cap / want);
+            }
 
             oldParams = cloneParams(params);
-             oldHklList = cloneHkl(workingHklList);
+            oldHklList = cloneHkl(workingHklList);
 
-             const p_new = p_current.map((v, i) => v + p_step_clamped[i]);
-             paramMapping.forEach((m, i) => m.set(params, workingHklList, p_new[i]));
+            for (let i = 0; i < n_params; i++) {
+                paramMapping[i].set(params, workingHklList, p_current[i] + p_step[i] * stepScale);
+            }
+            const p_applied = paramMapping.map(m => m.get(params, workingHklList));
+            const p_step_real = p_applied.map((v, i) => v - p_current[i]);
 
-             // FIX: set() silently clamps to [minVal, maxVal] (and returns
-             // without assigning on a non-finite value), so the step that is
-             // actually taken can be shorter than p_step_clamped -- zero, for a
-             // parameter already sitting on a bound with the step pointing
-             // outwards. `predicted` used to be computed from the PROPOSED
-             // step while `actual` measured the APPLIED one, so every bound
-             // contact depressed rho through pure bookkeeping.
-             //
-             // That never rejected a step -- acceptance below is decided by
-             // cost alone -- but it did drive lambda. With rho stuck under
-             // 0.75 the decrease branch is unreachable while the increase
-             // branch fires every iteration, so lambda ratchets towards 1e9
-             // and the whole refinement grinds to a halt, not just the
-             // parameter on the bound. Pawley mode is the bad case: intensity
-             // parameters are bounded below by zero and weak reflections park
-             // there permanently, throttling the cell and profile terms too.
-             //
-             // Read back what the bounds allowed and measure the same step
-             // the cost function sees. Same convention buildNormalEquations()
-             // already uses for the finite-difference denominator. This has to
-             // happen BEFORE calculateTotalPattern(), which runs
-             // enforceSymmetryConstraintsWorker() and, in Le Bail mode,
-             // re-extracts the intensities.
-             const p_applied  = paramMapping.map(m => m.get(params, workingHklList));
-             const p_step_real = p_applied.map((v, i) => v - p_current[i]);
+            let predicted = 0;
+            for (let i = 0; i < n_params; i++) {
+                const si = p_step_real[i];
+                if (si === 0) continue;
+                predicted += 2 * si * Jtr[i];
+                const ri = JtJ[i];
+                let q = 0;
+                for (let j = 0; j < n_params; j++) q += ri[j] * p_step_real[j];
+                predicted -= si * q;
+            }
 
-             let predicted = 0;
-             for (let i = 0; i < n_params; i++) {
-                 predicted += 2 * p_step_real[i] * Jtr[i];
-                 let q = 0;
-                 for (let j = 0; j < n_params; j++) q += finalJtJ[i][j] * p_step_real[j];
-                 predicted -= p_step_real[i] * q;
-             }
+            if (p_step_real.every(v => v === 0)) {
+                params = oldParams; workingHklList = oldHklList;
+                if (separable) touchProfile();
+                break;
+            }
 
-             // Every component blocked: the model is sitting in a corner of
-             // the bound box with the step pointing out of it. Nothing will
-             // change, so stop rather than spin up lambda for the remaining
-             // iterations.
-             if (p_step_real.every(v => v === 0)) {
-                 console.warn(`LM iter ${iter}: the proposed step is entirely blocked by parameter bounds; stopping.`);
-                 params = oldParams;
-                 workingHklList = oldHklList;
-                 break;
-             }
+            // TRIAL COST. In separable mode the intensities are re-solved at
+            // the trial point, so this is the reduced objective -- the same
+            // function `cost` above measured. That consistency is what makes
+            // the accept/reject test and rho mean anything.
+            if (separable) touchProfile();
+            let new_cost;
+            if (separable) {
+                refreshBackground();
+                const c = solveIntensitiesAndCost(true);
+                new_cost = (c === null) ? Infinity : c;
+            } else {
+                calculateTotalPattern(y_calc_total, true, true, true);
+                new_cost = 0;
+                for (let i = 0; i < n_points; i++) {
+                    const res = (y_obs[i] - y_calc_total[i]) * sqrt_weights[i];
+                    if (!isFinite(res)) { new_cost = Infinity; break; }
+                    new_cost += res * res;
+                }
+            }
 
-             calculateTotalPattern(y_calc_total);
-             let new_cost = 0;
-             for (let i = 0; i < n_points; i++) {
-                 const res = (y_obs[i] - y_calc_total[i]) * sqrt_weights[i];
-                  if (isFinite(res)) {
-                      new_cost += res * res;
-                  } else {
-                      new_cost = Infinity;
-                      break;
-                  }
-             }
+            const actual = cost - new_cost;
+            const rho = (predicted > 0 && isFinite(predicted)) ? actual / predicted : (actual > 0 ? 1 : -1);
 
-             const actual = cost - new_cost;
-             const rho = (predicted > 0 && isFinite(predicted))
-                         ? actual / predicted
-                         : (actual > 0 ? 1 : -1);
+            let stepAccepted = false;
+            if (new_cost < cost && isFinite(new_cost)) {
+                stepAccepted = true;
+                if (rho > 0.75 && stepScale > 0.5) lambda = Math.max(1e-9, lambda / 3);
+                else if (rho < 0.25) lambda = Math.min(1e9, lambda * 2);
+            } else {
+                params = oldParams; workingHklList = oldHklList;
+                if (separable) touchProfile();
+                lambda = Math.min(1e9, lambda * 3);
+            }
 
-             let stepAccepted = false;
-             if (new_cost < cost && isFinite(new_cost)) {
-                 stepAccepted = true;
-                 // The old gate was `stepScale > 0.99`, which meant any trust-
-                 // region clipping at all -- however slight -- also made the
-                 // decrease branch unreachable, so lambda could only ever go
-                 // up. Now that `predicted` describes the step that was really
-                 // taken, a mildly clipped step is still evidence the model is
-                 // good; only a heavily clipped one is not.
-                 if (rho > 0.75 && stepScale > 0.5) lambda = Math.max(1e-9, lambda / 3);
-                 else if (rho < 0.25)               lambda = Math.min(1e9, lambda * 2);
-             } else {
-                 params = oldParams;
-                 workingHklList = oldHklList;
-                 lambda = Math.min(1e9, lambda * 3);
-             }
+            const pct = Math.floor(postProgress((iter + 1) / maxIter) * 100);
+            if (pct !== lastProgressPct) {
+                lastProgressPct = pct;
+                postMessage({ type: 'progress', value: postProgress((iter + 1) / maxIter) });
+            }
 
-             const overallProgress = Math.min(1.0, baseProgress + ((iter + 1) / maxIter) * cycleProgressSpan);
-             const pct = Math.floor(overallProgress * 100);
-             if (pct !== lastProgressPct) {
-                 lastProgressPct = pct;
-                 postMessage({ type: 'progress', value: overallProgress });
-             }
-
-             if (stepAccepted) {
-                 const denom = Math.max(Math.abs(lastAcceptedCost), 1.0);
-                 const relDrop = Math.abs(lastAcceptedCost - new_cost) / denom;
-                 lastAcceptedCost = new_cost;
-                 ss_res = new_cost;
-                 if (relDrop < LM_COST_TOL) {
-                     if (++convergedRepeats >= LM_CONVERGED_REPEATS) break;
-                 } else {
-                     convergedRepeats = 0;
-                 }
-             }
-
-         } catch (error) {
-              console.error("Error during LM iteration:", iter, error);
-              postMessage({ type: 'error', message: `Error in LM iter ${iter}: ${error.message}` });
-              const errorParamInfo = paramMapping.map(m => ({
-                  name: m.name,
-                  scale: 1.0,
-                  typicalMagnitude: m.scale,
-                  isIntensity: m.isIntensity
-              }));
-              return { params: oldParams || params || initialParams,
-                       hklList: oldHklList || workingHklList || JSON.parse(JSON.stringify(hklList)),
-                       ss_res: ss_res, error: true, JtJ: finalJtJ,
-                       parameterInfo: errorParamInfo, algorithm: 'lm', fitFlags };
-         }
+            if (stepAccepted) {
+                const denom = Math.max(Math.abs(lastAcceptedCost), 1.0);
+                const relDrop = Math.abs(lastAcceptedCost - new_cost) / denom;
+                lastAcceptedCost = new_cost;
+                ss_res = new_cost;
+                if (relDrop < LM_COST_TOL) { if (++convergedRepeats >= LM_CONVERGED_REPEATS) break; }
+                else convergedRepeats = 0;
+            }
+        } catch (error) {
+            console.error("Error during LM iteration:", iter, error);
+            postMessage({ type: 'error', message: `Error in LM iter ${iter}: ${error.message}` });
+            return { params: oldParams || params || initialParams,
+                     hklList: oldHklList || workingHklList || JSON.parse(JSON.stringify(hklList)),
+                     ss_res, error: true, JtJ: null,
+                     parameterInfo: paramMapping.map(m => ({ name: m.name, scale: 1.0,
+                         typicalMagnitude: m.scale, isIntensity: m.isIntensity })),
+                     algorithm: 'lm', fitFlags };
+        }
     }
 
+    // Land on the best point seen.
     try {
         if (bestParams && isFinite(bestTrueCost)) {
-            const currentCost = evaluateResiduals(y_calc_baseline);
+            if (separable) touchProfile();
+            const currentCost = settleAndEvaluate();
             if (currentCost === null || currentCost > bestTrueCost) {
-                params = bestParams;
-                workingHklList = bestHkl;
+                params = bestParams; workingHklList = bestHkl;
+                if (separable) touchProfile();
             }
         }
-    } catch (err) {
-        console.warn("LM: could not compare the final point with the best one.", err);
-    }
-
-    try {
-        refreshLeBailIntensities();
-        const finalCost = evaluateResiduals(y_calc_baseline);
+        const finalCost = settleAndEvaluate();
         if (finalCost !== null) ss_res = finalCost;
-        const finalNormals = buildNormalEquations();
-        if (finalNormals) finalJtJ = finalNormals.JtJ;
     } catch (err) {
-        console.warn("LM: could not rebuild the normal equations at the final point; ESDs come from the last iteration.", err);
+        console.warn("LM: could not settle at the final point.", err);
     }
 
-     const finalCycleProgress = (leBailCycle + 1) / totalLeBailCycles;
-     postMessage({ type: 'progress', value: Math.min(1.0, finalCycleProgress) });
+    // -----------------------------------------------------------------------
+    //  FULL normal equations, ONCE, at the converged point.
+    //
+    //  The report's per-reflection ESDs, intensityOverlapClusters and the
+    //  charge-flipping hand-off all read the intensity block of J^T J, so it
+    //  still has to exist -- it just does not have to be rebuilt on every one
+    //  of forty iterations to get there.
+    // -----------------------------------------------------------------------
+    const fullMapping = getParameterMapping(fitFlags, params, workingHklList,
+                                            refinementMode, system, true).paramMapping;
+    const finalJtJ = buildFullNormalEquations(fullMapping, params, workingHklList, system,
+                                              refinementMode, sqrt_weights, residuals,
+                                              tthAxis, y_obs, scratch_bkg, scratch_pattern,
+                                              n_points, fitFlags);
 
-      const parameterInfoForMainThread = paramMapping.map(m => ({
-           name: m.name,
-           scale: 1.0,
-           typicalMagnitude: m.scale,
-           isIntensity: m.isIntensity
-      }));
-
-    // One last constraint pass before the result leaves the worker. `params`
-    // may have been rolled back to a saved best after the final evaluation, and
-    // a rollback restores the MASTER edge without re-deriving the slaved ones
-    // -- which is how a cubic fit came back reporting a = 8.13000 alongside
-    // b = c = 8.13081. Harmless to the pattern, which reads only `a`, and
-    // exactly the kind of inconsistency someone downstream would trust.
+    postMessage({ type: 'progress', value: postProgress(1) });
     enforceSymmetryConstraintsWorker(params, system);
 
     return {
-         params,
-         hklList: workingHklList,
-         JtJ: finalJtJ,
-         parameterInfo: parameterInfoForMainThread,
-         ss_res,
-         algorithm: 'lm',
-         fitFlags
+        params,
+        hklList: workingHklList,
+        JtJ: finalJtJ,
+        parameterInfo: fullMapping.map(m => ({ name: m.name, scale: 1.0,
+                                               typicalMagnitude: m.scale, isIntensity: m.isIntensity })),
+        ss_res,
+        degenerateReflections: lastDegenerate,
+        degenerateGroups: lastDegenerateGroups,
+        algorithm: 'lm',
+        fitFlags
     };
 }
+
+/**
+ * J^T J over the FULL parameter set, built once at a converged point.
+ *
+ * Intensity columns are analytic and local; everything else is a finite
+ * difference. Identical arithmetic to the old buildNormalEquations, minus the
+ * quadratic contribution scan (bucketed) and the dense boxed allocation.
+ *
+ * @returns {Array<Float64Array>|null}
+ */
+function buildFullNormalEquations(mapping, params, hklList, system, refinementMode,
+                                  sqrtW, residuals, tthAxis, y_obs, bkg, patternScratch,
+                                  n_points, fitFlags) {
+    const n = mapping.length;
+    if (n === 0) return null;
+    const n_peaks = hklList.length;
+
+    enforceSymmetryConstraintsWorker(params, system);
+    updateHklPositions(hklList, params, system);
+    const contributions = buildPeakContributions(tthAxis, hklList, params);
+    const buckets = bucketContributionsByPeak(contributions, n_peaks);
+    const win = peakWindows(buckets, n_peaks);
+
+    const baseline = new Float64Array(n_points);
+    calculatePatternCPU(tthAxis, hklList, params, patternScratch);
+    for (let i = 0; i < n_points; i++) baseline[i] = patternScratch[i] + bkg[i];
+    for (let i = 0; i < n_points; i++) residuals[i] = (y_obs[i] - baseline[i]) * sqrtW[i];
+
+    const columns = new Array(n);
+    const probe = new Float64Array(n_points);
+    const trial = new Float64Array(n_points);
+    const saved = new Float64Array(n_peaks);
+    for (let i = 0; i < n_peaks; i++) saved[i] = hklList[i] ? hklList[i].intensity : 0;
+
+    for (let p = 0; p < n; p++) {
+        const m = mapping[p];
+        if (m.isIntensity) {
+            const col = peakProfileColumn(tthAxis, buckets[m.index],
+                                          win.start[m.index], win.stop[m.index], sqrtW, null);
+            columns[p] = col ? { start: win.start[m.index], values: col }
+                             : { start: 0, values: new Float64Array(0) };
+            continue;
+        }
+        const v0 = m.get(params, hklList);
+        const mag = Math.max(Math.abs(v0), m.defaultScale || 0, 1e-9);
+        const h = Math.max(1e-9, mag * FD_BASE_FRACTION);
+        m.set(params, hklList, v0 + h);
+        const actual = m.get(params, hklList) - v0;
+        probe.fill(0);
+        if (actual !== 0) {
+            enforceSymmetryConstraintsWorker(params, system);
+            updateHklPositions(hklList, params, system);
+            if (m.isBackground) {
+                calculateTotalBackground(tthAxis, params, workerBackgroundAnchors, trial);
+                for (let i = 0; i < n_points; i++) trial[i] += patternScratch[i];
+            } else {
+                calculatePatternCPU(tthAxis, hklList, params, trial);
+                for (let i = 0; i < n_points; i++) trial[i] += bkg[i];
+            }
+            for (let i = 0; i < n_points; i++) probe[i] = (trial[i] - baseline[i]) / actual * sqrtW[i];
+        }
+        m.set(params, hklList, v0);
+        for (let i = 0; i < n_peaks; i++) if (hklList[i]) hklList[i].intensity = saved[i];
+        enforceSymmetryConstraintsWorker(params, system);
+        updateHklPositions(hklList, params, system);
+        columns[p] = { start: 0, values: probe.slice() };
+    }
+
+    // PLAIN Array rows, not Float64Array.
+    //
+    // This matrix crosses into the main thread and is consumed by four places
+    // that all test it with `Array.isArray(JtJ[0])` -- which is FALSE for a
+    // typed array. Returning Float64Array rows made generateReportContent
+    // throw "JtJ matrix has incorrect dimensions or format", and made
+    // intensityEsdsFromCovariance and intensityOverlapClusters return null
+    // WITHOUT SAYING ANYTHING. It also matters for serialisation:
+    // JSON.stringify turns a Float64Array into {"0":..,"1":..}, not an array,
+    // so an exported matrix would come back as objects.
+    //
+    // There is no cost. A `new Array(n)` holding only doubles is
+    // PACKED_DOUBLE_ELEMENTS in V8 -- the same 8 bytes an element -- and this
+    // is built once at the converged point, not per iteration.
+    const JtJ = new Array(n);
+    for (let i = 0; i < n; i++) JtJ[i] = new Array(n).fill(0);
+    for (let i = 0; i < n; i++) {
+        const ci = columns[i];
+        for (let j = i; j < n; j++) {
+            const cj = columns[j];
+            const lo = Math.max(ci.start, cj.start);
+            const hi = Math.min(ci.start + ci.values.length, cj.start + cj.values.length);
+            let s = 0;
+            for (let k = lo; k < hi; k++) s += ci.values[k - ci.start] * cj.values[k - cj.start];
+            if (!isFinite(s)) s = 0;
+            JtJ[i][j] = s; JtJ[j][i] = s;
+        }
+    }
+    return JtJ;
+}
+
 // ---------------------------------------------------------------------------
 //  MOVED. LEBAIL_PT_REFRESH_INTERVAL and the PT ladder constants
 //  (PT_NUM_REPLICAS, PT_MAX_TEMP, PT_MIN_TEMP, PT_SWAP_INTERVAL,
@@ -1434,332 +1440,233 @@ if (cost < bestTrueCost) {
 // ---------------------------------------------------------------------------
 
 
-function refineParametersPT(initialParams, fitFlags, maxIter, hklList, system, refinementMode, leBailCycle = 0, totalLeBailCycles = 1) {
-    const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList, refinementMode, system);
+function refineParametersPT(initialParams, fitFlags, maxIter, hklList, system, refinementMode,
+                            leBailCycle = 0, totalLeBailCycles = 1, progressWindow = null) {
+    const separable = (refinementMode === 'pawley');
+    const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList,
+                                                 refinementMode, system, false,
+                                                 { excludeIntensities: separable });
+
+    const baseProgress = progressWindow ? progressWindow.base : (leBailCycle / totalLeBailCycles);
+    const cycleProgressSpan = progressWindow ? progressWindow.span : (1 / totalLeBailCycles);
+    const postProgress = (f) => Math.min(1.0, baseProgress + Math.max(0, Math.min(1, f)) * cycleProgressSpan);
+
     if (paramMapping.length === 0) {
-         const finalProgress = (leBailCycle + 1) / totalLeBailCycles;
-         postMessage({ type: 'progress', value: Math.min(1.0, finalProgress) });
-        return { params: initialParams, hklList: hklList, ss_res: 0 };
+        postMessage({ type: 'progress', value: postProgress(1) });
+        return { params: initialParams, hklList, ss_res: 0 };
     }
 
-    // The ladder itself lives in constants.js, with the reasoning for each
-    // value (replica count vs neighbour swap acceptance, what T = 1 and
-    // T = 1e-5 mean in units of the relative cost scale below).
-    const numReplicas  = PT_NUM_REPLICAS;
-    const maxTemp      = PT_MAX_TEMP;
-    const minTemp      = PT_MIN_TEMP;
-    const swapInterval = PT_SWAP_INTERVAL;
-
-
-const n_points = workerWorkingData.tth.length;
-    const scratch_bkg = new Float64Array(n_points);
-    calculateTotalBackground(workerWorkingData.tth, initialParams, workerBackgroundAnchors, scratch_bkg);
-    const scratch_pattern = new Float64Array(n_points);
-
-    const objective = (p_obj, hkl_list_obj) => {
-         try {
-        
- enforceSymmetryConstraintsWorker(p_obj, system); 
-            updateHklPositions(hkl_list_obj, p_obj, system);
-            
-            if (fitFlags && fitFlags.fitBackground) {
-                calculateTotalBackground(workerWorkingData.tth, p_obj, workerBackgroundAnchors, scratch_bkg);
-            }
-
-            const netCalcPattern = calculatePatternCPU(workerWorkingData.tth, hkl_list_obj, p_obj, scratch_pattern);
-             let sum_w_res_sq = 0;
-             for (let i = 0; i < workerWorkingData.tth.length; i++) {
-                  const w_i = workerWorkingData.weights[i];
-                  const res = workerWorkingData.intensity[i] - (netCalcPattern[i] + scratch_bkg[i]);             
-
-
-
-                  if (isFinite(w_i) && isFinite(res)) {
-                        sum_w_res_sq += w_i * res * res;
-                   } else {
-                       return 1e12;
-                   }
-             }
-             return isFinite(sum_w_res_sq) ? sum_w_res_sq : 1e12;
-         } catch (err) {
-              console.warn("PT objective function error:", err);
-              return 1e12;
-         }
+    // The iteration count is whatever was asked for. PT proposes one scalar
+    // per replica per iteration, so each parameter gets
+    // maxIter * PT_NUM_REPLICAS / n_params proposals; the report states that
+    // number and leaves the judgement to the person who set it.
+    const ptIterations = {
+        used: maxIter,
+        nParams: paramMapping.length,
+        proposalsPerParam: (maxIter * PT_NUM_REPLICAS) / paramMapping.length
     };
 
-    // Re-extract this replica's Le Bail intensities at its own parameters, then
-    // requote its cost against the new intensities. In Pawley mode the
-    // intensities are refined parameters, so there is nothing to extract and
-    // this just refreshes the cost.
-    const refreshReplica = (rep) => {
+    const tthAxis = workerWorkingData.tth;
+    const y_obs = workerWorkingData.intensity;
+    const n_points = tthAxis.length;
+    const n_peaks = hklList.length;
 
+    const sqrtW = new Float64Array(n_points);
+    for (let i = 0; i < n_points; i++) sqrtW[i] = Math.sqrt(workerWorkingData.weights[i]);
 
-if (refinementMode === 'le-bail') {
+    const scratch_bkg = new Float64Array(n_points);
+    const scratch_pattern = new Float64Array(n_points);
+    const scratch_net = new Float64Array(n_points);
+    const scratch_cost = new Float64Array(n_points);
+    calculateTotalBackground(tthAxis, initialParams, workerBackgroundAnchors, scratch_bkg);
+
+    // One linear-solve working set per replica: the skyline envelope depends
+    // on that replica's own profile, so they cannot share a cache.
+    const caches = Array.from({ length: PT_NUM_REPLICAS + 1 }, () => ({}));
+
+    /**
+     * Cost at a replica's parameters. In Pawley mode the intensities are the
+     * exact linear solution at those parameters -- i.e. this is the REDUCED
+     * objective, the one whose minimiser in theta is the true minimiser.
+     */
+    const objective = (p_obj, hkl_list_obj, cache) => {
+        try {
+            enforceSymmetryConstraintsWorker(p_obj, system);
+            updateHklPositions(hkl_list_obj, p_obj, system);
+            if (fitFlags && fitFlags.fitBackground) {
+                calculateTotalBackground(tthAxis, p_obj, workerBackgroundAnchors, scratch_bkg);
+            }
+            if (separable) {
+                for (let i = 0; i < n_points; i++) scratch_net[i] = y_obs[i] - scratch_bkg[i];
+                const contributions = buildPeakContributions(tthAxis, hkl_list_obj, p_obj);
+                const buckets = bucketContributionsByPeak(contributions, n_peaks);
+                const win = peakWindows(buckets, n_peaks);
+                cache.first = null; cache.A = null;
+                const sol = solvePawleyIntensities(tthAxis, buckets, win, sqrtW, scratch_net, cache);
+                if (!sol) return 1e12;
+                for (let j = 0; j < n_peaks; j++) if (hkl_list_obj[j]) hkl_list_obj[j].intensity = sol.I[j];
+                const c = weightedCostFromColumns(sol.I, sol.cols, win, sqrtW, scratch_net, scratch_cost);
+                return isFinite(c) ? c : 1e12;
+            }
+            const net = calculatePatternCPU(tthAxis, hkl_list_obj, p_obj, scratch_pattern);
+            let s = 0;
+            for (let i = 0; i < n_points; i++) {
+                const w = workerWorkingData.weights[i];
+                const r = y_obs[i] - (net[i] + scratch_bkg[i]);
+                if (!isFinite(w) || !isFinite(r)) return 1e12;
+                s += w * r * r;
+            }
+            return isFinite(s) ? s : 1e12;
+        } catch (err) {
+            console.warn("PT objective error:", err);
+            return 1e12;
+        }
+    };
+
+    const refreshReplica = (rep, cache) => {
+        if (refinementMode === 'le-bail') {
             enforceSymmetryConstraintsWorker(rep.params, system);
             updateHklPositions(rep.hklList, rep.params, system);
-            
             if (fitFlags && fitFlags.fitBackground) {
-                calculateTotalBackground(workerWorkingData.tth, rep.params, workerBackgroundAnchors, scratch_bkg);
+                calculateTotalBackground(tthAxis, rep.params, workerBackgroundAnchors, scratch_bkg);
             }
-
             leBailIntensityExtraction(
-                { tth: workerWorkingData.tth, intensity: workerWorkingData.intensity,
-                  background: scratch_bkg, weights: workerWorkingData.weights },
+                { tth: tthAxis, intensity: y_obs, background: scratch_bkg,
+                  weights: workerWorkingData.weights },
                 rep.hklList, rep.params, scratch_pattern);
         }
-       
-       
-       
-        rep.cost = objective(rep.params, rep.hklList);
+        rep.cost = objective(rep.params, rep.hklList, cache);
         return rep.cost;
     };
 
-    // Templates, captured before anything mutates them.
     const paramTemplate = JSON.parse(JSON.stringify(initialParams));
-    const hklTemplate   = JSON.parse(JSON.stringify(hklList));
+    const hklTemplate = JSON.parse(JSON.stringify(hklList));
 
-    // Seed the intensities once from the starting parameters.
-    const seed = { params: initialParams, hklList: hklList, cost: Infinity, temp: 0 };
-    const initialCost = refreshReplica(seed);
+    const seed = { params: initialParams, hklList, cost: Infinity, temp: 0 };
+    const initialCost = refreshReplica(seed, caches[PT_NUM_REPLICAS]);
 
-    const temperatures = Array.from({ length: numReplicas }, (_, i) =>
-        maxTemp * Math.pow(minTemp / maxTemp, i / (numReplicas - 1 || 1))
-    );
+    const temperatures = Array.from({ length: PT_NUM_REPLICAS }, (_, i) =>
+        PT_MAX_TEMP * Math.pow(PT_MIN_TEMP / PT_MAX_TEMP, i / (PT_NUM_REPLICAS - 1 || 1)));
 
-    // ---------------------------------------------------------------------
-    //  One reference energy scale shared by BOTH acceptance tests.
-    //
-    //  Why a scale at all. Previously the local Metropolis step divided by the
-    //  replica's own CURRENT cost (relative scale) while the replica-exchange
-    //  test used the raw cost difference (absolute scale). With chi-square
-    //  values of 1e5-1e7 counts the swap exponent saturated, so exchanges were
-    //  accepted either always or never and the run degenerated into 8
-    //  independent annealers rather than parallel tempering. Dividing both
-    //  tests by one shared scale makes the temperature ladder RELATIVE:
-    //  exp(-(dChi2/scale)/T). At T = PT_MAX_TEMP = 1 a move that doubles
-    //  chi-square is accepted with probability e^-1, which is the definition of
-    //  a chain that explores freely; at T = PT_MIN_TEMP = 1e-5 a 0.01% increase
-    //  is already rejected almost surely.
-    //
-    //  NOTE, because this looks like a bug and is not: costScale is of order
-    //  chi-square itself (1e5-1e7). That is deliberate. Setting it to 1 and
-    //  using the raw chi-square difference would put the exponent at
-    //  -1e6/T for every uphill move, freezing every chain in the ladder
-    //  solid -- including the hot end whose entire job is to move.
-    //
-    //  BUG FIX (stale scale). The scale used to be frozen at initialCost for
-    //  the whole run. A successful global search drops chi-square by one to two
-    //  orders of magnitude, and a frozen scale then means the ladder is
-    //  silently 10-100x hotter in relative terms than it was designed to be:
-    //  the cold replicas stop being cold, and PT loses the exploit end of its
-    //  explore/exploit balance exactly when it is closing in on a solution.
-    //
-    //  It cannot simply be re-quoted continuously: a cost-dependent denominator
-    //  that moves under the chain's feet on every step breaks detailed balance.
-    //  So it is re-quoted ONLY at the periodic Le Bail refresh boundaries --
-    //  points at which the objective function is ALREADY being redefined and
-    //  every replica cost re-quoted anyway, so no additional damage is done --
-    //  and only when the cost has moved by more than PT_RESCALE_THRESHOLD.
-    //  Between two refreshes the acceptance criterion is exactly constant,
-    //  which is the condition the Metropolis argument actually needs.
-    // ---------------------------------------------------------------------
     let costScale = Math.max(PT_COST_SCALE_FLOOR, Math.abs(initialCost));
-
-    /**
-     * Re-quotes costScale from the current replica costs, if they have moved
-     * far enough to matter. Call ONLY where every replica cost is being
-     * re-quoted anyway.
-     * @param {Array<{cost: number}>} reps
-     * @returns {boolean} True if the scale was changed.
-     */
     const maybeRescaleCost = (reps) => {
         let sum = 0, n = 0;
-        for (const r of reps) {
-            if (r && isFinite(r.cost)) { sum += Math.abs(r.cost); n++; }
-        }
+        for (const r of reps) if (r && isFinite(r.cost)) { sum += Math.abs(r.cost); n++; }
         if (n === 0) return false;
         const proposed = Math.max(PT_COST_SCALE_FLOOR, sum / n);
-        // Only act on a change of regime, not on Monte Carlo jitter.
         const ratio = proposed / costScale;
-        if (ratio > (1 - PT_RESCALE_THRESHOLD) && ratio < 1 / (1 - PT_RESCALE_THRESHOLD)) {
-            return false;
-        }
+        if (ratio > (1 - PT_RESCALE_THRESHOLD) && ratio < 1 / (1 - PT_RESCALE_THRESHOLD)) return false;
         costScale = proposed;
         return true;
     };
 
-    let replicas = temperatures.map(temp => ({
+    const replicas = temperatures.map(temp => ({
         params: JSON.parse(JSON.stringify(initialParams)),
         hklList: JSON.parse(JSON.stringify(hklList)),
-        cost: initialCost,
-        temp: temp
+        cost: initialCost, temp
     }));
 
-    // PERF FIX: the best state is stored as the mapped PARAMETER VECTOR, not as
-    // a deep clone of params + hklList. Only mapped scalars are ever perturbed,
-    // so the vector plus the templates reconstructs the state exactly (slaved
-    // parameters and peak positions are recomputed from it). The old code ran
-    // `JSON.parse(JSON.stringify(replica.hklList))` on every improvement, which
-    // early in a run is most moves of most replicas -- a full JSON round-trip of
-    // every reflection, dominating the whole search.
     let bestVector = paramMapping.map(m => m.get(initialParams, hklList));
     let bestOverallCost = initialCost;
 
-    // Scratch replica used to requote the best cost after a refresh.
-    const probe = {
-        params: JSON.parse(JSON.stringify(paramTemplate)),
-        hklList: JSON.parse(JSON.stringify(hklTemplate)),
-        cost: Infinity, temp: 0
-    };
+    const probe = { params: JSON.parse(JSON.stringify(paramTemplate)),
+                    hklList: JSON.parse(JSON.stringify(hklTemplate)), cost: Infinity, temp: 0 };
     const requoteBest = () => {
         paramMapping.forEach((m, i) => m.set(probe.params, probe.hklList, bestVector[i]));
-        return refreshReplica(probe);
+        return refreshReplica(probe, caches[PT_NUM_REPLICAS]);
     };
 
-    const baseProgress = leBailCycle / totalLeBailCycles;
-    const cycleProgressSpan = 1 / totalLeBailCycles;
-    let lastProgressPct = -1;
-    let consecutiveErrors = 0;
+    let lastProgressPct = -1, consecutiveErrors = 0;
 
     for (let iter = 0; iter < maxIter; iter++) {
-         try {
-             // Periodic Le Bail re-extraction (see LEBAIL_PT_REFRESH_INTERVAL).
-             if (refinementMode === 'le-bail' && iter > 0 &&
-                 iter % LEBAIL_PT_REFRESH_INTERVAL === 0) {
-                 for (let i = 0; i < numReplicas; i++) refreshReplica(replicas[i]);
-                 // The objective just changed, so the stored best cost is no
-                 // longer comparable with the replicas'. Requote it.
-                 bestOverallCost = requoteBest();
-                 // This is the ONE point in the run where the acceptance
-                 // criterion may change without breaking detailed balance --
-                 // the objective has just been redefined regardless. See the
-                 // long note on costScale.
-                 maybeRescaleCost(replicas);
-             }
+        try {
+            if (refinementMode === 'le-bail' && iter > 0 && iter % LEBAIL_PT_REFRESH_INTERVAL === 0) {
+                for (let i = 0; i < PT_NUM_REPLICAS; i++) refreshReplica(replicas[i], caches[i]);
+                bestOverallCost = requoteBest();
+                maybeRescaleCost(replicas);
+            }
 
-             for (let i = 0; i < numReplicas; i++) {
-                 let replica = replicas[i];
+            for (let i = 0; i < PT_NUM_REPLICAS; i++) {
+                const replica = replicas[i];
+                const mapping = paramMapping[Math.floor(Math.random() * paramMapping.length)];
+                const original_val = mapping.get(replica.params, replica.hklList);
 
-                 const p_idx = Math.floor(Math.random() * paramMapping.length);
-                 const mapping = paramMapping[p_idx];
-                 const original_val = mapping.get(replica.params, replica.hklList);
+                const step_scale = Math.max(0.01, replica.temp);
+                const step_size = (mapping.step || 0.05) * step_scale * mapping.scale;
+                const proposed = original_val + (Math.random() - 0.5) * 2 * step_size;
 
-                 // A move perturbs exactly ONE scalar, so rolling it back only
-                 // needs that scalar: everything else objective() touches
-                 // (symmetry-slaved params, peak positions) is recomputed from
-                 // scratch on the next call. In Pawley mode the perturbed scalar
-                 // may itself be an intensity, but mapping.set restores it.
-                 const step_scale = Math.max(0.01, replica.temp);
-                 const step_size = (mapping.step || 0.05) * step_scale * mapping.scale;
-                 const random_step = (Math.random() - 0.5) * 2 * step_size;
-                 const proposed = original_val + random_step;
+                const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
+                const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
+                if (!(proposed >= minV && proposed <= maxV)) continue;   // reject, do not clamp
 
-                 // FIX: an out-of-bounds proposal is REJECTED, not clamped.
-                 // mapping.set clamps, which makes the proposal distribution
-                 // asymmetric, breaks detailed balance and piles samples up
-                 // against the bound.
-            
+                mapping.set(replica.params, replica.hklList, proposed);
+                const neighbor_cost = objective(replica.params, replica.hklList, caches[i]);
+                const delta_cost = neighbor_cost - replica.cost;
+                const acceptance_prob = (replica.temp > 1e-9)
+                    ? Math.exp(Math.max(-700, -delta_cost / (costScale * replica.temp))) : 0;
 
-                 const minV = (mapping.minVal !== undefined) ? mapping.minVal : -Infinity;
-                 const maxV = (mapping.maxVal !== undefined) ? mapping.maxVal : Infinity;
-                 
-                 if (proposed >= minV && proposed <= maxV) {
-                     mapping.set(replica.params, replica.hklList, proposed);
+                if (delta_cost < 0 || acceptance_prob > Math.random()) {
+                    replica.cost = neighbor_cost;
+                } else {
+                    mapping.set(replica.params, replica.hklList, original_val);
+                }
 
-                     const neighbor_cost = objective(replica.params, replica.hklList);
-                     const delta_cost = neighbor_cost - replica.cost;
+                if (replica.cost < bestOverallCost) {
+                    bestOverallCost = replica.cost;
+                    for (let k = 0; k < paramMapping.length; k++) {
+                        bestVector[k] = paramMapping[k].get(replica.params, replica.hklList);
+                    }
+                }
+            }
 
-                     const acceptance_prob = (replica.temp > 1e-9)
-                         ? Math.exp(Math.max(-700, -delta_cost / (costScale * replica.temp)))
-                         : 0;
-                         
-                     if (delta_cost < 0 || acceptance_prob > Math.random()) {
-                         replica.cost = neighbor_cost;
-                     } else {
-                         mapping.set(replica.params, replica.hklList, original_val);
-                     }
+            if (iter > 0 && iter % PT_SWAP_INTERVAL === 0) {
+                for (let i = 0; i < PT_NUM_REPLICAS - 1; i++) {
+                    const r1 = replicas[i], r2 = replicas[i + 1];
+                    if (Math.abs(r1.temp - r2.temp) < 1e-9) continue;
+                    const dBeta = (1 / r1.temp) - (1 / r2.temp);
+                    const dCost = (r1.cost - r2.cost) / costScale;
+                    if (Math.exp(Math.max(-700, Math.min(50, dBeta * dCost))) > Math.random()) {
+                        [r1.params, r2.params] = [r2.params, r1.params];
+                        [r1.hklList, r2.hklList] = [r2.hklList, r1.hklList];
+                        [r1.cost, r2.cost] = [r2.cost, r1.cost];
+                        // The caches follow their replicas: each holds a
+                        // skyline envelope derived from that state's profile.
+                        [caches[i], caches[i + 1]] = [caches[i + 1], caches[i]];
+                    }
+                }
+            }
 
-                     if (replica.cost < bestOverallCost) {
-                         bestOverallCost = replica.cost;
-                         for (let k = 0; k < paramMapping.length; k++) {
-                             bestVector[k] = paramMapping[k].get(replica.params, replica.hklList);
-                         }
-                     }
-                 }
-
-
-             }
-
-             if (iter > 0 && iter % swapInterval === 0) {
-                 for (let i = 0; i < numReplicas - 1; i++) {
-                     const rep1 = replicas[i];
-                     const rep2 = replicas[i + 1];
-
-                     if (Math.abs(rep1.temp - rep2.temp) < 1e-9) continue;
-
-                     const delta_beta = (1 / rep1.temp) - (1 / rep2.temp);
-                     const delta_cost = (rep1.cost - rep2.cost) / costScale;   // same scale as the local step
-                     const acceptance_prob_swap = Math.exp(Math.max(-700, Math.min(50, delta_beta * delta_cost)));
-
-                     if (acceptance_prob_swap > Math.random()) {
-                         [rep1.params, rep2.params] = [rep2.params, rep1.params];
-                         [rep1.hklList, rep2.hklList] = [rep2.hklList, rep1.hklList];
-                         [rep1.cost, rep2.cost] = [rep2.cost, rep1.cost];
-                     }
-                 }
-             }
-
-             // Throttled, as in LM: only post on whole-percent changes.
-             const overallProgress = Math.min(1.0, baseProgress + ((iter + 1) / maxIter) * cycleProgressSpan);
-             const pct = Math.floor(overallProgress * 100);
-             if (pct !== lastProgressPct) {
-                 lastProgressPct = pct;
-                 postMessage({ type: 'progress', value: overallProgress });
-             }
-             consecutiveErrors = 0;
-
-         } catch (error) {
-              // The old handler posted an error EVERY iteration, so a persistent
-              // fault produced maxIter error toasts and kept burning CPU. Give up
-              // after a few consecutive failures.
-              console.error("Error during PT iteration:", iter, error);
-              consecutiveErrors++;
-              if (consecutiveErrors >= 5) {
-                  postMessage({ type: 'error', message: `PT aborted at iteration ${iter}: ${error.message}` });
-                  break;
-              }
-         }
-
+            const pct = Math.floor(postProgress((iter + 1) / maxIter) * 100);
+            if (pct !== lastProgressPct) {
+                lastProgressPct = pct;
+                postMessage({ type: 'progress', value: postProgress((iter + 1) / maxIter) });
+            }
+            consecutiveErrors = 0;
+        } catch (error) {
+            console.error("Error during PT iteration:", iter, error);
+            if (++consecutiveErrors >= 5) {
+                postMessage({ type: 'error', message: `PT aborted at iteration ${iter}: ${error.message}` });
+                break;
+            }
+        }
     }
 
-     // Reconstruct the best state from the stored vector and re-extract its
-     // intensities, so the returned hklList belongs to the returned parameters.
-     const bestOverallParams  = JSON.parse(JSON.stringify(paramTemplate));
-     const bestOverallHklList = JSON.parse(JSON.stringify(hklTemplate));
-     paramMapping.forEach((m, i) => m.set(bestOverallParams, bestOverallHklList, bestVector[i]));
-     const finalCost = refreshReplica({ params: bestOverallParams, hklList: bestOverallHklList,
-                                        cost: Infinity, temp: 0 });
+    const bestOverallParams = JSON.parse(JSON.stringify(paramTemplate));
+    const bestOverallHklList = JSON.parse(JSON.stringify(hklTemplate));
+    paramMapping.forEach((m, i) => m.set(bestOverallParams, bestOverallHklList, bestVector[i]));
+    const finalCost = refreshReplica({ params: bestOverallParams, hklList: bestOverallHklList,
+                                       cost: Infinity, temp: 0 }, caches[PT_NUM_REPLICAS]);
 
-     const finalCycleProgress = (leBailCycle + 1) / totalLeBailCycles;
-     postMessage({ type: 'progress', value: Math.min(1.0, finalCycleProgress) });
-
-      const parameterInfoForMainThread = paramMapping.map(m => ({
-           name: m.name,
-           scale: m.scale,
-           isIntensity: m.isIntensity
-      }));
-
-
-    // Same reason as in refineParametersLM: the returned parameter set is a
-    // saved snapshot, so re-derive the slaved cell edges from it.
+    postMessage({ type: 'progress', value: postProgress(1) });
     enforceSymmetryConstraintsWorker(bestOverallParams, system);
 
     return {
         params: bestOverallParams,
         hklList: bestOverallHklList,
         algorithm: 'pt',
-        parameterInfo: parameterInfoForMainThread,
+        parameterInfo: paramMapping.map(m => ({ name: m.name, scale: m.scale, isIntensity: m.isIntensity })),
         fitFlags,
+        ptIterations,
         ss_res: isFinite(finalCost) ? finalCost : bestOverallCost
     };
 }
@@ -1772,17 +1679,20 @@ if (refinementMode === 'le-bail') {
  */
 function polishWithLM(ptResults, fitFlags, hklList, system, refinementMode, maxIterations) {
     if (!ptResults || !ptResults.params || !ptResults.hklList) return ptResults;
-    const polishIters = Math.max(10, Math.min(40, Math.round(maxIterations / 5)));
+    const polishIters = Math.max(20, Math.min(120, Math.round(maxIterations / 2)));
     try {
-        postMessage({ type: 'progress', value: 0.98, message: 'Converging with Levenberg-Marquardt...' });
+        postMessage({ type: 'progress', value: 0.90, message: 'Converging with Levenberg-Marquardt...' });
         const lm = refineParametersLM(
             JSON.parse(JSON.stringify(ptResults.params)), fitFlags, polishIters,
-            ptResults.hklList, system, refinementMode, 0, 1);
+            ptResults.hklList, system, refinementMode, 0, 1,
+            { base: 0.90, span: 0.10 });
         if (lm && !lm.error && lm.params && lm.hklList) {
-            return Object.assign({}, lm, { algorithm: 'pt+lm' });
+            // ptIterations belongs to the PT stage and is not regenerated by
+            // the polish, so carry it across rather than letting the merge
+            // drop it.
+            return Object.assign({}, lm, { algorithm: 'pt+lm',
+                                           ptIterations: ptResults.ptIterations });
         }
-        // LM failed outright; keep PT's answer, but pass its normal-equations
-        // matrix through if it managed to build one, so ESDs are still available.
         if (lm && lm.JtJ) {
             return Object.assign({}, ptResults, {
                 JtJ: lm.JtJ, parameterInfo: lm.parameterInfo, algorithm: 'pt'
@@ -1794,7 +1704,6 @@ function polishWithLM(ptResults, fitFlags, hklList, system, refinementMode, maxI
     return ptResults;
 }
 
-
 //   Parameter Mapping (Helper)  
 /**
  * Build the list of refinable parameters.
@@ -1805,6 +1714,8 @@ function polishWithLM(ptResults, fitFlags, hklList, system, refinementMode, maxI
  * @param {string} refinementMode  'pawley' | 'le-bail'
  * @param {string} system
  * @param {boolean} [quiet=false]  Suppress the postMessage warnings.
+ * @param {{excludeIntensities?: boolean}} [opts={}]  excludeIntensities omits
+ *        the Pawley intensity parameters; they are solved exactly instead.
  *        calculateStatistics calls this purely to COUNT parameters, at the end
  *        of a fit that has already run. Without this flag the user was shown
  *        the whole "parameter X is fixed by symmetry / has no valid value"
@@ -1813,7 +1724,8 @@ function polishWithLM(ptResults, fitFlags, hklList, system, refinementMode, maxI
  *        given when the refinement started.
  * @returns {{paramMapping: object[]}}
  */
-function getParameterMapping(fitFlags, initialParams, hklList, refinementMode, system, quiet = false) {
+function getParameterMapping(fitFlags, initialParams, hklList, refinementMode, system,
+                             quiet = false, opts = {}) {
     const mappings = [];
     const warn = (msg) => {
         if (quiet) return;
@@ -1926,7 +1838,12 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode, s
 
     //   Pawley Intensity Parameters  
     // Raw-space (see NOTE above createMapping).
-     if (refinementMode === 'pawley' && hklList && workerWorkingData && workerWorkingData.tth && workerWorkingData.tth.length > 0) {
+     // opts.excludeIntensities: the separable (variable-projection) path in
+     // refineParametersLM / refineParametersPT solves the intensities exactly
+     // instead of iterating them, so they must not appear in the LM search
+     // space. Every other caller leaves opts empty and is unaffected.
+     if (refinementMode === 'pawley' && !opts.excludeIntensities &&
+         hklList && workerWorkingData && workerWorkingData.tth && workerWorkingData.tth.length > 0) {
           const tthMin = workerWorkingData.tth[0];
           const tthMax = workerWorkingData.tth[workerWorkingData.tth.length - 1];
 
@@ -2174,9 +2091,16 @@ self.onmessage = async function(e) {
             }
 
             if (algorithm === 'lm') {
-                finalResults = refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
-            } else { 
-                finalResults = refineParametersPT(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
+                finalResults = refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList,
+                                                  system, refinementMode, 0, 1, { base: 0.05, span: 0.95 });
+            } else {
+                // PT owns 5%-90%, the LM polish owns 90%-100%. Previously both
+                // ran on (iter+1)/maxIter, so the bar reached 98% at the end of
+                // PT and then RESET to 2% and crawled up again through the
+                // polish. Nothing was wrong; the run just looked wedged, which
+                // is what "the polishing LM seems stuck" actually was.
+                finalResults = refineParametersPT(currentParams, fitFlags, maxIterations, currentHklList,
+                                                  system, refinementMode, 0, 1, { base: 0.05, span: 0.85 });
                 finalResults = polishWithLM(finalResults, fitFlags, currentHklList, system, refinementMode, maxIterations);
             }
             if (!finalResults || finalResults.error) {
@@ -2202,9 +2126,16 @@ self.onmessage = async function(e) {
              }
             
             if (algorithm === 'lm') {
-                finalResults = refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
-            } else { 
-                finalResults = refineParametersPT(currentParams, fitFlags, maxIterations, currentHklList, system, refinementMode, 0, 1);
+                finalResults = refineParametersLM(currentParams, fitFlags, maxIterations, currentHklList,
+                                                  system, refinementMode, 0, 1, { base: 0.05, span: 0.95 });
+            } else {
+                // PT owns 5%-90%, the LM polish owns 90%-100%. Previously both
+                // ran on (iter+1)/maxIter, so the bar reached 98% at the end of
+                // PT and then RESET to 2% and crawled up again through the
+                // polish. Nothing was wrong; the run just looked wedged, which
+                // is what "the polishing LM seems stuck" actually was.
+                finalResults = refineParametersPT(currentParams, fitFlags, maxIterations, currentHklList,
+                                                  system, refinementMode, 0, 1, { base: 0.05, span: 0.85 });
                 finalResults = polishWithLM(finalResults, fitFlags, currentHklList, system, refinementMode, maxIterations);
             }
 
@@ -2244,6 +2175,12 @@ self.onmessage = async function(e) {
             fitFlags: finalResults.fitFlags || fitFlags,
             parameterInfo: finalResults.parameterInfo || [],
             JtJ: finalResults.JtJ || null,
+            // Reflections whose pivot in the intensity normal matrix had to be
+            // propped up: no data separates them from a coincident neighbour,
+            // so only their group SUM is determined. The report names them.
+            degenerateReflections: finalResults.degenerateReflections || [],
+            ptIterations: finalResults.ptIterations || null,
+            degenerateGroups: finalResults.degenerateGroups || [],
             ss_res: finalResults.ss_res,
             dof: finalStats.dof,
             nIntensities: finalStats.nIntensities

@@ -1,114 +1,156 @@
+/**
+ * A PDF from monospaced text, optionally followed by the main chart.
+ *
+ * The body of generatePdfReport() was a text-layout loop and a canvas grab
+ * with no dependence on what produced the text, so it is now shared. The
+ * theoretical-pattern export (no data loaded, no fit) needs exactly this and
+ * nothing else; duplicating forty lines of jsPDF layout to get it would have
+ * meant two places to keep in step over page breaks and the WinAnsi
+ * transliteration.
+ *
+ * @param {string} text        Report body. Lines starting '---' are headed.
+ * @param {string} filename    Without the .pdf extension.
+ * @param {boolean} [withChart=true] Append the main chart on its own page.
+ */
+function renderTextPdf(text, filename, withChart = true) {
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+        throw new Error('jspdf.umd.min.js was not loaded. It belongs at lib/jspdf.umd.min.js, next to the other vendor bundles.');
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+    const margin = 15;
+    const contentWidth = doc.internal.pageSize.getWidth() - 2 * margin;
+    let yPosition = 20;
+
+    // jsPDF's built-in fonts are WinAnsi, so anything outside it renders as a
+    // blank or a mojibake box.
+    const pdfText = String(text)
+        .replace(/χ²/g, 'Chi^2').replace(/°/g, 'deg').replace(/β/g, 'Beta')
+        .replace(/θ/g, 'th').replace(/η/g, 'eta').replace(/λ/g, 'lambda')
+        .replace(/σ/g, 'sigma').replace(/Å/g, 'A').replace(/²/g, '^2')
+        .replace(/·/g, '.').replace(/[–—]/g, '-')
+        .replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+
+    doc.setFont('Courier');
+    for (const line of pdfText.split('\n')) {
+        if (yPosition > doc.internal.pageSize.getHeight() - 20) { doc.addPage(); yPosition = 20; }
+        const isHeader = line.startsWith('---');
+        const isTitle = line.includes('Refinement Report') || line.includes('Theoretical HKL');
+        let fontSize = 9, fontStyle = 'normal';
+        if (isTitle) { fontSize = 14; fontStyle = 'bold'; yPosition += 6; }
+        else if (isHeader) { fontSize = 10; fontStyle = 'bold'; yPosition += 4; }
+        doc.setFontSize(fontSize);
+        doc.setFont(undefined, fontStyle);
+
+        // A Courier line wider than the text width is silently CLIPPED by
+        // jsPDF -- columns would just vanish off the right edge. Shrink the
+        // offending line instead; monospace keeps the row aligned.
+        try {
+            const w = doc.getTextWidth(line);
+            if (w > contentWidth && w > 0) doc.setFontSize(Math.max(4.5, fontSize * (contentWidth / w)));
+        } catch { /* getTextWidth unavailable: keep the full size */ }
+
+        doc.text(line, margin, yPosition);
+        doc.setFontSize(fontSize);
+        yPosition += fontSize * 0.4;
+    }
+
+    if (withChart && typeof controls !== 'undefined' && controls.mainChartCanvas) {
+        const chartCanvas = controls.mainChartCanvas;
+        doc.addPage();
+        // Composite onto white first: the chart canvas is transparent, and a
+        // transparent PNG in a PDF renders as black in several viewers.
+        const tmp = document.createElement('canvas');
+        tmp.width = chartCanvas.width;
+        tmp.height = chartCanvas.height;
+        const ctx = tmp.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, tmp.width, tmp.height);
+        ctx.drawImage(chartCanvas, 0, 0);
+        const img = tmp.toDataURL('image/png', 1.0);
+        const h = Math.min((tmp.height * contentWidth) / tmp.width, 250);
+        doc.addImage(img, 'PNG', margin, 20, contentWidth, h);
+    }
+
+    doc.save(`${filename}-${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
 // Reusable PDF generator. `results` is the snapshot to report; `modeName` is
 // 'Pawley' or 'LeBail'. Refactored out of the old button handler so the
 // per-run history tabs can export any stored run, not just the live fit.
-async function generatePdfReport(results, modeName) {
+/**
+ * @param {object} results   The snapshot to report.
+ * @param {string} modeName  'Pawley', 'LeBail', 'Wyckoff', 'ChargeFlipping'.
+ * @param {boolean} [withChart=true] Append the powder pattern on its own page.
+ *        FALSE for charge flipping and Wyckoff: those report a density map and
+ *        a set of atomic positions, and the diffraction pattern behind them is
+ *        the same picture the Plot tab already exports. A page of it at the
+ *        back of a structure report is noise.
+ */
+async function generatePdfReport(results, modeName, withChart = true) {
     window.__activeReportResults = results;
     try {
-        if (!window.jspdf || !window.jspdf.jsPDF) {
-            throw new Error('jspdf.umd.min.js was not loaded. It belongs at lib/jspdf.umd.min.js, next to the other vendor bundles.');
-        }
-        
-        // Removed the html2canvas check here since we no longer need it.
-
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-        const margin = 15;
-        const contentWidth = doc.internal.pageSize.getWidth() - 2 * margin;
-        let yPosition = 20;
-
-        const summaryText = generateReportContent('summary');
-        // jsPDF's built-in fonts are WinAnsi, so anything outside it renders
-        // as a blank or a mojibake box. The reflection table added a few more
-        // non-ASCII characters (Angstrom, theta, superscripts), so the
-        // transliteration list is extended to match rather than leaving holes
-        // in the column headers.
-        const pdfText = summaryText
-            .replace(/χ²/g, 'Chi^2')
-            .replace(/°/g, 'deg')
-            .replace(/β/g, 'Beta')
-            .replace(/θ/g, 'th')
-            .replace(/η/g, 'eta')
-            .replace(/λ/g, 'lambda')
-            .replace(/σ/g, 'sigma')
-            .replace(/Å/g, 'A')
-            .replace(/²/g, '^2')
-            .replace(/·/g, '.')
-            .replace(/[–—]/g, '-')
-            .replace(/[‘’]/g, "'")
-            .replace(/[“”]/g, '"');
-
-        const lines = pdfText.split('\n');
-        doc.setFont('Courier');
-
-        for (const line of lines) {
-            if (yPosition > doc.internal.pageSize.getHeight() - 20) {
-                doc.addPage();
-                yPosition = 20;
-            }
-            const isHeader = line.startsWith('---');
-            const isTitle = line.includes('Refinement Report');
-            let fontSize = 9;
-            let fontStyle = 'normal';
-
-            if (isTitle) {
-                fontSize = 14;
-                fontStyle = 'bold';
-                yPosition += 6;
-            } else if (isHeader) {
-                fontSize = 10;
-                fontStyle = 'bold';
-                yPosition += 4;
-            }
-
-            doc.setFontSize(fontSize);
-            doc.setFont(undefined, fontStyle);
-
-            // The reflection table is wider than it used to be (it now carries
-            // m, Lp and |Fo|), and a Courier line that overflows the text
-            // width is silently clipped by jsPDF -- the columns would just
-            // vanish off the right edge of the page. Shrink the offending
-            // line instead; monospace means the whole row stays aligned.
-            let drawSize = fontSize;
-            try {
-                const w = doc.getTextWidth(line);
-                if (w > contentWidth && w > 0) {
-                    drawSize = Math.max(4.5, fontSize * (contentWidth / w));
-                    doc.setFontSize(drawSize);
-                }
-            } catch { /* getTextWidth unavailable: fall back to the full size */ }
-
-            doc.text(line, margin, yPosition);
-            doc.setFontSize(fontSize);
-            yPosition += fontSize * 0.4;
-        }
-
-        doc.addPage();
-        
-        // --- Native Canvas Image Extraction ---
-        const chartCanvas = controls.mainChartCanvas;
-        
-        // Create a temporary canvas to apply a white background
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = chartCanvas.width;
-        tempCanvas.height = chartCanvas.height;
-        const ctx = tempCanvas.getContext('2d');
-        
-        // Fill white, then draw the chart over it
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-        ctx.drawImage(chartCanvas, 0, 0);
-
-        // Extract image data natively
-        const mainImgData = tempCanvas.toDataURL('image/png', 1.0);
-        const mainImgHeight = Math.min((tempCanvas.height * contentWidth) / tempCanvas.width, 250); 
-        
-        doc.addImage(mainImgData, 'PNG', margin, 20, contentWidth, mainImgHeight);
-        // --------------------------------------
-        
-        doc.save(`${modeName}-Report-${new Date().toISOString().slice(0, 10)}.pdf`);
+        renderTextPdf(generateReportContent('summary'), `${modeName}-Report`, withChart);
     } finally {
         window.__activeReportResults = null;
     }
+}
+/**
+ * The covariance of a fit, factored ONCE and memoised on the results object.
+ *
+ * covarianceFromJtJ used to run twice for every report: here, and again inside
+ * intensityOverlapClusters on the same matrix. At 2500 reflections that is
+ * ~460 ms each, on the main thread, in the same task as the history snapshot.
+ *
+ * The cached value holds Float64Array rows, so strip `__cov` before any
+ * JSON.stringify of the results (refinement_controller.js already does).
+ *
+ * @param {object} results
+ * @returns {{cov: Array<Float64Array>, undetermined: Set<number>}|null}
+ */
+/**
+ * One factual line about the parallel-tempering budget, or '' for a non-PT run.
+ *
+ * PT proposes one scalar per replica per iteration, so a parameter receives
+ * only maxIter * PT_NUM_REPLICAS / n_params proposals. Stating it costs
+ * nothing and is the one number that explains a PT run that went nowhere.
+ *
+ * @param {object} results
+ * @returns {string}
+ */
+function ptIterationsNote(results) {
+    const pt = results && results.ptIterations;
+    if (!pt || !pt.used) return '';
+    return `${pt.used} iterations, ${pt.proposalsPerParam.toFixed(0)} proposals/parameter `
+         + `over ${pt.nParams} parameters`;
+}
+
+/**
+ * A square numeric matrix of the given size, with rows that may be plain
+ * arrays OR typed arrays.
+ *
+ * The three call sites used to test `Array.isArray(JtJ[0])`, which is false
+ * for a Float64Array. That conflates "is this the right shape" with "was it
+ * built with the right constructor", and the two are not the same question --
+ * covarianceFromJtJ only ever indexes it.
+ *
+ * @param {*} m
+ * @param {number} n
+ * @returns {boolean}
+ */
+function isSquareMatrix(m, n) {
+    if (!m || m.length !== n) return false;
+    const r0 = m[0];
+    return !!r0 && typeof r0 !== 'string' && r0.length === n;
+}
+
+function reportCovariance(results) {
+    if (!results || !results.JtJ) return null;
+    if (results.__cov === undefined) {
+        try { results.__cov = covarianceFromJtJ(results.JtJ) || null; }
+        catch (err) { console.error('covarianceFromJtJ failed:', err); results.__cov = null; }
+    }
+    return results.__cov;
 }
 
 function generateReportContent(format = 'summary', resultsArg = null) {
@@ -204,6 +246,9 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         `χ² (GOF):    ${stats.chi2 !== undefined ? stats.chi2.toFixed(3) : 'N/A'}`,
         `Reflections:  ${hklList ? hklList.length : 'N/A'}`,
         `Algorithm:    ${algorithmName}`,
+        // Factual, not advisory: the iteration count run and what it bought
+        // per parameter.
+        ...(ptIterationsNote(fitResults) ? [`PT search:    ${ptIterationsNote(fitResults)}`] : []),
         `Refinement:   ${modeName}`,
         `Profile:      ${profileName} (${profileType})`,
         `Space Group:  ${spaceGroupName}`,
@@ -259,9 +304,15 @@ function generateReportContent(format = 'summary', resultsArg = null) {
     // FIX: gate on the presence of the normal-equations matrix, not on
     // the requested algorithm. A Parallel Tempering run is now followed
     // by a short Levenberg-Marquardt polish, so it supplies a JtJ too.
-    if (JtJ && parameterInfo && ss_res !== undefined && workerWorkingData && workerWorkingData.intensity && workerWorkingData.intensity.length > 0) {
+    // The data slice THIS result was fitted against, frozen by rpSnapshotFit,
+    // in preference to the live one. Selecting an earlier run from the history
+    // dropdown after changing the 2-theta range used to recompute its ESDs
+    // against the new range -- N would be wrong, and with it every sigma.
+    const esdData = (fitResults && fitResults.workingData) || workerWorkingData;
+
+    if (JtJ && parameterInfo && ss_res !== undefined && esdData && esdData.intensity && esdData.intensity.length > 0) {
          const P = parameterInfo.length;
-         const N = workerWorkingData.intensity.length;
+         const N = esdData.intensity.length;
          // FIX: use the EFFECTIVE degrees of freedom reported by the
          // worker, which include the one free intensity per reflection
          // that a Le Bail decomposition also extracts from this data.
@@ -282,15 +333,27 @@ function generateReportContent(format = 'summary', resultsArg = null) {
 
                     try {
                          // Verify Matrix Dimensions
-                         if (Array.isArray(JtJ) && JtJ.length === P && Array.isArray(JtJ[0]) && JtJ[0].length === P) {
+                         // Shape, not constructor. Array.isArray() is false
+                         // for a Float64Array, so a perfectly valid matrix
+                         // with typed rows failed this test and was reported
+                         // as malformed.
+                         if (isSquareMatrix(JtJ, P)) {
                              
-                             const covResult = covarianceFromJtJ(JtJ);
+                             const covResult = reportCovariance(fitResults);
                              if (!covResult) {
                                  throw new Error("Normal-equations matrix is not positive definite.");
                              }
-                             cov_matrix = covResult.cov.map(row => row.map(v => v * reduced_chi_sq));
+                             // PERF FIX: the old line was
+                             //     covResult.cov.map(row => row.map(v => v * reduced_chi_sq))
+                             // which built a second full n x n copy -- 219 ms
+                             // and ~50 MB at 2500 reflections -- so that the
+                             // loop below could read 2500 diagonal entries.
+                             // Scale on access instead.
+                             cov_matrix = covResult.cov;
                          } else {
-                             throw new Error("JtJ matrix has incorrect dimensions or format.");
+                             const rows = Array.isArray(JtJ) ? JtJ.length : 'not an array';
+                             const cols = (JtJ && JtJ[0] && JtJ[0].length !== undefined) ? JtJ[0].length : '?';
+                             throw new Error(`Normal-equations matrix is ${rows}x${cols}, expected ${P}x${P}.`);
                          }
                     } catch (invError) {
                          console.error("Matrix inversion error:", invError);
@@ -303,7 +366,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                         const undeterminedNames = [];
                         parameterInfo.forEach((p_info, i) => {
                              if (cov_matrix[i] && cov_matrix[i][i] !== undefined) {
-                                 const variance = cov_matrix[i][i];
+                                 const variance = cov_matrix[i][i] * reduced_chi_sq;
                                   if (variance >= 0 && isFinite(variance)) {
                                       const sigma_scaled = Math.sqrt(variance);
                                       const scale = p_info.scale || 1.0;
@@ -334,8 +397,17 @@ function generateReportContent(format = 'summary', resultsArg = null) {
          } else {
               esdWarning = `N (${N}) <= P (${P}), cannot calculate reliable errors.`;
          }
-    } else if (!JtJ || !parameterInfo || ss_res === undefined || !workerWorkingData || !workerWorkingData.intensity || workerWorkingData.intensity.length === 0) {
-         esdWarning = "Required data for ESD calculation is missing (normal-equations matrix, parameterInfo, ss_res, or the fitted data slice).";
+    } else if (!JtJ || !parameterInfo || ss_res === undefined || !esdData || !esdData.intensity || esdData.intensity.length === 0) {
+         // Name the piece that is actually absent. "Required data is missing"
+         // followed by a list of four candidates tells the user nothing they
+         // can act on, and when the history snapshot lost its normal-equations
+         // matrix it took a code read to work out which of the four it was.
+         const absent = [];
+         if (!JtJ) absent.push('normal-equations matrix (J^T J)');
+         if (!parameterInfo) absent.push('parameterInfo');
+         if (ss_res === undefined) absent.push('ss_res');
+         if (!esdData || !esdData.intensity || esdData.intensity.length === 0) absent.push('the fitted data slice');
+         esdWarning = `Cannot calculate ESDs: ${absent.join(', ')} not present in this result.`;
     }
 
     // A Le Bail ESD is a LOWER BOUND, and saying so is not optional.
@@ -482,7 +554,15 @@ function generateReportContent(format = 'summary', resultsArg = null) {
     
 
     const reflectionsSection = [];
-    if (hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
+    // PERF FIX: this block was built unconditionally, so the SUMMARY preview
+    // that rpRenderRun draws after every fit walked every reflection, ran
+    // calculateAllObservedIntensities and reflectionStructureFactors over the
+    // whole list, and asked for the covariance -- all on the main thread, in
+    // the same task as the history snapshot. The summary does not display any
+    // of it. Anything that is actually read by a human or written to a file
+    // still asks for 'full'.
+    const wantReflections = (format !== 'summary');
+    if (wantReflections && hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
         const isPawley = (refinementMode === 'pawley');
 
         // The doublet: the integrated area below is the sum over the
@@ -665,6 +745,48 @@ function generateReportContent(format = 'summary', resultsArg = null) {
             });
 
         // ------------------------------------------------------------------
+        //  EXACT COINCIDENCES.
+        //
+        //  Distinct from the overlap clusters below. An overlap cluster is a
+        //  set of reflections the data separates BADLY; this is a set it
+        //  cannot separate AT ALL, because their profiles are identical --
+        //  333 against 511, 700 against 522 and their relatives in a cubic F
+        //  cell, and every accidental coincidence elsewhere.
+        //
+        //  The linear solve puts the group's whole intensity on one member
+        //  and leaves the rest near zero. That split is arbitrary; the SUM is
+        //  exact. Without this section the arbitrary number looks ordinary:
+        //  on a test pattern 775 was printed as 2340 against a true 406,
+        //  because it had absorbed 11-1-1, and nothing said so.
+        // ------------------------------------------------------------------
+        const degGroups = (fitResults && fitResults.degenerateGroups) || [];
+        if (isPawley && degGroups.length) {
+            reflectionsSection.push('',
+                '--- Exactly Coincident Reflections (not separable at all) ---',
+                'These reflections have identical calculated profiles, so only the SUM',
+                'within each group is determined by the data. The split printed in the',
+                'table above is arbitrary and carries no information.');
+            const dgW = [34, 16, 16];
+            const dgHeader = formatLine(['group', 'I_group (Area)', '2theta (°)'], dgW);
+            reflectionsSection.push(dgHeader, '-'.repeat(dgHeader.length));
+            for (const grp of degGroups) {
+                const names = grp.map(j => (hklList[j] && hklList[j].hkl_list)
+                                            ? hklList[j].hkl_list[0] : `#${j}`);
+                let sum = 0, tth0 = NaN;
+                for (const j of grp) {
+                    const h = hklList[j];
+                    if (!h) continue;
+                    if (!Number.isFinite(tth0) && Number.isFinite(h.tth)) tth0 = h.tth;
+                    try { sum += integratedPeakArea(h, finalParams, mainScaleFactor); }
+                    catch { /* leave the sum as far as it got */ }
+                }
+                reflectionsSection.push(formatLine(
+                    [names.join(' = '), sum.toFixed(1),
+                     Number.isFinite(tth0) ? tth0.toFixed(4) : '-'], dgW));
+            }
+        }
+
+        // ------------------------------------------------------------------
         //  OVERLAP CLUSTERS
         //
         //  A Pawley intensity with an ESD larger than itself is not a failed
@@ -680,7 +802,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         //  table above is already the whole story.
         // ------------------------------------------------------------------
         if (isPawley && typeof intensityOverlapClusters === 'function') {
-            const oc = intensityOverlapClusters(fitResults, finalParams);
+            const oc = intensityOverlapClusters(fitResults, finalParams, reportCovariance(fitResults));
             const bad = oc ? oc.clusters.filter(c => c.members.length > 1 && c.nUnresolved > 0) : [];
             if (bad.length) {
                 const ocCols = ['2th range (°)', 'n', 'unresolved', 'I_cluster', 'sigma(I_cluster)', 'members'];
@@ -887,10 +1009,72 @@ function generateWyckoffReport(st) {
         'factors, weighted on 1/sigma^2 from the Pawley decomposition rather than on',
         'counting statistics: the uncertainty on one of these intensities comes from',
         'the decomposition, and for an overlapped reflection it is far larger than',
-        'sqrt(I). wR is the residual actually minimised. No charge-flipping map was used, so there is no origin shift, no',
-        'hand and no symmetry correlation to report: the Wyckoff operators place every',
-        'atom on a crystallographic site by construction.');
+        'sqrt(I). wR is the residual actually minimised.');
+
+    // The quality table goes LAST, after the positions it judges.
+    wyQualitySection(st, formatLine).forEach(l => lines.push(l));
+
     return lines.join('\n');
+}
+
+/**
+ * Coordination, contact statistics and bond-valence sums per site.
+ *
+ * WHY THIS BELONGS IN THE REPORT. The refined coordinates and the wR say the
+ * fit converged; they say nothing about whether the result is chemistry. A
+ * sulfur with a mean S-O of 1.13 A and a valence sum of 8.6 where 6 is
+ * expected is a converged fit to a wrong structure, and the numbers that show
+ * it are these. The panel has shown them all along -- the report did not, so a
+ * PDF handed to someone else carried the positions without the one table that
+ * says whether to believe them.
+ *
+ * Computed by WyckoffReport.analyse(), the same call the panel makes, so the
+ * two cannot drift apart.
+ *
+ * @param {object} st Structure, as passed to generateWyckoffReport.
+ * @param {(cols:Array, widths:number[])=>string} formatLine
+ * @returns {string[]}
+ */
+function wyQualitySection(st, formatLine) {
+    if (typeof WyckoffReport === 'undefined' || typeof WyckoffReport.analyse !== 'function') return [];
+    let A;
+    try { A = WyckoffReport.analyse(st, {}); }
+    catch (e) { return ['', '--- Structure quality ---', `(not available: ${e.message || e})`]; }
+    if (!A || A.error) {
+        return ['', '--- Structure quality ---', '(' + ((A && A.error) || 'not available') + ')'];
+    }
+    if (!Array.isArray(A.report) || A.report.length === 0) return [];
+
+    const w = [14, 24, 11, 10, 24, 12];
+    const head = formatLine(['Site', 'CN', 'Mean (A)', 'Spread', 'Bond valence', 'Verdict'], w);
+    const out = ['', '--- Structure quality ---', head, '-'.repeat(head.length)];
+    const f = (v, n) => Number.isFinite(v) ? v.toFixed(n) : '-';
+
+    for (const r of A.report) {
+        // The composition is shown beside CN only when the shell is MIXED.
+        // "2 (1xS + 1xPb)" is the whole point for an oxygen bridging two
+        // cations; "4 (4xO)" would just be noise.
+        const cn = (r.shellComp && r.shellComp.indexOf('+') >= 0)
+            ? `${r.cn} (${r.shellComp.replace(/\u00d7/g, 'x')})`
+            : String(r.cn);
+        const bv = Number.isFinite(r.bvs)
+            ? `${r.bvs.toFixed(2)} of ${r.expected} expected`
+            : (r.missingParams && r.missingParams.length
+                ? `no R0 for ${r.missingParams[0]}`
+                : (r.cn ? '-' : 'no coordination shell'));
+        out.push(formatLine([
+            `${r.element} ${r.wyckoff}`, cn, f(r.mean, 3), f(r.spread, 3), bv, r.verdict
+        ], w));
+    }
+
+    out.push('',
+        `Bond-valence parameters are Brese & O'Keeffe (1991), b = 0.37 A. A sum within`,
+        '15% of the formal valence is reported as plausible, within 30% as borderline.',
+        `Both the sum and the coordination number depend on the ${A.cutoff} A cutoff:`,
+        'distant contacts contribute little to the valence but do raise CN.',
+        'Oxidation states are the tabulated default for each element, so the expected',
+        'valence is wrong for a mixed-valence compound and the verdict with it.');
+    return out;
 }
 
 function generateChargeFlippingReport(cfResult) {
@@ -1018,8 +1202,12 @@ function generateChargeFlippingReport(cfResult) {
         }
 
         if (cfSt.sites && cfSt.sites.length > 0) {
-            const siteWidths = [4, 8, 10, 10, 10, 14, 10, 10, 18];
-            const siteHeader = formatLine(['#', 'Element', 'x', 'y', 'z', 'Wyckoff/Mult', 'Height', 'Charge', 'Shortest Contact'], siteWidths);
+            // 'Shortest Contact' removed: nothing on the charge-flipping path
+            // populates s.shortestContact, so the column was a header over a
+            // full column of en-dashes. Contacts are computed for the Wyckoff
+            // path and reported there, where the numbers actually exist.
+            const siteWidths = [4, 8, 10, 10, 10, 14, 10, 10];
+            const siteHeader = formatLine(['#', 'Element', 'x', 'y', 'z', 'Wyckoff/Mult', 'Height', 'Charge'], siteWidths);
 
             sitesSection = [
                 '--- Atom Positions ---',
@@ -1038,8 +1226,6 @@ function generateChargeFlippingReport(cfResult) {
 
             cfSt.sites.forEach(s => {
                 const wm = s.wyckoff ? s.wyckoff : (s.multiplicity + (s.special ? '*' : ''));
-                const contact = s.shortestContact !== undefined && s.shortestContact !== null 
-                                ? s.shortestContact.toFixed(2) + ' Å' : '–';
                 sitesSection.push(formatLine([
                     s.rank,
                     s.element || 'Q',
@@ -1048,8 +1234,7 @@ function generateChargeFlippingReport(cfResult) {
                     num(s.z, 4),
                     wm,
                     num(s.relative || s.height || s.mapDensity, 3),
-                    Number.isFinite(s.chargeRel) ? num(s.chargeRel, 3) : '-',
-                    contact
+                    Number.isFinite(s.chargeRel) ? num(s.chargeRel, 3) : '-'
                 ], siteWidths));
             });
             sitesSection.push('');
@@ -1061,29 +1246,93 @@ function generateChargeFlippingReport(cfResult) {
             ''
         ];
         
-        if (cfResult.peaks && cfResult.peaks.length > 0) {
-            const peakWidths = [6, 10, 10, 10, 10, 10];
-            const peakHeader = formatLine(['Rank', 'x', 'y', 'z', 'Height', 'Charge'], peakWidths);
-            sitesSection = [
-                '--- Raw Peaks (P1, arbitrary origin) ---',
-                peakHeader,
-                '-'.repeat(peakHeader.length)
-            ];
-            cfResult.peaks.forEach(p => {
-                sitesSection.push(formatLine([
-                    p.rank, num(p.x, 4), num(p.y, 4), num(p.z, 4), num(p.relative, 3),
-                    Number.isFinite(p.chargeRel) ? num(p.chargeRel, 3) : '-'
-                ], peakWidths));
-            });
-            sitesSection.push('');
-        }
     }
+
+    // ------------------------------------------------------------------
+    //  ELECTRON-DENSITY PEAKS
+    //
+    //  This used to appear ONLY when no structure had been built -- the raw
+    //  peak list was the else-branch of "did the structure builder run". But
+    //  the peaks are the primary observation and the structure is an
+    //  interpretation of them: if the assignment is wrong, the peak list is
+    //  the only way to see that from the report. It is now always present,
+    //  with the nearest-neighbour distance the on-screen table already shows.
+    // ------------------------------------------------------------------
+    const peaksSection = cfPeakSection(cfResult, formatLine, num);
 
     return [
         ...header,
         ...summarySection,
         ...cellSection,
         ...structureSection,
-        ...sitesSection
+        ...sitesSection,
+        ...peaksSection
     ].join('\n');
+}
+
+/**
+ * The electron-density peak table, with each peak's distance to its nearest
+ * other peak.
+ *
+ * NEAREST PEAK is the number worth reading here. The origin and the hand of a
+ * charge-flipping solution are arbitrary, so an absolute coordinate says
+ * nothing on its own; the distance to the closest other peak says whether a
+ * peak is a plausible separate atom or a ripple sitting beside a stronger one.
+ *
+ * @param {object} cfResult  { peaks, cell, ... }
+ * @param {(cols:Array, widths:number[])=>string} formatLine
+ * @param {(v:number, n:number)=>string} num
+ * @returns {string[]}
+ */
+function cfPeakSection(cfResult, formatLine, num) {
+    const peaks = cfResult && cfResult.peaks;
+    if (!Array.isArray(peaks) || peaks.length === 0) return [];
+
+    const out = [
+        '--- Electron-density peaks ---',
+        'Fractional coordinates in P1. The origin and the hand of the solution are',
+        'arbitrary -- compare interatomic distances, not absolute positions.',
+        '"Nearest peak" is the distance to the closest other peak in this list: it says',
+        'how isolated each peak is, and is neither a resolution limit nor a bond length.',
+        'A value far below any real bond means the peak is a ripple beside a stronger',
+        'neighbour, not an atom of its own.',
+        '',
+        'Height is the tallest single voxel of the peak, relative to the tallest peak in',
+        'the map; it is sensitive to grid placement and to ripples. Charge is the density',
+        'integrated over a fixed sphere, which is what actually ranks atoms by electron',
+        'count. On PbSO4 Height puts sulfur above lead and Charge does not.',
+        ''
+    ];
+
+    // cfMetricTensor and cfFracDistance are top-level in powder5.html. Guard
+    // anyway: this file is also loaded by tooling that has no page around it,
+    // and a missing distance is better than a report that throws.
+    const haveGeom = (typeof cfMetricTensor === 'function')
+                  && (typeof cfFracDistance === 'function')
+                  && cfResult.cell;
+    const G = haveGeom ? cfMetricTensor(cfResult.cell) : null;
+
+    const w = [5, 10, 10, 10, 10, 10, 16];
+    const head = formatLine(['#', 'x', 'y', 'z', 'Height', 'Charge', 'Nearest peak (A)'], w);
+    out.push(head, '-'.repeat(head.length));
+
+    for (const pk of peaks) {
+        let dmin = Infinity;
+        if (G) {
+            for (const q of peaks) {
+                if (q === pk) continue;
+                const d = cfFracDistance(G, pk.x - q.x, pk.y - q.y, pk.z - q.z);
+                if (d < dmin) dmin = d;
+            }
+        }
+        out.push(formatLine([
+            pk.rank,
+            num(pk.x, 4), num(pk.y, 4), num(pk.z, 4),
+            num(pk.relative, 3),
+            Number.isFinite(pk.chargeRel) ? num(pk.chargeRel, 3) : '-',
+            Number.isFinite(dmin) ? dmin.toFixed(2) : '-'
+        ], w));
+    }
+    out.push('');
+    return out;
 }

@@ -612,6 +612,65 @@ const PT_COST_SCALE_FLOOR = 1e-9;
 const PT_RESCALE_THRESHOLD = 0.5;
 
 // ===========================================================================
+//  8b. Separable (variable-projection) Pawley
+// ===========================================================================
+//  A Pawley model is linear in every intensity, so for any set of non-linear
+//  parameters the intensities are the exact solution of a banded linear
+//  least-squares problem rather than something to iterate towards. LM and PT
+//  therefore search only the non-linear parameters. See pawley_linear.js.
+// ---------------------------------------------------------------------------
+
+/**
+ * Use the EXACT variable-projection Jacobian, i.e. re-solve the intensities
+ * inside every finite-difference probe.
+ *
+ * WHY false (Kaufman's approximation, 1975). The exact form measures the
+ * derivative of the REDUCED cost, which is what LM is really minimising, and
+ * it is the better Jacobian. It also costs one extra banded solve per column
+ * per iteration -- 56 ms at 2500 reflections, times ~12 columns, so about a
+ * second an iteration. Holding the linear parameters fixed inside the probe
+ * costs typically one or two extra iterations and never changes the minimum,
+ * because the ACCEPTANCE test still evaluates the trial point with fully
+ * re-solved intensities. Cheaper per iteration, same answer.
+ *
+ * Set true if a fit converges slowly on a strongly correlated cell.
+ * @type {boolean}
+ */
+const PAWLEY_VARPRO_EXACT_JACOBIAN = false;
+
+/**
+ * Relative pivot repair applied by the modified Cholesky when a direction in
+ * the intensity normal matrix is not determined by the data.
+ *
+ * WHY 1e-8 and why it is applied PER PIVOT. Exact coincidences are normal,
+ * not exceptional: 333 against 511, 700 against 522 and their relatives in a
+ * cubic F cell, plus every accidental overlap elsewhere. A GLOBAL ridge large
+ * enough to factor past all of them also damps the several hundred
+ * intensities that were perfectly well determined -- measured on a cubic F
+ * pattern the global ladder had to reach 1e-6 relative, a visible bias on a
+ * weak reflection. Repairing only the pivots that fail leaves every other row
+ * exactly as the data determined it. Measured: isolated reflections recover
+ * to 1.5e-15 relative, and each coincident group's SUM to 1.9e-15, while the
+ * split within a group is arbitrary and reported as such.
+ * @type {number}
+ */
+const PAWLEY_PIVOT_REPAIR = 1e-8;
+
+/**
+ * Normalised column correlation above which two reflections are treated as
+ * not separable by the data.
+ *
+ * WHY 0.9999: exact coincidences give exactly 1 up to rounding on a sum of
+ * ~10^2 terms, so anything above 1 - 1e-4 is a coincidence rather than a
+ * strong overlap. Genuine severe overlap sits well below this and is reported
+ * where it belongs, in the overlap-cluster table, with a sigma that says so.
+ * @type {number}
+ */
+const PAWLEY_DEGENERACY_CORRELATION = 0.9999;
+
+
+
+// ===========================================================================
 //  9. Small shared numeric utilities
 // ===========================================================================
 
@@ -655,6 +714,8 @@ if (typeof module !== 'undefined' && module.exports) {
         LM_OUTER_TOL, LM_MAX_OUTER_REJECTS, LM_TRUST_INITIAL, LM_TRUST_GROWTH,
         PT_NUM_REPLICAS, PT_MAX_TEMP, PT_MIN_TEMP, PT_SWAP_INTERVAL,
         PT_COST_SCALE_FLOOR, PT_RESCALE_THRESHOLD,
+        PAWLEY_VARPRO_EXACT_JACOBIAN, PAWLEY_PIVOT_REPAIR,
+        PAWLEY_DEGENERACY_CORRELATION,
         lowerBound
     };
     Object.defineProperty(_exports, 'MIN_PROFILE_FWHM_DEG', {

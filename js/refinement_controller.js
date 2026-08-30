@@ -4,15 +4,37 @@
 // so every later fit was refused. The worker is now built by a factory
 // that can be called again, and a watchdog re-armed on every progress
 // message terminates a worker that has gone quiet.
-const FIT_WATCHDOG_MS = 120000;   // 2 min with no progress => assume wedged
+// ADAPTIVE. A fixed two minutes is simultaneously too short and too long: it
+// kills a healthy fit on a large pattern where one iteration legitimately
+// takes minutes, and it takes two minutes to notice a wedged worker on a small
+// one. The budget is now a multiple of the slowest gap between progress
+// messages actually observed in THIS run, clamped at both ends.
+const FIT_WATCHDOG_MIN_MS = 30000;
+const FIT_WATCHDOG_MAX_MS = 600000;
+const FIT_WATCHDOG_FACTOR = 20;
 let fitWatchdog = null;
+let fitLastProgressAt = 0;
+let fitObservedGapMs = 0;
 
 function disarmFitWatchdog() {
     if (fitWatchdog !== null) { clearTimeout(fitWatchdog); fitWatchdog = null; }
 }
 
+/** Call before posting a job, so one run's timings do not carry into the next. */
+function resetFitWatchdogTimings() {
+    fitLastProgressAt = 0;
+    fitObservedGapMs = 0;
+}
+
 function armFitWatchdog() {
     disarmFitWatchdog();
+    const now = Date.now();
+    if (fitLastProgressAt) {
+        fitObservedGapMs = Math.max(fitObservedGapMs, now - fitLastProgressAt);
+    }
+    fitLastProgressAt = now;
+    const budget = Math.min(FIT_WATCHDOG_MAX_MS,
+                            Math.max(FIT_WATCHDOG_MIN_MS, fitObservedGapMs * FIT_WATCHDOG_FACTOR));
     fitWatchdog = setTimeout(() => {
         fitWatchdog = null;
         if (!isFitting) return;
@@ -23,7 +45,7 @@ function armFitWatchdog() {
         controls.progressBar.style.width = '0%';
         showToast("Refinement stopped responding and was cancelled.", "error");
         createRefinementWorker();   // rebuild so the next fit can still run
-    }, FIT_WATCHDOG_MS);
+    }, budget);
 }
 
 function createRefinementWorker() {
@@ -45,11 +67,40 @@ function createRefinementWorker() {
                 armFitWatchdog();
                 controls.progressBar.style.transition = 'width 0.1s linear';
                 controls.progressBar.style.width = `${Math.min(100, value * 100)}%`;
+                // And to the unified footer, so a refinement stays visible
+                // after switching to a results or log tab.
+                if (typeof AppStatus !== 'undefined') {
+                    AppStatus.set('fit', value,
+                        message || `${Math.round(Math.min(100, value * 100))}%`);
+                }
             } else if (type === 'result') {
                 disarmFitWatchdog();
-                fitResults = results; 
+                fitResults = results;
                 if (fitResults && fitResults.params) window.enforceSymmetryConstraints(fitResults.params);
-                lastFitResultsCache = JSON.parse(JSON.stringify(fitResults)); 
+
+                // ONE clone, and J^T J shared BY REFERENCE rather than copied.
+                //
+                // This used to be a full JSON round-trip here AND another
+                // inside rpSnapshotFit, both carrying the matrix: three copies
+                // of it per fit, ~13 MB of JSON and ~300 ms at 2500
+                // reflections, retained for every run for the life of the tab.
+                //
+                // But the matrix cannot simply be dropped. generateReportContent
+                // computes every ESD from it, and rpRenderRun draws the report
+                // from the HISTORY SNAPSHOT, not from the live object -- so a
+                // snapshot without J^T J means a report whose sigmas are all
+                // N/A. Attaching it by reference gives one copy instead of
+                // three and keeps the report intact: a fit result is never
+                // mutated once it has been handed over, so there is no
+                // aliasing hazard in sharing it.
+                //
+                // __cov IS dropped: it is a memoised inverse holding
+                // Float64Array rows, cheap to recompute and wrong to clone.
+                const { JtJ: sharedJtJ, __cov: _cov, ...cloneable } = fitResults;
+                lastFitResultsCache = (typeof structuredClone === 'function')
+                    ? structuredClone(cloneable)
+                    : JSON.parse(JSON.stringify(cloneable));
+                if (sharedJtJ) lastFitResultsCache.JtJ = sharedJtJ;
 
                 if (fitResults.fitFlags && fitResults.fitFlags.fitBackground) {
                     backgroundAnchors.forEach((anchor, i) => {
@@ -62,7 +113,9 @@ function createRefinementWorker() {
 
                 try {
                     const histMode = (fitResults.refinementMode === 'pawley') ? 'pawley' : 'lebail';
-                    window.rpSnapshotFit(histMode, fitResults);
+                    // The clone above, not the live object: rpSnapshotFit no
+                    // longer needs to make its own.
+                    window.rpSnapshotFit(histMode, lastFitResultsCache);
                 } catch (histErr) { console.warn('history snapshot failed:', histErr); }
 
                 const displayParams = fitResults.params;
@@ -143,6 +196,7 @@ function createRefinementWorker() {
 }
 
 createRefinementWorker();
+window.resetFitWatchdogTimings = resetFitWatchdogTimings;
 
 // ===========================================================================
 //  generateMasterHklList() AND runFit() USED TO BE DUPLICATED HERE.

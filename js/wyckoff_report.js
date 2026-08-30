@@ -596,7 +596,6 @@ const CSS = `
 .wy-an tr.wy-site.off td { opacity:0.4; }
 .wy-eye { border:none; background:none; cursor:pointer; font-size:12px; padding:0 2px;
   color:var(--fg-3,#7a7f86); }
-.wy-ox { width:46px; font-size:11px; padding:1px 3px; font-family:var(--font-mono,monospace); }
 .wy-contacts { max-height:190px; overflow:auto; border:1px solid var(--rule,#c4c7cb);
   border-radius:var(--r-3,4px); padding:8px 10px; font-family:var(--font-mono,monospace);
   font-size:11.5px; }
@@ -658,11 +657,16 @@ function render(host, st) {
 <div class="wy-an">
   <div class="wy-head">
     <span>ASYMMETRIC UNIT &nbsp;\u00b7&nbsp; ${esc(formula)} per cell</span>
+    <!-- The net formal charge indicator is deliberately absent. It summed a
+         DEFAULT oxidation state over every site, which is meaningful only for
+         a simple ionic solid with one state per element. For a mixed-valence
+         compound, a molecular or covalent structure, or anything with partial
+         occupancy, the sum was arbitrary and it flagged sound structures in
+         warning colours. The bond-valence sums below say the same thing per
+         site, from the geometry that was actually refined, and say it
+         honestly. -->
     <span>Cell content: ${f2(A.mass, 2)} g/mol &nbsp;|&nbsp; V = ${f2(A.volume, 2)} \u00c5\u00b3
-      &nbsp;|&nbsp; Calculated density: ${f2(A.density, 3)} g/cm\u00b3${
-        Math.abs(A.netCharge) > 0.01
-          ? ` &nbsp;|&nbsp; <span class="wy-v-borderline">net formal charge ${A.netCharge > 0 ? '+' : ''}${f2(A.netCharge, 1)}</span>`
-          : ''}</span>
+      &nbsp;|&nbsp; Calculated density: ${f2(A.density, 3)} g/cm\u00b3</span>
   </div>
 
   <div class="wy-plot-wrap">
@@ -686,7 +690,6 @@ function render(host, st) {
     <thead><tr>
       <th>El</th><th>Wyck</th><th>x</th><th>y</th><th>z</th>
       <th title="Number of symmetry-equivalent atoms actually generated in the cell.">Mult</th>
-      <th title="Formal oxidation state used for the bond-valence sum. Editable.">Ox</th>
       <th title="Show or hide this site in the plot.">Plot</th>
     </tr></thead>
     <tbody>
@@ -696,7 +699,6 @@ function render(host, st) {
         <td>${esc(r.element)}</td><td>${esc(r.wyckoff)}</td>
         <td>${f2(r.x, 4)}</td><td>${f2(r.y, 4)}</td><td>${f2(r.z, 4)}</td>
         <td>${r.multiplicity}</td>
-        <td><input class="wy-ox" type="number" step="1" data-i="${r.index}" value="${r.ox}"></td>
         <td><button class="wy-eye" data-eye="${r.index}"
              title="${S.hidden.has(r.index) ? 'Show' : 'Hide'} in plot">${S.hidden.has(r.index) ? '\u25cb' : '\u25c9'}</button></td>
       </tr>`).join('')}
@@ -806,14 +808,9 @@ function render(host, st) {
         S.pack = e.target.checked; plot.build(); redraw();
     });
 
-    host.querySelectorAll('.wy-ox').forEach(inp => {
-        inp.addEventListener('change', e => {
-            e.stopPropagation();
-            const v = parseInt(e.target.value, 10);
-            if (Number.isFinite(v)) { S.ox[+e.target.dataset.i] = v; rerender(); }
-        });
-        inp.addEventListener('click', e => e.stopPropagation());
-    });
+    // No .wy-ox listener: the column is gone. S.ox survives in the UI state
+    // and is still passed to analyse(), so the bond-valence sums use the
+    // tabulated default for each element and nothing downstream had to change.
     host.querySelectorAll('[data-eye]').forEach(b => {
         b.addEventListener('click', e => {
             e.stopPropagation();

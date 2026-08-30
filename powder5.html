@@ -11,11 +11,13 @@
          pinned; the isosurface viewer degrades to a message without it. -->
     <script src="lib/three.min.js"></script>
     <script src="js/state.js"></script>
+    <script src="js/status_bar.js"></script>
     <script src="js/constants.js"></script>
     <script src="js/crystal.js"></script>
     <script src="js/wyckoff_report.js"></script>
     <script src="js/polarization.js"></script>
     <script src="js/profile.js"></script>
+    <script src="js/pawley_linear.js"></script>
     <script src="js/density3d.js"></script>
     <script src="js/data_io.js"></script>
     <script src="js/parsers.js"></script>
@@ -107,7 +109,7 @@
             <div class="tab-content-panels">
             <div id="tab-panel-sample" class="tab-content-panel active">
                 <div class="control-group">
-                    <h2>Data</h2>
+                    
                     <div class="run-row">
                         <button type="button" id="load-file-btn" class="btn btn-primary">Load file</button>
                         <button type="button" id="save-file-btn" class="btn" disabled
@@ -431,15 +433,12 @@
                     <button id="cf-cancel-btn" class="btn" disabled>Stop</button>
                 </div>
 
-                    <div id="cf-progress-container" class="hidden" style="margin-top: 12px;">
-                        <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-                            <span>R-factor: <span id="cf-r-factor">--</span></span>
-                            <span id="cf-iter-count">0 / 0</span>
-                        </div>
-                        <div style="width: 100%; border-radius: 3px; height: 5px; background: var(--system-gray-5);">
-                            <div id="cf-progress-bar" style="height: 100%; width: 0%; border-radius: 3px; background: var(--system-blue);"></div>
-                        </div>
-                    </div>
+                    <!-- The R-factor readout, the cycle counter and the
+                         progress bar that were here are now in the unified
+                         status footer, which is visible from every tab. They
+                         were only on screen while this tab was open, which is
+                         exactly when the user least needs telling that a run
+                         they just started is running. -->
                 </div>
 
                 <!-- ============ RESULTS ============ -->
@@ -658,8 +657,8 @@
                         <label class="control-label" for="cf-wyckoff-max-z"
                                title="How many values of Z a scan may search. Each one is a full swarm run, so this is what bounds the total time. The least plausible candidates are dropped first.">Max Z searched</label>
                         <div class="slider-value-track">
-                            <input type="range" id="cf-wyckoff-max-z" class="custom-slider" min="1" max="12" step="1" value="6">
-                            <span id="cf-wyckoff-max-z-value" class="slider-value-display">6</span>
+                            <input type="range" id="cf-wyckoff-max-z" class="custom-slider" min="1" max="12" step="1" value="3">
+                            <span id="cf-wyckoff-max-z-value" class="slider-value-display">3</span>
                         </div>
                     </div>
                     <!-- Says which Z the window admits, before the run rather
@@ -722,17 +721,14 @@
                     <button id="wyckoff-cancel-btn" class="btn" disabled>Stop</button>
                 </div>
 
-                <div id="wyckoff-progress-container" class="hidden" style="margin-top: 12px;">
-                    <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
-                        <span title="Correlation on the resolution-ramped subset the search is currently using, not the full reflection set. It reads higher than the final value and is not comparable with wR.">CC (partial res.): <span id="wyckoff-cc">--</span></span>
-                        <span id="wyckoff-gen-count">0 / 0</span>
-                    </div>
-                    <div style="width: 100%; border-radius: 3px; height: 5px; background: var(--system-gray-5);">
-                        <div id="wyckoff-progress-bar" style="height: 100%; width: 0%; border-radius: 3px; background: var(--system-blue);"></div>
-                    </div>
-                </div>
-
-                <div id="wyckoff-status" class="cf-hint" style="margin-top: 12px;">&ndash;</div>
+                <!-- CC, the generation counter, the progress bar and the
+                     status line are now in the unified status footer. Every
+                     writer below is null-safe, and setWyckoffStatus() routes
+                     its text to the footer instead -- several of its messages
+                     ("Stopping...", "the worker did not answer in time",
+                     "complete -- 3 solutions") had no other channel at all, so
+                     removing the element without redirecting them would have
+                     stopped them being said. -->
             </div>
             </div> <!-- Closes tab-content-panels -->
 
@@ -808,46 +804,66 @@
         <div id="drag-handle"></div>
 
 <div id="results-area" style="position: relative; flex-grow: 1; min-height: 0;">
-    <!-- Light / dark mode toggle. Moved out of the Plot panel to the
-         top-right of the whole right panel (next to the help icon) so it is
-         visible on every tab. -->
-    <div id="mode-toggle" role="group" aria-label="Theme"
-         style="position: absolute; top: 8px; right: 48px; z-index: 60;">
-        <button type="button" data-mode="light" aria-label="Light mode" title="Light mode">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
-                <circle cx="8" cy="8" r="3"/>
-                <path d="M8 1.5v1.5M8 13v1.5M14.5 8H13M3 8H1.5M12.6 3.4l-1 1M5.4 10.6l-1 1M12.6 12.6l-1-1M5.4 5.4l-1-1"/>
+    <!-- Theme toggle, report button and help icon: one positioned row
+         (#stage-corner in style.css) instead of three independent
+         absolute positions that had to be re-nudged by hand whenever
+         one of them changed width. -->
+    <div id="stage-corner">
+        <!-- Light / dark mode toggle. Moved out of the Plot panel to the
+             top-right of the whole right panel (next to the help icon) so it is
+             visible on every tab. -->
+        <div id="mode-toggle" role="group" aria-label="Theme">
+            <button type="button" data-mode="light" aria-label="Light mode" title="Light mode">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                    <circle cx="8" cy="8" r="3"/>
+                    <path d="M8 1.5v1.5M8 13v1.5M14.5 8H13M3 8H1.5M12.6 3.4l-1 1M5.4 10.6l-1 1M12.6 12.6l-1-1M5.4 5.4l-1-1"/>
+                </svg>
+            </button>
+            <button type="button" data-mode="dark" aria-label="Dark mode" title="Dark mode">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z"/>
+                </svg>
+            </button>
+        </div>
+        <!-- ONE report button for the whole application.
+             Was four "Generate PDF" buttons, one per results tab, each with its
+             own enabled/disabled rule to keep in step with the run history. It
+             reports whichever tab is in front, so there is nothing to enable and
+             nothing to disable: press it on a tab with no run and it says so. -->
+        <button id="print-report-btn" type="button"
+                title="Report the current tab as a PDF" aria-label="Report as PDF">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4.5 6V2.5h7V6"/>
+                <rect x="2.5" y="6" width="11" height="5" rx="1"/>
+                <path d="M4.5 10h7v3.5h-7z"/>
             </svg>
         </button>
-        <button type="button" data-mode="dark" aria-label="Dark mode" title="Dark mode">
-            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M13 9.5A5.5 5.5 0 1 1 6.5 3a4.5 4.5 0 0 0 6.5 6.5z"/>
-            </svg>
-        </button>
-    </div>
-    <!--   Help tooltip. Anchored to the top-right of the WHOLE right
-          panel (results-area), above the tab bar, so it shows on every
-          tab. z-index sits above rp-tabbar (40) and the canvas. -->
-    <div class="help-tooltip-container"
-         style="position: absolute; top: 8px; right: 14px; z-index: 60;">
-        <span class="help-icon">?</span>
 
-        <div class="tooltip-content">
-            <h4>Powder 5 Fit</h4>
-            <p>Analyze powder diffraction data by using LeBail or Pawley method. <a href="powder5_help.html" target="_blank" style="color: #6495ED;">Method Guide &rarr;</a></p>
-            <hr>
-            <h4>Supported File Formats:</h4>
-            <p>Generic 2-column (2θ intensity), .xrdml, .brml, .ras, .uxd, .udf, GSAS .esd/.xra</p>
-            <hr>
-            <h4>Chart Interaction:</h4>
-            <p><b>Zoom:</b> Drag a rectangle over the region of interest.</p>
-            <p><b>Wheel:</b> Zoom 2&theta; about the cursor; <b>Shift</b>+wheel zooms intensity.</p>
-            <p><b>Pan:</b> Hold <b>Alt</b> (or Shift) and drag, or drag with the middle mouse button.</p>
-            <p><b>Reset:</b> Right-click anywhere on the chart.</p>
-            <p><b>Reset View:</b> Right-click on the chart.</p>
-            <p><b>Add BG Point:</b> Hold <b>Ctrl</b> and click on the chart to manually add a spline point.</p>
+        <!--   Help tooltip. Anchored to the top-right of the WHOLE right
+              panel (results-area), above the tab bar, so it shows on every
+              tab. z-index sits above rp-tabbar (40) and the canvas. -->
+        <div class="help-tooltip-container stage-corner-help">
+            <span class="help-icon">?</span>
+
+            <div class="tooltip-content">
+                <h4>Powder 5 Fit</h4>
+                <p>Analyze powder diffraction data by using LeBail or Pawley method. <a href="powder5_help.html" target="_blank" style="color: #6495ED;">Method Guide &rarr;</a></p>
+                <hr>
+                <h4>Supported File Formats:</h4>
+                <p>Generic 2-column (2θ intensity), .xrdml, .brml, .ras, .uxd, .udf, GSAS .esd/.xra</p>
+                <hr>
+                <h4>Chart Interaction:</h4>
+                <p><b>Zoom:</b> Drag a rectangle over the region of interest.</p>
+                <p><b>Wheel:</b> Zoom 2&theta; about the cursor; <b>Shift</b>+wheel zooms intensity.</p>
+                <p><b>Pan:</b> Hold <b>Alt</b> (or Shift) and drag, or drag with the middle mouse button.</p>
+                <p><b>Reset:</b> Right-click anywhere on the chart.</p>
+                <p><b>Reset View:</b> Right-click on the chart.</p>
+                <p><b>Add BG Point:</b> Hold <b>Ctrl</b> and click on the chart to manually add a spline point.</p>
+            </div>
         </div>
     </div>
+
 
 
     <!-- ============================================================
@@ -890,7 +906,6 @@
                 </div>
                 <div class="rp-action-row">
                     <button id="lebail-save-report" class="btn btn-primary rp-action-btn" disabled>Save Report</button>
-                    <button id="lebail-generate-pdf" class="btn btn-primary rp-action-btn" disabled>Generate PDF</button>
                 </div>
             </div>
         </div>
@@ -909,7 +924,6 @@
                 </div>
                 <div class="rp-action-row">
                     <button id="pawley-save-report" class="btn btn-primary rp-action-btn" disabled>Save Report</button>
-                    <button id="pawley-generate-pdf" class="btn btn-primary rp-action-btn" disabled>Generate PDF</button>
                 </div>
             </div>
         </div>
@@ -927,7 +941,6 @@
                     <select id="cf-run-select" class="control-select rp-run-select"></select>
                 </div>
                 <div class="rp-action-row">
-                    <button id="cf-generate-pdf" class="btn btn-primary rp-action-btn" disabled>Generate PDF</button>
                 </div>
             </div>
         </div>
@@ -954,7 +967,6 @@
                     <select id="wyckoff-run-select" class="control-select rp-run-select"></select>
                 </div>
                 <div class="rp-action-row">
-                    <button id="wyckoff-generate-pdf" class="btn btn-primary rp-action-btn" disabled>Generate PDF</button>
                 </div>
             </div>
         </div>
@@ -986,13 +998,33 @@
     </div>
     </div><!-- /#rp-panels -->
 
-<div id="app-version-footer" style="position: absolute; bottom: 6px; right: 12px; font-size: 10px; color: var(--system-secondary-label);">
+<!-- ================================================================
+     UNIFIED STATUS FOOTER.
+     One progress bar and one comment line for every long-running
+     process, plus the version stamp. Left half: bar and comment.
+     Right half: the version, which is where it already lived.
+
+     Sticky at the foot of the results area so a search remains
+     visible after switching to the plot tab -- the per-tab bars are
+     only on screen while their own tab is, which is exactly when the
+     user is least likely to need telling.
+
+     CPU and GPU meters are deliberately absent: no browser API
+     reports either, and a number that looks like a percentage but is
+     not one is worse than no number.
+     ================================================================ -->
+<div id="app-status-footer">
+    <div class="asf-left">
+        <div id="app-status-bar"><div id="app-status-bar-fill"></div></div>
+        <div id="app-status-text"></div>
     </div>
+    <div id="app-version-footer" class="asf-right"></div>
+</div>
 </div>
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 168, 28 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 169, 30 August 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1005,6 +1037,7 @@
     //22 aug, wyckoff search is now Z-aware
     //removed the cctbx dependencies, all data is in /sg and /scatter
     //28 aug, changed JtJ in the PAwley fit
+    //30 aug, changes in the refinements, moved the PDF, some UI improvements
 
     document.addEventListener('DOMContentLoaded', async () => {     
     
@@ -1192,11 +1225,11 @@
     // already writes elements, Wyckoff multiplicities and the cell, which is
     // exactly what a Wyckoff solution is. A second implementation would only
     // be a second thing to keep in step.
-    const wPdf = document.getElementById('wyckoff-generate-pdf');
-    // 'wyckoff', not 'cf'. Pointing it at the charge-flipping history meant
-    // it looked up a run in the wrong list and reported "No run selected"
-    // while a Wyckoff run was plainly on screen.
-    if (wPdf) wPdf.addEventListener('click', () => rpExportPDF('wyckoff'));
+    // The Wyckoff PDF is reached from the header button now, via
+    // printActiveTab() -> rpExportPDF('wyckoff'), which keeps the Z-scan
+    // selection logic that mattered here: 'wyckoff', not 'cf', or it looks up
+    // a run in the wrong list and reports "No run selected" while a Wyckoff
+    // run is plainly on screen.
     document.getElementById('cf-section-axis').addEventListener('change', drawChargeFlipSection);
 
 document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
@@ -1570,18 +1603,30 @@ function integratedPeakArea(hkl, params, scaleFactor) {
 // matrix is unavailable or singular -- which is common, because exactly
 // overlapping reflections (330/411 in a cubic cell, say) make the Pawley
 // normal matrix genuinely rank-deficient.
-function intensityEsdsFromCovariance(fr) {
+function intensityEsdsFromCovariance(fr, covResultIn = null) {
     try {
         const { JtJ, parameterInfo, ss_res } = fr;
         if (!JtJ || !parameterInfo || ss_res === undefined) return null;
-        if (!workerWorkingData || !workerWorkingData.intensity) return null;
+        // The slice THIS run was fitted against, frozen by rpSnapshotFit, in
+        // preference to the live one -- N sets the degrees of freedom, and
+        // with it every sigma below. intensityOverlapClusters and the report
+        // were given this; this function was missed.
+        const wd = fr.workingData || workerWorkingData;
+        if (!wd || !wd.intensity) return null;
         const P = parameterInfo.length;
-        const N = workerWorkingData.intensity.length;
+        const N = wd.intensity.length;
         if (P === 0 || N <= P) return null;
-        if (!(Array.isArray(JtJ) && JtJ.length === P && Array.isArray(JtJ[0]) && JtJ[0].length === P)) return null;
+        // Shape, not constructor: Array.isArray() is false for a
+        // Float64Array, and this guard returned null SILENTLY, so a matrix
+        // with typed rows removed every intensity ESD from the report with no
+        // message anywhere explaining why.
+        if (!(JtJ && JtJ.length === P && JtJ[0] && JtJ[0].length === P)) return null;
         const dof = (typeof fr.dof === 'number' && fr.dof > 0) ? fr.dof : (N - P);
         if (!(ss_res >= 0 && isFinite(ss_res)) || !(dof > 0)) return null;
-        const covResult = covarianceFromJtJ(JtJ);
+        // PERF: generateReportContent has already factored this matrix.
+        // Recomputing it ran covarianceFromJtJ twice per report -- ~460 ms
+        // each at 2500 reflections, synchronously on the main thread.
+        const covResult = covResultIn || covarianceFromJtJ(JtJ);
         if (!covResult) return null;
         const chi2 = ss_res / dof;
         const out = {};
@@ -1637,19 +1682,29 @@ function intensityEsdsFromCovariance(fr) {
  * @param {ProfileParams} finalParams
  * @returns {{clusters: object[], byName: Map<string,object>}|null}
  */
-function intensityOverlapClusters(fr, finalParams) {
+function intensityOverlapClusters(fr, finalParams, covResultIn = null) {
     try {
         const { JtJ, parameterInfo, ss_res, hklList } = fr;
         if (!JtJ || !parameterInfo || ss_res === undefined || !hklList) return null;
-        if (!workerWorkingData || !workerWorkingData.tth) return null;
+
+        // Prefer the data slice THIS run was fitted against, frozen by
+        // rpSnapshotFit, over the live one. Without it, changing the 2-theta
+        // range and then selecting an earlier run from the history dropdown
+        // recomputed that run's clusters over the new range and reported
+        // numbers the run never produced.
+        const wd = fr.workingData || workerWorkingData;
+        if (!wd || !wd.tth) return null;
 
         const P = parameterInfo.length;
-        const N = workerWorkingData.tth.length;
+        const N = wd.tth.length;
         if (P === 0 || N <= P) return null;
         const dof = (typeof fr.dof === 'number' && fr.dof > 0) ? fr.dof : (N - P);
         if (!(ss_res >= 0 && isFinite(ss_res)) || !(dof > 0)) return null;
 
-        const covResult = covarianceFromJtJ(JtJ);
+        // PERF: generateReportContent has already factored this matrix.
+        // Recomputing it ran covarianceFromJtJ twice per report -- ~460 ms
+        // each at 2500 reflections, synchronously on the main thread.
+        const covResult = covResultIn || covarianceFromJtJ(JtJ);
         if (!covResult) return null;
         const chi2 = ss_res / dof;
         const undetermined = new Set(covResult.undetermined || []);
@@ -1662,7 +1717,7 @@ function intensityOverlapClusters(fr, finalParams) {
         // Profile windows, from the same code that draws the pattern -- so the
         // notion of "overlapping" here is exactly the notion the fit used, Ka2
         // included, rather than a guess based on nominal FWHM.
-        const contributions = buildPeakContributions(workerWorkingData.tth, hklList, finalParams);
+        const contributions = buildPeakContributions(wd.tth, hklList, finalParams);
         const span = new Map();          // reflection index -> [start, stop)
         for (const c of contributions) {
             const cur = span.get(c.peakIndex);
@@ -1738,8 +1793,12 @@ function intensityOverlapClusters(fr, finalParams) {
                 members: detail,
                 sumI, sigmaSum,
                 nUnresolved: detail.filter(d => !d.separable).length,
-                tthMin: Math.min(...detail.map(d => d.tth)),
-                tthMax: Math.max(...detail.map(d => d.tth))
+                // `detail` is already sorted by tth on the line above, so the
+                // ends are free. Math.min(...arr.map(..)) built a temporary
+                // array and then spread it as arguments -- with broad
+                // overlapping peaks one cluster can hold most of the pattern.
+                tthMin: detail[0].tth,
+                tthMax: detail[detail.length - 1].tth
             };
             clusters.push(cl);
             detail.forEach(d => byName.set(d.name, { cluster: cl, member: d }));
@@ -1874,6 +1933,11 @@ function cfReadinessProblem() {
 function wySetRunning(running) {
     wyckoffRunning = running;
     cfRunning = running;                       // shares the one worker
+    // Every start, finish, cancellation and crash passes through here, so the
+    // footer is driven from one place rather than from each of the paths that
+    // can end a run. A crashed worker clears it too.
+    if (running) AppStatus.begin('wyckoff', 'starting\u2026');
+    else AppStatus.end('wyckoff');
     document.body.style.cursor = running ? 'wait' : '';
     setLeftPanelLocked(running, ['wyckoff-cancel-btn']);
     const run = document.getElementById('run-wyckoff-btn');
@@ -2401,7 +2465,7 @@ function wyElementCountsUI(formula) {
 function wyMaxZSearches() {
     const el = document.getElementById('cf-wyckoff-max-z');
     const v = el ? parseInt(el.value, 10) : NaN;
-    return Number.isFinite(v) ? Math.min(24, Math.max(1, v)) : 6;
+    return Number.isFinite(v) ? Math.min(24, Math.max(1, v)) : 3;
 }
 
 /** Cycles per charge-flipping trial. */
@@ -2482,62 +2546,74 @@ function cfIsCentrosymmetricSetting() {
  *  processing. Tracked so the status line is written once per transition. */
 let wyckoffPhase = 'idle';
 
+/**
+ * Wyckoff search progress, straight to the unified footer.
+ *
+ * This used to write four elements inside the Wyckoff tab -- a container to
+ * unhide, a bar, a generation counter and a CC readout. They are gone, so the
+ * lookups and their `if (bar)` guards went with them rather than being left
+ * to fetch null forever behind a test that could no longer fail.
+ *
+ * @param {object} msg A wy-start / wy-progress / cf-wyckoff-* message.
+ */
 function wyckoffProgress(msg) {
-    const cont = document.getElementById('wyckoff-progress-container');
-    if (cont) cont.classList.remove('hidden');
-    const bar = document.getElementById('wyckoff-progress-bar');
-    const gen = document.getElementById('wyckoff-gen-count');
-    const cc  = document.getElementById('wyckoff-cc');
-
-    // THE PHASE IS NAMED FOR WHAT THE USER IS WAITING ON, NOT FOR THE STEP.
-    //
-    // Every message used to be passed straight through, so the panel read
-    // "Compiling WebGPU Swarm..." -- an internal step nobody can act on -- and
-    // then kept reading it, because nothing overwrote the text until the run
-    // finished. An idle panel therefore looked like a stalled shader compile.
-    // There are now three states: Preparing while the device and tables are
-    // built, Processing once generations are arriving, and a result at the end.
-    // The idle state is the en dash setWyckoffStatus() already falls back to.
     // WHICH Z THIS IS, when there is more than one. A scan runs a full search
     // per candidate, so the bar sweeps to the right once per Z; without the
     // label that reads as a single search restarting itself over and over.
     const zTag = (msg.zCount > 1 && Number.isFinite(msg.z))
         ? `Z = ${msg.z} (${msg.zIndex}/${msg.zCount}) \u00b7 ` : '';
 
+    // THE PHASE IS NAMED FOR WHAT THE USER IS WAITING ON, NOT FOR THE STEP.
+    // Messages used to be passed straight through, so the panel read
+    // "Compiling WebGPU Swarm..." -- an internal step nobody can act on -- and
+    // kept reading it, because nothing overwrote the text until the run
+    // finished. An idle panel therefore looked like a stalled shader compile.
     if (msg.type === 'wy-start' || msg.type === 'cf-wyckoff-start') {
-        if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; void bar.offsetWidth; }
-        if (gen) gen.textContent = zTag + 'Preparing\u2026';
-        if (cc) cc.textContent = '--';
         wyckoffPhase = 'preparing';
-        setWyckoffStatus(zTag + 'Preparing\u2026');
+        // Negative fraction: preparation cannot report one, and a bar frozen
+        // at 0% while a shader compiles reads as a hang.
+        AppStatus.set('wyckoff', -1, zTag.replace(/\s*\u00b7\s*$/, ', ') + 'preparing\u2026');
         return;
     }
 
-    // First progress message: the preparation is over and the search is
-    // running. Set once rather than on every generation, so the status line is
-    // not rewritten a thousand times with the same string.
-    if (msg.generation === 0 || wyckoffPhase !== 'processing') {
-        wyckoffPhase = 'processing';
-        setWyckoffStatus('Processing\u2026');
-    }
+    // First progress message: preparation is over and the search is running.
+    if (msg.generation === 0 || wyckoffPhase !== 'processing') wyckoffPhase = 'processing';
 
     const frac = (msg.wave - 1 + (msg.restart - 1 + msg.generation / msg.generations) / msg.restarts) / msg.waves;
-    if (bar && Number.isFinite(frac)) {
-        bar.style.transition = 'width 0.1s linear';
-        bar.style.width = `${Math.min(100, Math.max(0, frac * 100))}%`;
-    }
-    if (gen) {
-        const waveTxt = msg.waves > 1 ? `Wave ${msg.wave}/${msg.waves} \u00b7 ` : '';
-        gen.textContent = `${waveTxt}Restart ${msg.restart}/${msg.restarts} \u00b7 Gen ${msg.generation}/${msg.generations}`;
-    }
-    if (cc) cc.textContent = Number.isFinite(msg.best) ? msg.best.toFixed(4) : '--';
+
+    // Phrased for someone who is not looking at the Wyckoff tab: what is being
+    // searched, how far in, and how good.
+    AppStatus.set('wyckoff', Number.isFinite(frac) ? frac : -1,
+        zTag.replace(/\s*\u00b7\s*$/, ', ')
+        + (msg.waves > 1 ? `wave ${msg.wave}/${msg.waves}, ` : '')
+        + `restart ${msg.restart}/${msg.restarts}, gen ${msg.generation}/${msg.generations}`
+        + (Number.isFinite(msg.best) ? `, CC ${msg.best.toFixed(4)}` : ''));
 }
 
+/**
+ * The Wyckoff panel's status line.
+ *
+ * #wyckoff-status is gone -- everything it said now belongs in the unified
+ * footer -- but this function stays, for two reasons. Nineteen call sites
+ * would otherwise all need editing, and several of its messages have NO other
+ * channel: "Stopping\u2026 returning the best structure found so far", "the
+ * worker did not answer in time", and the completion line naming how many
+ * solutions a Z scan produced all reach the user only through here.
+ *
+ * A warn also goes to the session log, because a warning that scrolls out of
+ * a six-second footer notice should still be findable afterwards.
+ *
+ * @param {string} text
+ * @param {'warn'} [kind]
+ */
 function setWyckoffStatus(text, kind) {
-    const el = document.getElementById('wyckoff-status');
-    if (!el) return;
-    el.textContent = text || '\u2013';
-    el.style.color = (kind === 'warn') ? 'var(--system-orange, #c47f1a)' : '';
+    // The en dash is the idle placeholder the old element fell back to; in a
+    // footer that clears itself there is nothing to place-hold.
+    if (!text || text === '\u2013') return;
+    if (typeof AppStatus !== 'undefined') {
+        AppStatus.notice('wyckoff', text, kind === 'warn' ? 12000 : 6000);
+    }
+    if (kind === 'warn' && typeof logEvent === 'function') logEvent('Wyckoff: ' + text);
 }
 
 function updateWyckoffTabState() {
@@ -2904,6 +2980,10 @@ function setLeftPanelLocked(locked, allowIds) {
 
 function cfSetRunning(running) {
     cfRunning = running;
+    // Same choke point as wySetRunning: one place that knows a run began or
+    // ended, however it ended.
+    if (running) AppStatus.begin('cf', 'starting\u2026');
+    else AppStatus.end('cf');
     // runChargeFlipping never touched the cursor -- only the structure and
     // Wyckoff launchers did -- so a charge-flipping run looked idle from the
     // moment it started until the moment it finished.
@@ -3594,7 +3674,7 @@ const gridSize   = parseInt(document.getElementById('cf-grid-size').value, 10);
         return;
     }
 
-document.getElementById('cf-progress-container').classList.remove('hidden');
+{ const c = document.getElementById('cf-progress-container'); if (c) c.classList.remove('hidden'); }
     document.getElementById('cf-results-group').classList.add('hidden');
     cfCancelled = false;
     cfSetRunning(true);
@@ -3713,6 +3793,14 @@ seed: (Date.now() + trialIndex * 7919) >>> 0,
 
 if (msg.type === 'cf-progress') {
             const doneFraction = ((trialIndex - 1) + msg.iter / msg.total) / trials;
+            // Also to the footer, so the run stays visible from any tab.
+            {
+                const shownR = Number.isFinite(msg.bestR) ? msg.bestR : msg.R;
+                AppStatus.set('cf', doneFraction,
+                    (trials > 1 ? `start ${trialIndex}/${trials}, ` : '')
+                    + `cycle ${msg.iter}/${msg.total}`
+                    + (Number.isFinite(shownR) ? `, R ${shownR.toFixed(4)}` : ''));
+            }
             const bar = document.getElementById('cf-progress-bar');
             if (bar) {
                 bar.style.backgroundColor = 'var(--system-blue)'; // Reset to default blue for classical CF
@@ -3739,6 +3827,9 @@ if (msg.type === 'cf-progress') {
 if (msg.type === 'cf-wyckoff-progress') {
             // Track total progress across all waves and restarts
             const doneFraction = (msg.wave - 1 + (msg.restart - 1 + msg.generation / msg.generations) / msg.restarts) / msg.waves;
+            AppStatus.set('cf', doneFraction,
+                `wave ${msg.wave}/${msg.waves}, restart ${msg.restart}/${msg.restarts}`
+                + (Number.isFinite(msg.best) ? `, CC ${msg.best.toFixed(4)}` : ''));
             const bar = document.getElementById('cf-progress-bar');
             
             if (bar) {
@@ -4796,9 +4887,6 @@ function runBuildStructure(quiet) {
             const runBtn = document.getElementById('run-charge-flip-btn');
             if (runBtn) runBtn.textContent = 'Building Structure...';
             
-            const pdfBtn = document.getElementById('cf-generate-pdf');
-            if (pdfBtn) pdfBtn.disabled = true;
-
             terminateChargeFlipWorker();
             try {
                 chargeFlipWorker = new Worker('js/charge_flipping_worker.js');
@@ -4806,7 +4894,6 @@ function runBuildStructure(quiet) {
                 document.body.style.cursor = 'default';
                 cfSetStructureStatus('Could not start charge_flipping_worker.js: ' + err.message, 'warn');
                 cfSetRunning(false);
-                if (pdfBtn && rpHistory.cf.length > 0) pdfBtn.disabled = false;
                 return;
             }
 
@@ -4814,7 +4901,6 @@ function runBuildStructure(quiet) {
                 document.body.style.cursor = 'default';
                 terminateChargeFlipWorker();
                 cfSetRunning(false);
-                if (pdfBtn && rpHistory.cf.length > 0) pdfBtn.disabled = false;
             };
 
             chargeFlipWorker.onerror = (ev) => {
@@ -5322,24 +5408,60 @@ function exportChargeFlipMap() {
         // helper "mirrors the identical helper in refinement_worker.js" -- a
         // fourth hand-maintained copy. There is now one.
  
+// ---------------------------------------------------------------------------
+//  HELP PANEL: click to open, click to close.
+//
+//  It opened on mouseenter and closed a second after mouseleave. The icon sits
+//  in the top-right corner beside the theme toggle and the report button, so
+//  every trip to either one dragged the pointer across it and threw a 280px
+//  panel over the plot. A panel that appears without being asked for has to
+//  guess when it is no longer wanted, and the one-second grace period was that
+//  guess; a toggle does not have to guess.
+// ---------------------------------------------------------------------------
 const tooltipContainer = document.querySelector('.help-tooltip-container');
 const tooltipContent = document.querySelector('.tooltip-content');
-let tooltipTimer;
+const tooltipIcon = tooltipContainer ? tooltipContainer.querySelector('.help-icon') : null;
 
 if (tooltipContainer && tooltipContent) {
-    tooltipContainer.addEventListener('mouseenter', () => {
-        // If a timer is set to hide the tooltip, cancel it
-        clearTimeout(tooltipTimer);
-        // Add the 'visible' class to show the tooltip
-        tooltipContent.classList.add('visible');
+    const setHelpOpen = (open) => {
+        tooltipContent.classList.toggle('visible', open);
+        if (tooltipIcon) {
+            tooltipIcon.setAttribute('aria-expanded', open ? 'true' : 'false');
+            tooltipIcon.title = open ? 'Close help' : 'Help';
+        }
+    };
+    setHelpOpen(false);
+
+    tooltipContainer.addEventListener('click', (e) => {
+        // A link inside the panel must open, not toggle the panel shut under
+        // the click that followed it.
+        if (e.target.closest('a')) return;
+        e.stopPropagation();
+        setHelpOpen(!tooltipContent.classList.contains('visible'));
     });
 
-    tooltipContainer.addEventListener('mouseleave', () => {
-        // Start a new timer to hide the tooltip after 1 second
-        tooltipTimer = setTimeout(() => {
-            tooltipContent.classList.remove('visible');
-        }, 1000); //  milliseconds 
+    // Clicking anywhere else, or pressing Escape, closes it. Without these the
+    // only way out is to find the icon again, which is worse than the hover
+    // behaviour it replaces.
+    document.addEventListener('click', (e) => {
+        if (!tooltipContainer.contains(e.target)) setHelpOpen(false);
     });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && tooltipContent.classList.contains('visible')) setHelpOpen(false);
+    });
+
+    // Keyboard reachable: it is a control now, not decoration.
+    if (tooltipIcon) {
+        tooltipIcon.setAttribute('role', 'button');
+        tooltipIcon.setAttribute('tabindex', '0');
+        tooltipIcon.setAttribute('aria-label', 'Help');
+        tooltipIcon.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setHelpOpen(!tooltipContent.classList.contains('visible'));
+            }
+        });
+    }
 }
 
 // Expose hoisted math functions required by reporting.js
@@ -6267,7 +6389,7 @@ function generateMasterHklList() {
     const rawHklIndices = generateAndCacheHklIndices(selectedSg, maxTth, params);
 
     // 2. Create a deep copy to work with, so we don't modify the cached version.
-    let workingHklList = JSON.parse(JSON.stringify(rawHklIndices));
+    let workingHklList = rawHklIndices.map(r => ({ ...r, hkl_list: r.hkl_list ? r.hkl_list.slice() : r.hkl_list }));
 
     // 3. Calculate the 2-theta positions for the current parameters.
     updateHklPositions(workingHklList, params, selectedSg.system);
@@ -6553,6 +6675,7 @@ const minTth = parseFloat(controls.tthMinSlider.value);
                      numHkls: workerPayload.masterHklList.length,
                      params: Object.keys(workerPayload.initialParams).length
                 }); */
+                 if (window.resetFitWatchdogTimings) window.resetFitWatchdogTimings();
                  refinementWorker.postMessage(workerPayload);
                  // ARMED HERE, NOT ONLY ON THE FIRST PROGRESS MESSAGE.
                  //
@@ -6582,13 +6705,84 @@ const minTth = parseFloat(controls.tthMinSlider.value);
             }
         }
 
+        // ===================================================================
+        //  FULL-PRECISION ROUND-TRIP THROUGH THE INPUT BOXES
+        //
+        //  updateUI writes a refined value with toFixed(4), and getAllParams
+        //  parses that string straight back. So a two-stage refinement -- PT
+        //  and then LM as separate runs, or simply pressing the button twice --
+        //  restarts from a cell edge truncated at 1e-4 A. That is coarser than
+        //  the ESD on good data, which makes the truncation a real limit on
+        //  what the second run can report rather than a cosmetic one.
+        //
+        //  The box keeps showing the rounded value, because that is what is
+        //  readable. The unrounded one rides along in a data attribute.
+        //
+        //  THE STALENESS PROBLEM, AND WHY THIS IS SAFE.
+        //  A cached value is only usable if it still belongs to what the box
+        //  displays. Rather than tracking edits with listeners -- which would
+        //  have to catch typing, pasting, spinner clicks, and every other
+        //  place in this file that assigns .value directly and fires no event
+        //  at all -- setExact records the exact STRING it displayed, and
+        //  readExact hands back the cached number only when the box still
+        //  contains that identical string.
+        //
+        //  That is stateless and total. Any change from any source, by any
+        //  mechanism, makes the strings differ and the cache is ignored. The
+        //  one case it "misses" is a user retyping the same digits, where
+        //  returning the precise value is the better answer anyway.
+        // ===================================================================
+
+        /**
+         * Display a value rounded, remember it exactly.
+         * @param {HTMLInputElement|null} el
+         * @param {number} value
+         * @param {number} digits Decimal places to display.
+         */
+        function setExact(el, value, digits) {
+            if (!el || typeof value !== 'number' || !isFinite(value)) return;
+            const shown = value.toFixed(digits);
+            el.value = shown;
+            el.dataset.exact = String(value);
+            el.dataset.exactShown = shown;
+        }
+
+        /**
+         * Forget any remembered value. Call wherever .value is assigned from
+         * a source other than setExact (a loaded file, a reset), so a stale
+         * pairing cannot survive by coincidence.
+         * @param {HTMLInputElement|null} el
+         */
+        function clearExact(el) {
+            if (!el || !el.dataset) return;
+            delete el.dataset.exact;
+            delete el.dataset.exactShown;
+        }
+
+        /**
+         * The full-precision value if the box is untouched since setExact,
+         * otherwise whatever it now contains.
+         * @param {HTMLInputElement|null} el
+         * @returns {number} NaN for a missing or unparseable field, exactly as
+         *          parseFloat would give, so markInvalid() still catches it.
+         */
+        function readExact(el) {
+            if (!el) return NaN;
+            const d = el.dataset;
+            if (d && d.exact !== undefined && d.exactShown === el.value) {
+                const v = Number(d.exact);
+                if (isFinite(v)) return v;
+            }
+            return parseFloat(el.value);
+        }
+
         function getAllParams() {
             const profileType = controls.profileSelect.value;
             let params = {
-                lambda: parseFloat(controls.wavelength.value),
-                lambda2: parseFloat(controls.wavelength2.value),
-                ratio: parseFloat(controls.ratio21.value),       
-                zeroShift: parseFloat(controls.zeroShift.value),
+                lambda: readExact(controls.wavelength),
+                lambda2: readExact(controls.wavelength2),
+                ratio: readExact(controls.ratio21),
+                zeroShift: readExact(controls.zeroShift),
                 profileType: profileType,
                 // Carried through the refinement so a snapshot reports the
                 // polarisation model that was actually in force when it ran.
@@ -6602,7 +6796,7 @@ const minTth = parseFloat(controls.tthMinSlider.value);
             document.querySelectorAll('#lattice-parameters-container input[type="number"]').forEach(input => {
                 if (input.id.startsWith('lattice-param-')) {
                     const paramName = input.id.replace('lattice-param-', '');
-                    params[paramName] = parseFloat(input.value);
+                    params[paramName] = readExact(input);
                 }
             });
 
@@ -6633,7 +6827,12 @@ const minTth = parseFloat(controls.tthMinSlider.value);
                     // two are exactly 90 by symmetry, whichever axis it is.
                     const ang = MONOCLINIC_ANGLE_FOR_AXIS[monoclinicUniqueAxis(currentSG)];
                     ['alpha', 'beta', 'gamma'].forEach(k => { if (k !== ang) params[k] = 90; });
-                    if (!isFinite(params[ang])) params[ang] = 90;
+                    // Do NOT substitute 90 for a blank or NaN unique angle. This ran
+            // BEFORE markInvalid(), so an empty beta field was silently
+            // accepted as 90 degrees instead of being reported. Leave it
+            // non-finite and let the validity check below catch it; only the
+            // two angles that symmetry genuinely fixes are set, above.
+            if (!isFinite(params[ang])) { /* reported by markInvalid() */ }
                     break;
                 }
             }
@@ -6641,32 +6840,32 @@ const minTth = parseFloat(controls.tthMinSlider.value);
             switch (profileType) {
                 case "simple_pvoigt":
                     Object.assign(params, { 
-                        GU: parseFloat(controls.paramGU.value), GV: parseFloat(controls.paramGV.value), 
-                        GW: parseFloat(controls.paramGW.value), GP: parseFloat(controls.paramGP.value), 
-                        LX: parseFloat(controls.paramLX.value), eta: parseFloat(controls.paramEta.value), 
-                        shft: parseFloat(controls.paramShft.value), trns: parseFloat(controls.paramTrns.value) 
+                        GU: readExact(controls.paramGU), GV: readExact(controls.paramGV), 
+                        GW: readExact(controls.paramGW), GP: readExact(controls.paramGP), 
+                        LX: readExact(controls.paramLX), eta: readExact(controls.paramEta), 
+                        shft: readExact(controls.paramShft), trns: readExact(controls.paramTrns) 
                     });
                     break;
                 case "tch_aniso":
                     Object.assign(params, { 
-                        U: parseFloat(controls.paramU.value), V: parseFloat(controls.paramV.value), 
-                        W: parseFloat(controls.paramW.value), X: parseFloat(controls.paramX.value), 
-                        Y: parseFloat(controls.paramY.value), SL: parseFloat(controls.paramSL.value), 
-                        HL: parseFloat(controls.paramHL.value), S400: parseFloat(controls.paramS400.value), 
-                        S040: parseFloat(controls.paramS040.value), S004: parseFloat(controls.paramS004.value), 
-                        S220: parseFloat(controls.paramS220.value), S202: parseFloat(controls.paramS202.value), 
-                        S022: parseFloat(controls.paramS022.value) 
+                        U: readExact(controls.paramU), V: readExact(controls.paramV), 
+                        W: readExact(controls.paramW), X: readExact(controls.paramX), 
+                        Y: readExact(controls.paramY), SL: readExact(controls.paramSL), 
+                        HL: readExact(controls.paramHL), S400: readExact(controls.paramS400), 
+                        S040: readExact(controls.paramS040), S004: readExact(controls.paramS004), 
+                        S220: readExact(controls.paramS220), S202: readExact(controls.paramS202), 
+                        S022: readExact(controls.paramS022) 
                     });
                     break;
                 case "split_pvoigt":
                     Object.assign(params, { 
-                        GU_L: parseFloat(controls.paramGU_L.value), GV_L: parseFloat(controls.paramGV_L.value), 
-                        GW_L: parseFloat(controls.paramGW_L.value), LX_L: parseFloat(controls.paramLX_L.value),
-                        GU_R: parseFloat(controls.paramGU_R.value), GV_R: parseFloat(controls.paramGV_R.value), 
-                        GW_R: parseFloat(controls.paramGW_R.value), LX_R: parseFloat(controls.paramLX_R.value),
-                        eta_split: parseFloat(controls.paramEta_split.value),
-                        shft_split: parseFloat(controls.paramShft_split.value), 
-                        trns_split: parseFloat(controls.paramTrns_split.value) 
+                        GU_L: readExact(controls.paramGU_L), GV_L: readExact(controls.paramGV_L), 
+                        GW_L: readExact(controls.paramGW_L), LX_L: readExact(controls.paramLX_L),
+                        GU_R: readExact(controls.paramGU_R), GV_R: readExact(controls.paramGV_R), 
+                        GW_R: readExact(controls.paramGW_R), LX_R: readExact(controls.paramLX_R),
+                        eta_split: readExact(controls.paramEta_split),
+                        shft_split: readExact(controls.paramShft_split), 
+                        trns_split: readExact(controls.paramTrns_split) 
                     });
                     break;
             }
@@ -6858,6 +7057,14 @@ function debounce(func, wait) {
 
         // Build the plain-text theoretical report saved by "Save Report"
         // when no experimental data is loaded.
+        // Exposed: printActiveTab() is top-level and cannot see into this
+        // closure, and this is the only export that works before a file is
+        // loaded.
+        // Only this one needs exporting: hasExperimentalData() is a top-level
+        // function in js/charting.js and is therefore already global, but
+        // generateTheoreticalReport is scoped to this DOMContentLoaded closure
+        // and printActiveTab() is not.
+        window.generateTheoreticalReport = generateTheoreticalReport;
         function generateTheoreticalReport() {
             const sg = currentSG;
             const p = getAllParams();
@@ -6867,12 +7074,30 @@ function debounce(func, wait) {
             const z = p.zeroShift || 0;
             const now = new Date();
             const L = [];
-            L.push('Theoretical HKL / 2-theta list');
+            // The line below used to read "(no experimental data loaded)"
+            // unconditionally, because this report was only ever reachable
+            // from the old Save Report when no file was open. The Plot tab's
+            // report button reaches it with a pattern loaded too, and telling
+            // someone their data is absent while it is on screen in front of
+            // them is worse than saying nothing.
+            const haveData = hasExperimentalData();
+            L.push(haveData ? 'Calculated reflection list'
+                            : 'Theoretical HKL / 2-theta list');
             L.push('========================================================================');
             L.push('');
             L.push(APP_VERSION_TEXT);
             L.push(`Report Generated: ${now.toLocaleString()}`);
-            L.push('(no experimental data loaded)');
+            if (haveData) {
+                const tthLo = fullExperimentalData.tth[0];
+                const tthHi = fullExperimentalData.tth[fullExperimentalData.tth.length - 1];
+                L.push(`Data        : ${fullExperimentalData.tth.length} points, `
+                     + `${tthLo.toFixed(3)} - ${tthHi.toFixed(3)} deg`);
+                L.push('Reflections are calculated from the cell and space group below;');
+                L.push('no refinement has been applied. Run Le Bail or Pawley, and report');
+                L.push('from that tab, for fitted parameters and their uncertainties.');
+            } else {
+                L.push('(no experimental data loaded)');
+            }
             L.push('');
             if (sg) {
                 L.push(`Space Group : #${sg.number}  ${sg.symbol || sg.standard_symbol}`
@@ -7016,6 +7241,10 @@ function debounce(func, wait) {
         }
 
         controls.progressBarContainer.classList.toggle('hidden', !fitting);
+        // The refinement's own choke point. The label the footer shows comes
+        // from the worker's progress messages; this only opens and closes it.
+        if (fitting) AppStatus.begin('fit', 'starting\u2026');
+        else AppStatus.end('fit');
         document.body.style.cursor = fitting ? 'wait' : 'default';
         if (!fitting) {
             controls.progressBar.style.width = '0%';
@@ -7028,11 +7257,11 @@ function debounce(func, wait) {
     }
         
     function updateUI(params, stats, netPeakPattern_full, background_full, scaleFactor, hklList) {
-            const safeUpdate = (paramValue, controlElement, digits) => { 
-                if (controlElement && typeof paramValue === 'number' && isFinite(paramValue)) {
-                    controlElement.value = paramValue.toFixed(digits);
-                }
-            };
+            // Displays the rounded value and stores the unrounded one, so a
+            // second refinement starts where the first finished rather than
+            // 1e-4 A away from it. See setExact / readExact.
+            const safeUpdate = (paramValue, controlElement, digits) =>
+                setExact(controlElement, paramValue, digits);
             
             if (stats && typeof stats.r_p === 'number') controls.rpResult.textContent = stats.r_p.toFixed(2);
             if (stats && typeof stats.rwp === 'number') controls.rwpResult.textContent = stats.rwp.toFixed(2);
@@ -7092,6 +7321,9 @@ function debounce(func, wait) {
             document.body.appendChild(element);
             element.click();
             document.body.removeChild(element);
+            // ADD: without this every save leaks the whole file for the
+            // lifetime of the tab.
+            URL.revokeObjectURL(element.href);
         }
 
 
@@ -7725,17 +7957,21 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
             //    Ka2 component to data that has none.
             if (Number.isFinite(pd.wavelength) && controls.wavelength) {
                 controls.wavelength.value = pd.wavelength.toFixed(5);
+                clearExact(controls.wavelength);   // value now comes from the file, not from a fit
                 said.push(`lambda1 = ${pd.wavelength.toFixed(5)} A`);
             }
             if (controls.wavelength2 && controls.ratio21) {
                 if (Number.isFinite(pd.wavelength2) && Number.isFinite(pd.ratio21)) {
                     controls.wavelength2.value = pd.wavelength2.toFixed(5);
+                    clearExact(controls.wavelength2);   // value now comes from the file, not from a fit
                     controls.ratio21.value = String(+pd.ratio21.toFixed(5));
+                    clearExact(controls.ratio21);   // value now comes from the file, not from a fit
                     said.push(`lambda2 = ${pd.wavelength2.toFixed(5)} A, I2/I1 = ${+pd.ratio21.toFixed(5)}`);
                 } else if (pd.cell || Number.isFinite(pd.wavelength)) {
                     controls.wavelength2.value = Number.isFinite(pd.wavelength)
                         ? pd.wavelength.toFixed(5) : controls.wavelength.value;
                     controls.ratio21.value = '0';
+                    clearExact(controls.ratio21);   // value now comes from the file, not from a fit
                     said.push('no Ka2 component (ratio set to 0)');
                 }
             }
@@ -7889,6 +8125,7 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                     //     zeroShift = 2theta_observed - 2theta_calculated.
                     if (Number.isFinite(parsedData.zeroShift) && controls.zeroShift) {
                         controls.zeroShift.value = parsedData.zeroShift.toFixed(4);
+                        clearExact(controls.zeroShift);   // value now comes from the file, not from a fit
                         logEvent(`Zero point read from file: ${parsedData.zeroShift.toFixed(4)}\u00b0`);
                     } else if (controls.zeroShift) {
                         // No zero in the file means no zero, not "keep the old
@@ -7896,6 +8133,7 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                         // pattern onto a new one shifts it by an amount that
                         // has nothing to do with it.
                         controls.zeroShift.value = '0.0';
+                        clearExact(controls.zeroShift);   // value now comes from the file, not from a fit
                     }
                     
                     // Convert parsed data to Float64Arrays for performance
@@ -8060,9 +8298,35 @@ function rpTimestamp(d) {
 // buffers, so JSON round-trip is used (these objects are already JSON-safe --
 // lastFitResultsCache is built the same way one line up from the call site).
 function rpSnapshotFit(mode, results) {
-    let clone;
-    try { clone = JSON.parse(JSON.stringify(results)); }
-    catch (e) { console.warn('Could not snapshot fit results:', e); return; }
+    // The controller now hands over a clone that has ALREADY had JtJ and
+    // __cov stripped, so cloning again cost a second full JSON round-trip of
+    // the whole result object per fit -- ~300 ms and 13 MB at 2500
+    // reflections, retained for every run for the life of the tab.
+    let clone = results;
+    if (!clone || typeof clone !== 'object') {
+        console.warn('Could not snapshot fit results: nothing to store.');
+        return;
+    }
+
+    // Freeze the data slice this run was fitted against. Without it,
+    // intensityOverlapClusters and calculateAllObservedIntensities read the
+    // LIVE workerWorkingData, so changing the 2-theta range and then selecting
+    // an earlier run from the dropdown recomputed its report over the new
+    // range and quietly reported numbers that run never produced.
+    try {
+        if (workerWorkingData && workerWorkingData.tth && !clone.workingData) {
+            clone.workingData = {
+                tth: Array.from(workerWorkingData.tth),
+                intensity: Array.from(workerWorkingData.intensity),
+                weights: Array.from(workerWorkingData.weights)
+            };
+        }
+        if (!clone.backgroundAnchors) {
+            clone.backgroundAnchors = (backgroundAnchors || []).map(a => ({ ...a }));
+        }
+    } catch (snapErr) {
+        console.warn('Could not snapshot the fitted slice:', snapErr);
+    }
 
     const when = new Date();
     rpRunCounter++;
@@ -8281,12 +8545,11 @@ function rpRefreshRunSelect(mode) {
     opts.forEach(o => sel.appendChild(o));
     sel.value = String(rpSelected[mode]);
 
-// Enable the export buttons for the tabs.
-    const has = hist.length > 0;
+    // Only the plain-text "Save report" buttons are gated now. The PDF button
+    // lives in the header and is never disabled: it reports whichever tab is
+    // in front and says what is missing when there is nothing there.
     const sb = document.getElementById(`${mode}-save-report`);
-    const pb = document.getElementById(`${mode}-generate-pdf`);
-    if (sb) sb.disabled = !has;
-    if (pb) pb.disabled = !has;
+    if (sb) sb.disabled = hist.length === 0;
 }
 
 function rpGetSelected(mode) {
@@ -8377,6 +8640,134 @@ function rpExportReport(mode) {
     }
 }
 
+/**
+ * Report whichever results tab is in front, as a PDF.
+ *
+ * ONE button, in the header, replacing the four per-tab "Generate PDF"
+ * buttons. Each of those carried its own enabled/disabled rule that had to be
+ * kept in step with the run history from several places -- cfSetRunning, the
+ * Wyckoff completion path, rpSnapshotFit -- and a stale one either offered a
+ * report that did not exist or refused one that did. Nothing is disabled now:
+ * press it where there is nothing to report and it says what is missing,
+ * which is information the greyed-out button never conveyed.
+ *
+ * It delegates to rpExportPDF, so every tab reports exactly what its own
+ * button reported, including the Wyckoff Z-scan selection logic.
+ */
+/**
+ * The Log tab reports EVERYTHING: the session log, then the most recent run
+ * from each of the four histories that has one.
+ *
+ * This is the "what did I actually do today" document. The per-tab reports
+ * answer "what does this run say"; neither substitutes for the other, and the
+ * session log on its own is a list of timestamps with no numbers attached.
+ *
+ * Only the LAST run of each history is included. A session with thirty Pawley
+ * attempts would otherwise produce a document nobody reads, and the earlier
+ * ones are still reachable one at a time from their own tab.
+ */
+async function printSessionSummary() {
+    const say = (m) => (typeof showToast === 'function') ? showToast(m, 'error') : alert(m);
+    const parts = [];
+    const rule = '='.repeat(72);
+
+    parts.push('Powder 5 \u2014 Session Summary', rule, '');
+    if (typeof APP_VERSION_TEXT === 'string') parts.push(APP_VERSION_TEXT);
+    parts.push(`Report Generated: ${new Date().toLocaleString()}`, '');
+
+    const log = (typeof sessionLog !== 'undefined' && sessionLog.length)
+        ? sessionLog : null;
+    parts.push('--- Session Log ---', '');
+    parts.push(log ? log.join('\n') : '(empty)');
+    parts.push('', '');
+
+    // The last run of each history, in the order the work is normally done.
+    const order = [
+        ['lebail',  'Le Bail Refinement'],
+        ['pawley',  'Pawley Refinement'],
+        ['cf',      'Charge Flipping'],
+        ['wyckoff', 'Wyckoff Search'],
+    ];
+    let any = false;
+    for (const [mode, title] of order) {
+        const hist = rpHistory[mode];
+        if (!hist || !hist.length) continue;
+        const entry = hist[hist.length - 1];
+        const runData = (mode === 'wyckoff') ? (rpWyckoffView(entry) || entry.result)
+                      : (mode === 'cf') ? entry.result
+                      : entry.results;
+        if (!runData) continue;
+        any = true;
+        parts.push(rule, `${title}  \u2014  ${entry.label || ('run #' + entry.id)}`, rule, '');
+        // generateReportContent reads the ACTIVE results, so each section is
+        // produced with that run installed and the previous one put back.
+        const prev = window.__activeReportResults;
+        window.__activeReportResults = runData;
+        try {
+            parts.push(generateReportContent('summary', runData));
+        } catch (e) {
+            parts.push(`(this run could not be reported: ${e.message || e})`);
+        } finally {
+            window.__activeReportResults = prev;
+        }
+        parts.push('', '');
+    }
+
+    if (!log && !any) {
+        say('Nothing to report: the log is empty and no run has finished yet.');
+        return;
+    }
+    if (!any) parts.push('(no completed runs to report)');
+
+    try {
+        // With the chart: a session summary that includes a refinement should
+        // show what was being fitted.
+        renderTextPdf(parts.join('\n'), 'Session-Summary',
+                      typeof hasExperimentalData === 'function' && hasExperimentalData());
+    } catch (e) {
+        say('Could not generate the report: ' + (e.message || e));
+    }
+}
+
+async function printActiveTab() {
+    const el = document.querySelector('.rp-tab.active');
+    const tab = el ? el.dataset.rptab : 'plot';
+    const say = (m) => (typeof showToast === 'function') ? showToast(m, 'error') : alert(m);
+
+    if (tab === 'lebail' || tab === 'pawley' || tab === 'cf' || tab === 'wyckoff') {
+        if (!rpGetSelected(tab)) {
+            const what = { lebail: 'Le Bail refinement', pawley: 'Pawley refinement',
+                           cf: 'charge-flipping run', wyckoff: 'Wyckoff search' }[tab];
+            say(`No ${what} to report yet. Run one first, or switch to the Plot tab to report the pattern.`);
+            return;
+        }
+        return rpExportPDF(tab);
+    }
+
+    if (tab === 'log') return printSessionSummary();
+
+    // PLOT TAB: the pattern, and ONLY the pattern.
+    //
+    // It used to report the live fit when one existed, which made the button
+    // mean different things on the same tab: run Le Bail and it produced a Le
+    // Bail report; run Pawley afterwards and the same button on the same tab
+    // silently produced a Pawley one. A refinement is reported from its own
+    // tab, where the history selector says which run is being reported.
+    //
+    // With no data loaded there is nothing to plot, so the chart page is
+    // omitted -- a page holding an empty axis is not worth the paper.
+    const haveData = (typeof hasExperimentalData === 'function') && hasExperimentalData();
+    if (typeof window.generateTheoreticalReport === 'function') {
+        try {
+            renderTextPdf(window.generateTheoreticalReport(),
+                          haveData ? 'Pattern' : 'Theoretical-Pattern',
+                          haveData);
+        } catch (e) { say('Could not generate the report: ' + (e.message || e)); }
+        return;
+    }
+    say('Nothing to report yet. Load a pattern, or set a cell and space group to export the theoretical reflection list.');
+}
+
 async function rpExportPDF(mode) {
     const entry = rpGetSelected(mode);
     if (!entry) { showToast('No run selected.', 'error'); return; }
@@ -8397,7 +8788,13 @@ async function rpExportPDF(mode) {
         const modeLabel = mode === 'pawley' ? 'Pawley'
                         : mode === 'lebail' ? 'LeBail'
                         : mode === 'wyckoff' ? 'Wyckoff' : 'ChargeFlipping';
-        await generatePdfReport(runData, modeLabel);
+        // Charge flipping and Wyckoff report a structure, not a fit to the
+        // pattern. The powder plot behind them is the same picture the Plot
+        // tab exports, and a page of it at the back of a structure report is
+        // noise. Le Bail and Pawley keep it: there, the fit to the pattern IS
+        // the result.
+        const withChart = (mode === 'lebail' || mode === 'pawley');
+        await generatePdfReport(runData, modeLabel, withChart);
     } catch (e) {
         alert('An error occurred while generating the report: ' + (e.message || e));
     } finally {
@@ -8640,8 +9037,6 @@ function rpWyckoffSolutionsTable(st, entry) {
 function rpRenderWyckoffRun() {
     const body = document.getElementById('wyckoff-run-body');
     if (!body) return;
-    const pdfBtn = document.getElementById('wyckoff-generate-pdf');
-
     // Render the SELECTED history entry, falling back to the live structure.
     // Without this the picker would change the label and nothing else.
     const entry = rpHistory.wyckoff.find(e => e.id === rpSelected.wyckoff);
@@ -8649,8 +9044,6 @@ function rpRenderWyckoffRun() {
     const st = rpWyckoffView(entry) || cfStructure;
     const haveWyckoff = !!(st && Array.isArray(st.sites) && st.sites.length &&
                            st.sites.some(x => x.wyckoff));
-    if (pdfBtn) pdfBtn.disabled = !haveWyckoff;
-
     if (!haveWyckoff) {
         body.innerHTML = '<p class="rp-empty">No Wyckoff search yet. Enter a target composition ' +
                          'in the Wyckoff tab and press Search Wyckoff.</p>';
@@ -8941,16 +9334,15 @@ function rpRenderCFRun() {
 
         // Right-panel results tabs
 const lbSave = document.getElementById('lebail-save-report');
-        const lbPdf  = document.getElementById('lebail-generate-pdf');
         const pwSave = document.getElementById('pawley-save-report');
-        const pwPdf  = document.getElementById('pawley-generate-pdf');
-        const cfPdf  = document.getElementById('cf-generate-pdf');
-        
+
         if (lbSave) lbSave.addEventListener('click', () => rpExportReport('lebail'));
-        if (lbPdf)  lbPdf.addEventListener('click',  () => rpExportPDF('lebail'));
         if (pwSave) pwSave.addEventListener('click', () => rpExportReport('pawley'));
-        if (pwPdf)  pwPdf.addEventListener('click',  () => rpExportPDF('pawley'));
-        if (cfPdf)  cfPdf.addEventListener('click',  () => rpExportPDF('cf'));
+
+        // The four per-tab PDF buttons are gone; one header button reports
+        // whichever tab is in front. See printActiveTab().
+        const printBtn = document.getElementById('print-report-btn');
+        if (printBtn) printBtn.addEventListener('click', () => printActiveTab());
         
         const resizer = document.getElementById('drag-handle');
         const leftPanel = document.getElementById('controls-panel');

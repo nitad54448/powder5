@@ -423,6 +423,7 @@ blockquote {
             <li><a href="#getting-started">Getting Started</a></li>
             <li><a href="#installation" class="sub-link">Files &amp; Offline Use</a></li>
             <li><a href="#chart-interactions">Chart Interactions</a></li>
+            <li><a href="#status-footer" class="sub-link">The Status Bar</a></li>
             <li><a href="#decomposition-methods">Decomposition Methods</a></li>
             <li><a href="#le-bail-method" class="sub-link">Le Bail Method</a></li>
             <li><a href="#pawley-method" class="sub-link">Pawley Method</a></li>
@@ -460,6 +461,7 @@ blockquote {
             <li><a href="#results-weights" class="sub-link">Weighting &amp; ESDs</a></li>
             <li><a href="#results-chi2-low" class="sub-link">Low &chi;&sup2;</a></li>
             <li><a href="#results-clusters" class="sub-link">Overlap Clusters</a></li>
+            <li><a href="#exact-coincidences" class="sub-link">Exact Coincidences</a></li>
             <blockquote>
               <li><a href="#results-wh" class="sub-link">Williamson-Hall Analysis</a></li>
             </blockquote>
@@ -519,7 +521,7 @@ blockquote {
                 install. Every other format is plain text and needs nothing extra.
             </div>
             <div class="note">
-                <strong>Before loading any data:</strong> the chart already shows a live theoretical stick pattern ($2\theta$ positions and relative Kα1/Kα2 markers) for the currently selected space group and lattice parameters, updating as you change them. <code>Save Report</code> is active even without a data file, exporting this theoretical <code>hkl</code> / $d$ / $2\theta$ list — useful for previewing where reflections are expected before you have a scan in hand.
+                <strong>Before loading any data:</strong> the chart already shows a live theoretical stick pattern ($2\theta$ positions and relative Kα1/Kα2 markers) for the currently selected space group and lattice parameters, updating as you change them. The <b>report button</b> in the top-right corner works even without a data file, exporting that theoretical reflection list as a PDF — useful for previewing where reflections are expected before you have a scan in hand.
             </div>
         </section>
 
@@ -632,6 +634,31 @@ blockquote {
                 <li><b>Hiding curves:</b> Click an entry in the legend at the top of the chart to
                     toggle that curve.</li>
             </ul>
+
+            <h3 id="status-footer">The status bar</h3>
+            <p>
+                One bar, at the foot of the results panel, reports whatever is running:
+                a Le Bail or Pawley refinement, a charge-flipping run, or a Wyckoff
+                search. It reads, for example
+            </p>
+            <pre>Wyckoff search: Z = 4 (2/3), wave 2/3, restart 1/4, gen 500/1000, CC 0.8700
+Charge flipping: start 2/4, cycle 1300/2000, R 0.2841
+Refinement: 64%</pre>
+            <p>
+                It replaces the separate progress readouts that used to sit inside the
+                Charge Flipping and Wyckoff tabs. Those were on screen only while their
+                own tab was open, which is exactly when you least need telling that the
+                run you just started is running &mdash; switch to the plot and a
+                half-hour search looked like nothing was happening at all.
+            </p>
+            <p>
+                A phase that cannot report a fraction &mdash; building the Wyckoff
+                tables, compiling a GPU shader &mdash; shows a moving stripe rather than
+                a bar stuck at zero. One-off messages (&ldquo;Stopping&hellip;&rdquo;,
+                &ldquo;complete &mdash; 3 solutions&rdquo;) appear there too and clear
+                themselves; warnings are also written to the <b>Log</b> tab, so
+                anything important stays findable after the bar has moved on.
+            </p>
             <div class="note">
                 A plain left-click that does not move is never treated as a zoom, so it falls
                 through to the Ctrl+click spline handler unchanged. Dragging less than about
@@ -690,11 +717,35 @@ blockquote {
 
 <h3 id="pawley-method">The Pawley Method</h3>
             <p>
-                The Pawley method employs a simultaneous, non-iterative approach. It treats the peak height ($I_{hkl}$) of each Bragg reflection as an independent, refinable variable within a single, large-scale least-squares minimization.
+                The Pawley method treats the peak height ($I_{hkl}$) of every Bragg
+                reflection as a free variable, fitted at the same time as the cell and
+                the profile.
             </p>
             <p>
-                This means that all parameters&mdash;lattice, profile, and all individual peak
-                heights&mdash;are refined concurrently. The background shape is fixed by the
+                It is <em>separable</em>. The pattern is linear in every intensity:
+                $$y(x) = \sum_j I_j\,\phi_j(x;\theta) + b(x)$$
+                so for any given set of non-linear parameters $\theta$ &mdash; cell,
+                zero-point, profile widths &mdash; the optimal intensities are not
+                something to iterate towards but the exact solution of a linear
+                least-squares problem. powder5 solves that problem outright at every
+                step and lets the minimiser search only $\theta$. This is variable
+                projection (Golub &amp; Pereyra, 1973).
+            </p>
+            <p>
+                Two consequences matter in practice. The intensities are exactly
+                optimal at every iteration rather than partly converged at the end, so
+                the residual reported is the residual of the model actually fitted.
+                And the search space is the dozen or so genuinely non-linear
+                parameters instead of several thousand, which is what makes parallel
+                tempering usable on a Pawley fit at all.
+            </p>
+            <p>
+                The normal matrix of the linear step is <em>banded</em>: it has a
+                non-zero entry for two reflections only where their profile windows
+                overlap, and the reflection list is sorted by $2\theta$. The solve is
+                therefore $O(n\,b^2)$ in the bandwidth $b$, not $O(n^3)$ &mdash; a few
+                tens of milliseconds and about a megabyte for a pattern with 2500
+                reflections. The background is fixed by the
                 user-defined spline anchors and is not refined; see
                 <a href="#parameters-background">Background Modeling</a> for what that costs.
             </p>
@@ -718,15 +769,39 @@ blockquote {
                 differences, which is where they genuinely belong.
             </div>
              <div class="note">
-                <strong>Pawley Initialization:</strong> To provide a better starting point for the refinement, especially for stochastic algorithms, the Pawley method first performs a single, preliminary Le Bail intensity extraction step using the initial user-provided parameters. The extracted peak heights from this step are then used as the starting values for the simultaneous Pawley refinement.
+                <strong>Pawley initialisation:</strong> a single Le Bail extraction runs
+                before the refinement to seed the intensities. With the separable solve
+                this now matters far less than it used to &mdash; the intensities are
+                re-derived exactly from the data at every step, so the seed is
+                overwritten immediately &mdash; but it still gives the first cost
+                evaluation a sensible scale, and it is what the pattern is drawn from
+                before the first iteration completes.
             </div>
             <ul>
                 <li><b>Advantages:</b> The Pawley method is considered more rigorous as it avoids the iterative bias of the Le Bail method, particularly in cases of severe peak overlap. It can yield more accurate and statistically sound integrated intensities (reported as areas) and parameter uncertainties.</li>
-                <li><b>Disadvantages:</b> The inclusion of hundreds or thousands of intensity variables significantly increases the computational complexity and memory requirements. The refinement can be susceptible to instability and parameter correlation, especially if the initial model is poor or if stochastic optimization algorithms are used with insufficient iterations.</li>
+                <li><b>Limitations:</b> the cost is no longer the parameter count &mdash;
+                    the intensities are projected out rather than iterated &mdash; but the
+                    information content of the data is unchanged. Where reflections
+                    overlap severely their intensities remain strongly correlated, and
+                    where they are <em>exactly</em> coincident only the group sum is
+                    determined at all. See
+                    <a href="#exact-coincidences">exactly coincident reflections</a>
+                    below. A poor starting cell is still a poor starting cell: the
+                    separable form makes the surface in $\theta$ better behaved, not
+                    convex.</li>
             </ul>
-             <div class="warning-note">
-                <strong>Algorithm Recommendation for Pawley Method:</strong><br>
-                Due to the high dimensionality and potential for parameter correlation when refining individual intensities, the Pawley method is generally most stable and efficient when used with the <strong>Levenberg-Marquardt (LM)</strong> algorithm. While the <strong>Parallel Tempering (PT)</strong> algorithm can also be used, it may require significantly more iterations to achieve comparable convergence due to the complexity of the intensity parameter space. <strong>It is generally recommended to start with the LM algorithm for Pawley refinements, especially after obtaining a good initial model using the Le Bail method.</strong>
+             <div class="note">
+                <strong>Which algorithm for a Pawley fit?</strong><br>
+                This advice has reversed. Parallel tempering used to be impractical
+                here, because it proposes one scalar per replica per iteration and the
+                intensities made up almost the whole parameter vector &mdash; a
+                reflection got, on average, well under one proposal for the entire run.
+                With the intensities projected out, PT searches the same dozen
+                non-linear parameters it searches in Le Bail mode, and is the better
+                choice whenever the starting cell is uncertain. Use
+                <strong>Levenberg-Marquardt</strong> alone when the model is already
+                close; use <strong>Parallel Tempering</strong> (which finishes with an
+                LM polish) when it is not.
             </div>
              </section>
 
@@ -788,7 +863,14 @@ blockquote {
                 <li><b>The Swap Move:</b> Periodically, the algorithm attempts to swap the entire set of parameters between adjacent replicas (e.g., between replica $i$ at temperature $T_i$ and replica $i+1$ at $T_{i+1}$). The swap is accepted with a Metropolis-like probability that depends on the energies (costs) and temperatures of the two replicas. This crucial step allows a good solution discovered by a high-temperature replica in a distant valley to "percolate down" to the low-temperature replicas, dramatically improving the efficiency of finding the global minimum compared to single-temperature methods.</li>
                  <li><b>Advantages:</b> Significantly more efficient at global exploration than simpler stochastic methods, making it a robust choice for complex problems or when the starting model is highly uncertain (primarily in Le Bail mode).</li>
                  <li><b>Le Bail intensities under PT:</b> Unlike the LM path, which re-extracts at the top of each iteration, the stochastic search extracts the intensities once before the run and holds them fixed throughout. A stochastic walker proposes many rejected moves, and re-extracting on each would make the cost function non-stationary and the Metropolis test meaningless.</li>
-                 <li><b>Pawley Mode: Can be used, but may require substantially more iterations than LM to converge reliably due to the large number of intensity parameters.</b></li>
+                 <li><b>Pawley mode:</b> the intensities are not searched. They are
+                 solved exactly at each cost evaluation (see
+                 <a href="#pawley-method">the Pawley method</a>), so a replica walks the
+                 same non-linear parameters it would in Le Bail mode and the cost it
+                 reports is the reduced objective &mdash; the residual after the
+                 intensities have been optimised. That is the function whose minimum in
+                 $\theta$ is the true minimum, so the Metropolis test and the replica
+                 swaps mean what they are supposed to mean.</li>
             </ul>
         </section>
 
@@ -2237,7 +2319,7 @@ blockquote {
                     <tr><td><strong>Max sites / elem</strong></td><td>Most distinct Wyckoff positions one element may occupy, as a whole number of 1 or more; blank means Auto. This is a <em>per-element</em> cap and says nothing about the total &mdash; see the capacity note below.</td></tr>
                     <tr><td><strong>Max reuse / pos</strong></td><td>Most independent atoms sharing one Wyckoff position, as a whole number of 1 or more; blank means Auto.</td></tr>
                     <tr><td><strong>Density min / max (g/cm&sup3;)</strong></td><td>The window \(Z\) = Auto scans, in whole g/cm&sup3;, from 1 to 22, default <strong>2 to 10</strong>. The minimum is held strictly below the maximum. Ignored when \(Z\) is typed. Narrowing it is the cheapest way to shorten a scan: it is the only part of the calculation that knows what kind of material you have.</td></tr>
-                    <tr><td><strong>Max Z searched</strong></td><td>How many values of \(Z\) one scan may search (1&ndash;12, default 6). Each is a full swarm run, so this is what bounds the total time. The candidates dropped are the least plausible on volume per atom, and the log names them.</td></tr>
+                    <tr><td><strong>Max Z searched</strong></td><td>How many values of \(Z\) one scan may search (1&ndash;12, default 3). Each is a full swarm run, so this is what bounds the total time. The candidates dropped are the least plausible on volume per atom, and the log names them.</td></tr>
                     <tr><td><strong>Chains</strong></td><td>Independent trial structures. Capped automatically against the device's storage-buffer and dispatch limits and snapped to a multiple of 64.</td></tr>
                     <tr><td><strong>Iterations</strong></td><td>Steps per chain (100&ndash;10000, default 2000).</td></tr>
                     <tr><td><strong>Restarts</strong></td><td>Independent restarts (1&ndash;20, default 4).</td></tr>
@@ -2586,10 +2668,6 @@ blockquote {
                     the wrong \(Z\), not a wrong coordinate &mdash; and if the search ran
                     on <a href="#wy-z">\(Z\) = Auto</a>, the other values of \(Z\) are
                     already sitting in the Solutions table above.</li>
-                <li><strong>Net formal charge.</strong> Shown only when the oxidation states do
-                    not cancel over the cell. An imbalance means either the assignment below is
-                    wrong for this compound or the composition given to the search was, and
-                    every valence verdict inherits the problem. This formal charge and the OX column in the table has relevance for ionic, inorganic, compounds.</li>
                 <li><strong>Structure plot.</strong> Drag to rotate, wheel to zoom, click an atom
                     to list its contacts. Sites can be hidden individually, the cell frame and
                     labels toggled, boundary images switched off, and the view saved as a PNG.
@@ -2678,11 +2756,14 @@ blockquote {
                 compared by electronegativity, and those within 0.5 units of the most
                 electronegative species in the cell act as the anions. Sulfur is therefore an
                 anion in PbS and a cation in PbSO<sub>4</sub>, which a fixed list gets wrong one
-                way or the other every time. Oxidation states start from the common state of
-                each element and are <strong>editable in the site table</strong> &mdash; change
-                one and the sums, the expected valences and the net cell charge are recomputed.
-                Use it when the compound has mixed valence, or when the default guess is simply
-                not the chemistry you are working on.
+                way or the other every time. Oxidation states are taken from the common state of
+                each element. They are no longer editable, and the net cell charge is no
+                longer reported: both summed a <em>default</em> state over every site, which
+                means something only for a simple ionic solid with one state per element.
+                For a mixed-valence compound, a molecular or covalent structure, or anything
+                with partial occupancy the total was arbitrary, and it marked sound
+                structures as suspect. The per-site bond-valence sums below answer the same
+                question from the geometry that was actually refined, and answer it honestly.
             </p>
 
             <div class="warning-note">
@@ -2910,6 +2991,36 @@ blockquote {
                 downstream.</strong>
             </p>
 
+            <h4 id="exact-coincidences">Exactly coincident reflections</h4>
+            <p>
+                An overlap cluster is a set of reflections the data separates
+                <em>badly</em>. This is a set it cannot separate <em>at all</em>. In a
+                cubic $F$ cell, $333$ and $511$ have the same $h^2+k^2+l^2$ and therefore
+                the same $2\theta$, the same profile, and identical columns in the normal
+                matrix. So do $700$ and $522$, and a dozen more pairs besides. Every
+                lattice produces them, and accidental coincidences in low-symmetry cells
+                do the same thing.
+            </p>
+            <p>
+                The linear system is then exactly singular in those directions. Powder&nbsp;5
+                factors it with a modified Cholesky that repairs only the pivots that fail,
+                so the several hundred intensities that <em>are</em> determined come back
+                untouched &mdash; a single damping term large enough to get past every
+                coincidence would have biased those too. The affected reflections are listed
+                in the report under <em>Exactly Coincident Reflections</em>, with the group
+                total.
+            </p>
+            <div class="warning-note">
+                <strong>The split within such a group is arbitrary; the sum is not.</strong>
+                The solver typically places the whole group intensity on one member and
+                leaves the others near zero. That number is not a measurement, and nothing
+                in the pattern distinguishes it from any other division adding to the same
+                total. Read the group line, not the rows. Without this section a coincident
+                pair reads as one strong reflection and one absent one &mdash; which, for a
+                space-group test or a structure solution, is a conclusion the data never
+                supported.
+            </div>
+
             <h4>Calculating Observed Intensities ($I_{obs}$) for Overlapping Peaks</h4>
             <p>
                 A simple numerical integration over a fixed angular range is insufficient for accurately determining the observed integrated intensity ($I_{obs}$) of overlapping peaks. This tool employs a more robust <strong>intensity partitioning</strong> method.
@@ -2966,14 +3077,45 @@ blockquote {
             </blockquote>
 
             <h3>Data Export</h3>
-            <ul>
-                <li><b>Save Report:</b> Behavior depends on whether experimental data is loaded.
-                    <ul>
-                        <li><em>With data loaded, after a refinement:</em> generates a comprehensive ASCII text file containing all statistical indicators, refined parameter values with their ESDs (for LM refinements), the Williamson-Hall analysis results (if applicable), the declared Lorentz&ndash;polarisation model, the list of background spline points used, the reflection table described below, and a point-by-point list of observed, calculated, background, and difference intensities across the fitted range.</li>
-                        <li><em>With no data loaded:</em> the button remains active and instead exports a theoretical reflection list for the current space group, lattice parameters, and wavelength(s) — <code>h k l</code>, $d$-spacing, and $2\theta$ for Kα1 (and Kα2 if the intensity ratio is greater than 0), together with the multiplicity, $Lp$ and $m \cdot Lp$ of each reflection. With no structure factors available, $m \cdot Lp$ is the whole of the predicted relative intensity. No refinement is required for this mode; the chart itself also displays this theoretical stick pattern live as you change the space group or lattice, so you can preview expected peak positions before ever loading a scan.</li>
-                    </ul>
-                </li> <li><b>Generate PDF:</b> Creates a summary PDF document containing a high-resolution plot and tables of final parameters and statistics, suitable for archival or reporting. This requires a completed refinement. The PDF carries the same reflection table as the text report; rows too wide for the page are set in a smaller size rather than being clipped.</li>
-            </ul>
+            <p>
+                One <b>report button</b> sits in the top-right corner of the right panel,
+                between the light/dark toggle and the help icon. It reports <em>whichever
+                tab is in front</em>, as a PDF:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Tab in front</th><th>What the button produces</th></tr></thead>
+                <tbody>
+                    <tr><td><b>Plot</b></td><td>The pattern, never a refinement. With data loaded: the calculated reflection list and the plot. With no data: the theoretical reflection list alone &mdash; <code>h k l</code>, the $d$-spacing, the K&alpha;<sub>1</sub> (and K&alpha;<sub>2</sub>) positions, the multiplicity and $Lp$ &mdash; and no plot page, because there is nothing to plot.</td></tr>
+                    <tr><td><b>Le Bail results</b></td><td>The run selected in that tab's history, with the fit to the pattern.</td></tr>
+                    <tr><td><b>Pawley results</b></td><td>The run selected in that tab's history, with the fit to the pattern.</td></tr>
+                    <tr><td><b>Charge Flipping</b></td><td>The selected run: map statistics, the built structure, and the <b>electron-density peak table</b> with each peak&rsquo;s distance to its nearest neighbour. The peaks are the observation and the structure is an interpretation of them, so the report carries both. No powder plot &mdash; that is the Plot tab&rsquo;s report.</td></tr>
+                    <tr><td><b>Wyckoff</b></td><td>The selected solution: refined positions, and the <b>structure quality table</b> &mdash; coordination number, mean contact distance, spread and bond-valence sum per site. The wR says the fit converged; this table says whether the result is chemistry. For a $Z$ scan, the solution currently displayed, not necessarily the best. No powder plot.</td></tr>
+                    <tr><td><b>Log</b></td><td>The whole session: the log, followed by the most recent run from each of the four histories that has one. The per-tab reports answer &ldquo;what does this run say&rdquo;; this one answers &ldquo;what did I do today&rdquo;. Only the last run of each history is included &mdash; thirty Pawley attempts would make a document nobody reads, and the earlier ones are still reachable one at a time from their own tab.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                <b>A refinement is reported only from its own tab, and only for the run
+                selected in that tab's history selector.</b> The Plot tab reports the
+                pattern and nothing else &mdash; otherwise the same button on the same tab
+                would produce a Le Bail report after a Le Bail run and a Pawley one after
+                a Pawley run, with nothing on screen saying which you were about to get.
+            </p>
+            <p>
+                It is never greyed out. Press it where there is nothing to report and it says
+                what is missing, which is more than a disabled button ever conveyed. This
+                replaces the four separate <em>Generate PDF</em> buttons that used to sit one
+                per results tab, each with its own enabled/disabled rule to keep in step with
+                the run history.
+            </p>
+            <p>
+                <b>Save report</b> on the Le Bail and Pawley tabs still writes the plain-text
+                version: all statistical indicators, refined parameters with their ESDs, the
+                Williamson-Hall results where applicable, the declared Lorentz&ndash;polarisation
+                model, the background spline points, the reflection table below, and a
+                point-by-point list of observed, calculated, background and difference
+                intensities across the fitted range. The PDF carries the same reflection table;
+                rows too wide for the page are set smaller rather than clipped.
+            </p>
 
             <h4>The reflection table</h4>
             <p>
@@ -3102,6 +3244,17 @@ blockquote {
                 Swendsen, R. H., & Wang, J. S. (1986). "Replica Monte Carlo simulation of spin-glasses". <em>Physical Review Letters</em>, 57(21), 2607.
             </div>
             <div class="reference-item">
+                <strong>Separable least squares (variable projection):</strong><br>
+                Golub, G. H. &amp; Pereyra, V. (1973). "The differentiation of pseudo-inverses and nonlinear least squares problems whose variables separate". <em>SIAM Journal on Numerical Analysis</em>, 10(2), 413&ndash;432.
+            </div>
+            <div class="reference-item">
+                Kaufman, L. (1975). "A variable projection method for solving separable nonlinear least squares problems". <em>BIT Numerical Mathematics</em>, 15(1), 49&ndash;57. (The approximation used when differentiating the reduced objective: the linear parameters are held fixed inside each finite-difference probe, and re-solved at the trial point.)
+            </div>
+            <div class="reference-item">
+                <strong>Modified Cholesky (rank-deficient normal matrices):</strong><br>
+                Gill, P. E. &amp; Murray, W. (1974). "Newton-type methods for unconstrained and linearly constrained optimization". <em>Mathematical Programming</em>, 7(1), 311&ndash;350. (Used to repair only the pivots that fail, so exactly coincident reflections do not damp the intensities that <em>are</em> determined.)
+            </div>
+            <div class="reference-item">
                 <strong>Monotonic Splines:</strong><br>
                  Fritsch, F. N., & Carlson, R. E. (1980). "Monotone Piecewise Cubic Interpolation". <em>SIAM Journal on Numerical Analysis</em>, 17(2), 238–246.
             </div>
@@ -3140,9 +3293,10 @@ blockquote {
             </p>
 
             <p>
-                All numerical work &mdash; the linear solver, the Gauss-Jordan/Cholesky routines
-                behind the covariance matrix and the ESDs, and the least-squares machinery itself
-                &mdash; is implemented locally. An earlier version depended on
+                All numerical work &mdash; the skyline Cholesky behind the covariance
+                matrix and the ESDs, the banded solver for the separable Pawley
+                intensities, and the least-squares machinery itself &mdash; is
+                implemented locally. An earlier version depended on
                 <a href="https://mathjs.org/" target="_blank">math.js</a> for these; it was removed
                 so that a refinement can never be blocked by a content-delivery network, and so the
                 application works fully offline. Charting uses
@@ -3163,7 +3317,7 @@ blockquote {
             </div>
         </section>
         <footer id="help-footer">
-            Powder 5, version 162, 18 august 2026
+            Powder 5, version 168, 30 August 2026
         </footer>
     </main>
 </div>
