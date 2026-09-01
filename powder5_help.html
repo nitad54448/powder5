@@ -2898,6 +2898,41 @@ Refinement: 64%</pre>
                 to a weighted refinement describes a fit nobody performed.
             </p>
 
+            <h4 id="results-esd-form">How values and uncertainties are printed</h4>
+            <p>
+                A refined value is given in the crystallographic compact form,
+                $a = 5.5139(3)$&nbsp;&Aring;: the parenthesis is the standard uncertainty in
+                units of the last digit shown, so this reads $5.5139 \\pm 0.0003$.
+            </p>
+            <p>
+                The value is rounded to the digit its uncertainty reaches, and no further.
+                A cell edge printed as 5.439771388246059 with the su in a separate column
+                asks you to do that rounding yourself, and everything past the fifth decimal
+                there is the binary representation of a double rather than a measurement.
+                The raw su is still given in its own column for anyone who needs it
+                arithmetically.
+            </p>
+            <p>
+                The su itself is quoted to one significant figure, except where its leading
+                digit is 1, which gets two: rounding 0.00012 to 0.0001 misstates the
+                uncertainty by 17%, and 0.00010 and 0.00019 would be indistinguishable. With
+                a leading digit of 9 the same rounding is worth at most 5%.
+            </p>
+            <p>
+                Where the su reaches 10 or more the compact form has no last decimal to
+                refer to, and the report falls back to $6 \\pm 2$. An su that large means the
+                parameter is not determined, and the notation should not disguise it.
+            </p>
+            <div class="note">
+                These uncertainties come from the diagonal of the covariance matrix, scaled
+                by the reduced $\\chi^2$. They are the precision of the fit, not the accuracy
+                of the measurement: they do not include background uncertainty, sample
+                displacement not modelled by the zero-point, or any systematic error in the
+                wavelength. A cell edge good to $3 \\times 10^{-4}$&nbsp;&Aring; by this
+                measure can still be wrong in the third decimal for reasons the refinement
+                cannot see.
+            </div>
+
             <h4 id="results-slaved">Parameters constrained by symmetry</h4>
             <p>
                 In the parameter table, the <b>Fitted</b> column distinguishes three

@@ -109,7 +109,7 @@
             <div class="tab-content-panels">
             <div id="tab-panel-sample" class="tab-content-panel active">
                 <div class="control-group">
-                    
+                    <h2>Data</h2>
                     <div class="run-row">
                         <button type="button" id="load-file-btn" class="btn btn-primary">Load file</button>
                         <button type="button" id="save-file-btn" class="btn" disabled
@@ -1024,7 +1024,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 169, 30 August 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 170, O1 sept 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1037,7 +1037,7 @@
     //22 aug, wyckoff search is now Z-aware
     //removed the cctbx dependencies, all data is in /sg and /scatter
     //28 aug, changed JtJ in the PAwley fit
-    //30 aug, changes in the refinements, moved the PDF, some UI improvements
+    // v 170, reporting changed to print esd
 
     document.addEventListener('DOMContentLoaded', async () => {     
     
@@ -7090,6 +7090,7 @@ function debounce(func, wait) {
             if (haveData) {
                 const tthLo = fullExperimentalData.tth[0];
                 const tthHi = fullExperimentalData.tth[fullExperimentalData.tth.length - 1];
+                L.push(`Data File   : ${reportDataFileName()}`);
                 L.push(`Data        : ${fullExperimentalData.tth.length} points, `
                      + `${tthLo.toFixed(3)} - ${tthHi.toFixed(3)} deg`);
                 L.push('Reflections are calculated from the cell and space group below;');
@@ -7107,14 +7108,22 @@ function debounce(func, wait) {
                 L.push(`Laue class  : ${sg.laue_class}`);
                 L.push(`Centering   : ${sg.centering}`);
             }
-            const cell = [`a=${p.a}`];
-            if (p.b != null && !isNaN(p.b)) cell.push(`b=${p.b}`);
-            if (p.c != null && !isNaN(p.c)) cell.push(`c=${p.c}`);
-            cell.push(`alpha=${p.alpha}`, `beta=${p.beta}`, `gamma=${p.gamma}`);
+            // fmtNum, not `${p.a}`. Interpolating a double printed the cell
+            // edge as 5.439771388246059 -- sixteen significant figures for a
+            // quantity whose uncertainty is in the fourth decimal. Everything
+            // past about the fifth decimal is the binary representation of the
+            // number, not a measurement, and printing it invites someone to
+            // quote it. Trailing zeros go too, so a right angle reads 90.
+            const cell = [`a=${fmtNum(p.a, 5)}`];
+            if (p.b != null && !isNaN(p.b)) cell.push(`b=${fmtNum(p.b, 5)}`);
+            if (p.c != null && !isNaN(p.c)) cell.push(`c=${fmtNum(p.c, 5)}`);
+            cell.push(`alpha=${fmtNum(p.alpha, 4)}`, `beta=${fmtNum(p.beta, 4)}`,
+                      `gamma=${fmtNum(p.gamma, 4)}`);
             L.push('Cell        : ' + cell.join('  '));
-            L.push(`Wavelength 1: ${p.lambda} A`);
-            if (doublet) L.push(`Wavelength 2: ${p.lambda2} A   (ratio I2/I1 = ${p.ratio})`);
-            L.push(`Zero shift  : ${z} deg`);
+            L.push(`Wavelength 1: ${fmtNum(p.lambda, 6)} A`);
+            if (doublet) L.push(`Wavelength 2: ${fmtNum(p.lambda2, 6)} A   `
+                              + `(ratio I2/I1 = ${fmtNum(p.ratio, 4)})`);
+            L.push(`Zero shift  : ${fmtNum(z, 5)} deg`);
             L.push(`2-theta range: ${THEO_TTH_MIN} - ${THEO_TTH_MAX} deg`);
             L.push(`Reflections : ${list.length}`);
             const theoPol = polarizationFromParams(p);
@@ -8673,7 +8682,9 @@ async function printSessionSummary() {
 
     parts.push('Powder 5 \u2014 Session Summary', rule, '');
     if (typeof APP_VERSION_TEXT === 'string') parts.push(APP_VERSION_TEXT);
-    parts.push(`Report Generated: ${new Date().toLocaleString()}`, '');
+    parts.push(`Report Generated: ${new Date().toLocaleString()}`);
+    if (typeof reportDataFileName === 'function') parts.push(`Data File: ${reportDataFileName()}`);
+    parts.push('');
 
     const log = (typeof sessionLog !== 'undefined' && sessionLog.length)
         ? sessionLog : null;

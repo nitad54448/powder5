@@ -1,4 +1,135 @@
 /**
+ * How many significant figures the standard uncertainty is quoted to.
+ *
+ * Crystallographic practice is one figure, except when the leading digit is 1:
+ * rounding 0.00012 to 0.0001 misstates the uncertainty by 17%, and the reader
+ * cannot tell 0.00010 from 0.00019. With a leading digit of 9 the same
+ * rounding is worth at most 5%, so one figure carries its own precision.
+ *
+ * Set to 3 if you prefer the "1 or 2 leads to two figures" variant.
+ * @type {number}
+ */
+const ESD_TWO_FIGURE_THRESHOLD = 2;
+
+/** Decimal places beyond which a value is noise regardless of its su. */
+const ESD_MAX_DECIMALS = 12;
+
+/**
+ * Round to a given number of decimal places, negative places included.
+ * @param {number} v
+ * @param {number} dp Negative rounds to tens, hundreds, ...
+ * @returns {number}
+ */
+function roundTo(v, dp) {
+    const f = Math.pow(10, dp);
+    return Math.round(v * f) / f;
+}
+
+/**
+ * The decimal place a standard uncertainty determines.
+ *
+ * THE EXPONENT COMES FROM toExponential(), NOT Math.log10. log10(0.001) can
+ * evaluate to -2.9999999999999996, and floor() then returns -3 for one input
+ * and -2 for its neighbour, which would move the decimal point of the reported
+ * value by a factor of ten for a hairsbreadth change in the su.
+ *
+ * @param {number} esd
+ * @returns {{dp:number, esd:number, digits:number}|null} null if the su is not
+ *          a positive finite number.
+ */
+function esdDecimals(esd) {
+    if (!isFinite(esd) || esd <= 0) return null;
+    let [mStr, eStr] = esd.toExponential().split('e');
+    let e = parseInt(eStr, 10);
+    let sig = (parseFloat(mStr) < ESD_TWO_FIGURE_THRESHOLD) ? 2 : 1;
+    let dp = sig - 1 - e;
+    let r = roundTo(esd, dp);
+
+    // Rounding can promote: 0.096 to one figure is 0.1, whose leading digit is
+    // now 1 and which therefore wants two figures after all. One re-check
+    // converges, because the second rounding cannot promote again.
+    const parts = r.toExponential().split('e');
+    if (parseInt(parts[1], 10) !== e) {
+        e = parseInt(parts[1], 10);
+        sig = (parseFloat(parts[0]) < ESD_TWO_FIGURE_THRESHOLD) ? 2 : 1;
+        dp = sig - 1 - e;
+        r = roundTo(esd, dp);
+    }
+    if (dp > ESD_MAX_DECIMALS) return null;
+    return { dp, esd: r, digits: Math.round(r * Math.pow(10, dp)) };
+}
+
+/**
+ * A value and its uncertainty in the crystallographic compact form:
+ * 5.5139(3), where the parenthesis is the su in units of the last decimal.
+ *
+ * WHY NOT JUST PRINT MORE DIGITS. A cell edge shown as 5.439771388246059 with
+ * its su in a separate column asks the reader to do this rounding themselves,
+ * and most will copy the full string into a paper. Everything past the digit
+ * the su reaches is the binary representation of a double, not a measurement.
+ *
+ * Falls back to `value +/- su` when the su is 10 or more, where the compact
+ * form has no last decimal to refer to and would be ambiguous.
+ *
+ * @param {number} value
+ * @param {number} esd
+ * @returns {string|null} null when no su is available; the caller then
+ *          formats the value on its own.
+ */
+function formatWithEsd(value, esd) {
+    if (value === null || value === undefined || !isFinite(value)) return null;
+    const d = esdDecimals(esd);
+    if (!d) return null;
+    if (d.dp < 0) return `${roundTo(value, d.dp)} +/- ${d.esd}`;
+    return `${value.toFixed(d.dp)}(${d.digits})`;
+}
+
+/**
+ * The data file the reports refer to.
+ *
+ * `controls.fileName.textContent` is the on-screen label, which reads
+ * "No data file loaded." when there is none; `dataset.file` is the actual
+ * name and is absent in that case. Preferring the dataset means a report
+ * either names a real file or says N/A, rather than embedding a sentence
+ * meant for a status line.
+ *
+ * The first of the three report headers dereferenced controls.fileName
+ * without a guard, so a report generated before the controls were wired
+ * would have thrown here rather than anywhere informative.
+ *
+ * @returns {string}
+ */
+function reportDataFileName() {
+    if (typeof controls === 'undefined' || !controls || !controls.fileName) return 'N/A';
+    const el = controls.fileName;
+    const name = (el.dataset && el.dataset.file) || '';
+    if (name) return name;
+    const shown = (el.textContent || '').trim();
+    return (shown && !/^no data/i.test(shown)) ? shown : 'N/A';
+}
+
+/**
+ * A number at a sensible number of digits, with trailing zeros trimmed.
+ *
+ * `${p.a}` printed a cell edge as 5.439771388246059 -- sixteen significant
+ * figures for a quantity whose uncertainty is in the fourth decimal. Beyond
+ * about the fifth decimal those digits are the binary representation of the
+ * double, not a measurement, and printing them invites someone to quote them.
+ *
+ * Trailing zeros go too, so a right angle reads 90 rather than 90.0000.
+ *
+ * @param {number} v
+ * @param {number} dp Maximum decimal places.
+ * @returns {string}
+ */
+function fmtNum(v, dp) {
+    if (v === null || v === undefined || !isFinite(v)) return '-';
+    let out = Number(v).toFixed(dp);
+    if (out.indexOf('.') >= 0) out = out.replace(/0+$/, '').replace(/\.$/, '');
+    return out;
+}
+
+/**
  * A PDF from monospaced text, optionally followed by the main chart.
  *
  * The body of generatePdfReport() was a text-layout loop and a canvas grab
@@ -72,7 +203,17 @@ function renderTextPdf(text, filename, withChart = true) {
         doc.addImage(img, 'PNG', margin, 20, contentWidth, h);
     }
 
-    doc.save(`${filename}-${new Date().toISOString().slice(0, 10)}.pdf`);
+    // Date AND time. Two reports of the same tab on the same day collided on
+    // one name, and the browser silently appended "(1)" -- which tells you
+    // there are two files but not which is which.
+    const st = new Date();
+    const stamp = st.getFullYear()
+        + String(st.getMonth() + 1).padStart(2, '0')
+        + String(st.getDate()).padStart(2, '0')
+        + '-' + String(st.getHours()).padStart(2, '0')
+        + String(st.getMinutes()).padStart(2, '0')
+        + String(st.getSeconds()).padStart(2, '0');
+    doc.save(`${filename}-${stamp}.pdf`);
 }
 
 // Reusable PDF generator. `results` is the snapshot to report; `modeName` is
@@ -205,7 +346,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         '',
         APP_VERSION_TEXT,
         `Report Generated: ${now.toLocaleString()}`,
-        `Data File: ${controls.fileName.textContent || 'N/A'}`,
+        `Data File: ${reportDataFileName()}`,
         ''
     ];
 
@@ -423,6 +564,44 @@ function generateReportContent(format = 'summary', resultsArg = null) {
             + `Le Bail ESDs are lower bounds.`;
     }
 
+    // ------------------------------------------------------------------
+    //  SYMMETRY-SLAVED PARAMETERS
+    //
+    //  In a hexagonal cell b is not refined -- it is set equal to a, by
+    //  enforceSymmetryConstraintsWorker, every time the parameters change.
+    //  The table reported that as "Fitted: No" with a blank ESD, which reads
+    //  as "this number was assumed" when in fact it is determined exactly as
+    //  well as a is. It IS a: same parameter, same random variable, so
+    //  sigma(b) = sigma(a) identically, not merely approximately.
+    //
+    //  A slaved parameter is therefore shown as "= a" with a's uncertainty.
+    //  A parameter fixed by symmetry to a CONSTANT -- gamma = 120 in the same
+    //  cell -- is genuinely not determined by the data and stays "No" with no
+    //  ESD. The two cases look the same in fitFlags and are not the same
+    //  thing.
+    //
+    //  Mirrors enforceSymmetryConstraintsWorker exactly; if the constraints
+    //  there change, change these with them.
+    //
+    //  @param {string} system
+    //  @returns {Object<string,string>} slave parameter -> master parameter
+    // ------------------------------------------------------------------
+    const symmetrySlaves = (system) => {
+        switch (system) {
+            case 'cubic':
+                return { b: 'a', c: 'a',
+                         S040: 'S400', S004: 'S400', S202: 'S220', S022: 'S220' };
+            case 'tetragonal': case 'hexagonal': case 'trigonal': case 'rhombohedral':
+                return { b: 'a', S040: 'S400', S022: 'S202' };
+            default:
+                return {};
+        }
+    };
+    const slavedTo = symmetrySlaves(
+        (finalParams && finalParams.system) ||
+        (fitResults && fitResults.system) ||
+        (typeof currentSG !== 'undefined' && currentSG ? currentSG.system : null));
+
     const paramWidths = [24, 18, 10, 18]; // Name, Value, Fitted, ESD
     const paramHeader = formatLine(['Parameter', 'Value', 'Fitted', 'ESD'], paramWidths);
     const paramLines = [];
@@ -494,6 +673,41 @@ function generateReportContent(format = 'summary', resultsArg = null) {
 
     // Removed Background Parameters section (Chebyshev/Hump)
 
+    // ------------------------------------------------------------------
+    //  THE QUOTABLE CELL
+    //
+    //  One line, in the form a paper would print. The table below carries the
+    //  same numbers, but spread over six rows with the su in a separate
+    //  column, which is not what anyone copies. Slaved edges are shown with
+    //  the master's su, and angles fixed by symmetry are given without one.
+    // ------------------------------------------------------------------
+    const cellSummary = (() => {
+        const part = (key, label, unit) => {
+            const v = finalParams[key];
+            if (v === null || v === undefined || !isFinite(v)) return null;
+            const master = slavedTo[key];
+            const esdKey = (master && fitFlags[master]) ? master
+                         : (fitFlags[key] ? key : null);
+            const compact = esdKey ? formatWithEsd(v, esds[esdKey]) : null;
+            return `${label} = ${compact !== null ? compact : fmtNum(v, 5)}${unit}`;
+        };
+        const edges = ['a', 'b', 'c'].map(k => part(k, k, ' \u00c5')).filter(Boolean);
+        const angs = [['alpha', '\u03b1'], ['beta', '\u03b2'], ['gamma', '\u03b3']]
+            .map(([k, g]) => part(k, g, '\u00b0')).filter(Boolean);
+        if (edges.length === 0) return [];
+        const out = ['--- Refined Cell ---', edges.join(',  ')];
+        if (angs.length) out.push(angs.join(',  '));
+        if (typeof finalParams.zeroShift === 'number' && isFinite(finalParams.zeroShift)) {
+            const z = fitFlags.zeroShift ? formatWithEsd(finalParams.zeroShift, esds.zeroShift) : null;
+            out.push(`zero shift = ${z !== null ? z : fmtNum(finalParams.zeroShift, 5)}\u00b0`);
+        }
+        out.push('Uncertainties are in units of the last digit shown, and come from the',
+                 'diagonal of the covariance matrix scaled by the reduced chi-squared.',
+                 'They do not include background uncertainty; see the note above.', '');
+        return out;
+    })();
+    cellSummary.forEach(l => paramLines.push(l));
+
     for (const groupName in paramGroups) {
         // Ensure group exists and has items before adding headers
         if (paramGroups[groupName] && paramGroups[groupName].length > 0) {
@@ -501,15 +715,51 @@ function generateReportContent(format = 'summary', resultsArg = null) {
             paramGroups[groupName].forEach(p => {
                  // Check value is valid number before formatting
                  if (p.value !== null && !isNaN(p.value)) {
-                    const valStr = (typeof p.value === 'number') ? p.value.toExponential(6) : String(p.value);
-                    const fitStr = (p.flag === undefined) ? '' : (p.flag ? 'Yes' : 'No');
+                    // A slaved parameter borrows its master's row: '= a' in
+                    // place of Yes/No, and the master's ESD, which is its own
+                    // ESD exactly. Only when the master was actually refined
+                    // -- with `a` fixed, b is fixed too and has no ESD.
+                    const master = slavedTo[p.esd_key];
+                    const masterFitted = master ? !!fitFlags[master] : false;
+
+                    const fitStr = (p.flag === undefined) ? ''
+                                 : master ? `= ${master}`
+                                 : (p.flag ? 'Yes' : 'No');
+
+                    const esdKey = (master && masterFitted) ? master
+                                 : (p.flag ? p.esd_key : null);
+                    const esdValue = esdKey ? esds[esdKey] : undefined;
+
                     let esdStr = '';
-                    if (p.flag && p.esd_key) {
-                        const esdValue = esds[p.esd_key];
+                    if (esdKey) {
                         if (typeof esdValue === 'number' && isFinite(esdValue)) {
                              esdStr = `(${esdValue.toExponential(2)})`;
                         } else if (isNaN(esdValue)) {
                              esdStr = '(NaN)';
+                        }
+                    }
+
+                    // VALUE IN THE COMPACT CRYSTALLOGRAPHIC FORM where an su
+                    // exists: 5.5139(3), rounded to the digit the su reaches.
+                    // This is the string that gets copied into a paper, so it
+                    // should be the one that is defensible. The raw su stays
+                    // in its own column for anyone who needs it arithmetically.
+                    //
+                    // Without an su, a plain decimal -- toExponential(6) wrote
+                    // a right angle as 9.000000e+1. Exponential is kept only
+                    // for magnitudes where a decimal would be unreadable.
+                    let valStr;
+                    if (typeof p.value !== 'number') {
+                        valStr = String(p.value);
+                    } else {
+                        const compact = formatWithEsd(p.value, esdValue);
+                        if (compact !== null) {
+                            valStr = compact;
+                        } else {
+                            const m = Math.abs(p.value);
+                            valStr = (m !== 0 && (m >= 1e6 || m < 1e-4))
+                                ? p.value.toExponential(4)
+                                : fmtNum(p.value, 6);
                         }
                     }
                     paramLines.push(formatLine([p.name, valStr, fitStr, esdStr], paramWidths));
@@ -917,7 +1167,7 @@ function generateWyckoffReport(st) {
         '='.repeat(72),
         APP_VERSION_TEXT,
         `Report Generated: ${new Date().toLocaleString()}`,
-        `Data File: ${(controls && controls.fileName && controls.fileName.textContent) || 'N/A'}`,
+        `Data File: ${reportDataFileName()}`,
         '',
         '--- Model ---',
         `Space group            : ${sg.symbol || '-'}${sg.number ? ` (No. ${sg.number})` : ''}`,
@@ -1085,7 +1335,7 @@ function generateChargeFlippingReport(cfResult) {
         '',
         typeof APP_VERSION_TEXT !== 'undefined' ? APP_VERSION_TEXT : 'Powder 5',
         `Report Generated: ${now.toLocaleString()}`,
-        `Data File: ${(typeof controls !== 'undefined' && controls.fileName) ? controls.fileName.textContent : 'N/A'}`,
+        `Data File: ${reportDataFileName()}`,
         ''
     ];
 
