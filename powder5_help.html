@@ -2898,6 +2898,39 @@ Refinement: 64%</pre>
                 to a weighted refinement describes a fit nobody performed.
             </p>
 
+            <h4 id="results-slaved">Parameters constrained by symmetry</h4>
+            <p>
+                In the parameter table, the <b>Fitted</b> column distinguishes three
+                things, not two:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Fitted</th><th>Meaning</th><th>ESD</th></tr></thead>
+                <tbody>
+                    <tr><td><code>Yes</code></td><td>Refined against the data.</td>
+                        <td>Its own.</td></tr>
+                    <tr><td><code>= a</code></td><td>Not refined independently &mdash; set equal to another
+                        parameter every time the model changes. In a hexagonal cell $b$ is not an
+                        assumption, it <em>is</em> $a$.</td>
+                        <td>That of its master, and exactly so: the same parameter has the same
+                        uncertainty, not merely a similar one.</td></tr>
+                    <tr><td><code>No</code></td><td>Held at a constant &mdash; $\\gamma = 120^\\circ$ in that
+                        same cell, or anything you left unticked.</td>
+                        <td>None. The data did not determine it.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                The middle row used to be printed as <code>No</code> with a blank ESD, which
+                understated the fit: it read as though $b$ had been assumed when it was
+                determined precisely as well as $a$. The distinction matters if you quote a
+                cell edge with its uncertainty, and it is invisible in the fit flags, where
+                a slaved parameter and a fixed one look identical.
+            </p>
+            <p>
+                The same applies to the Stephens anisotropic terms: $S_{040} = S_{400}$ in a
+                hexagonal or tetragonal cell, and $S_{202} = S_{220}$ as well in a cubic one.
+            </p>
+
+            
             <h4 id="results-chi2-low">&chi;&sup2; well below 1 means the weights are wrong, not that the fit is good</h4>
             <p>
                 \(\chi^2 \approx 1\) is the right target, but only when \(w_i\) is the real
