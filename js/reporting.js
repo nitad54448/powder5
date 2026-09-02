@@ -130,6 +130,78 @@ function fmtNum(v, dp) {
 }
 
 /**
+ * Reduce report text to pure ASCII, for jsPDF's built-in fonts.
+ *
+ * WHY THIS HAS TO BE EXHAUSTIVE, NOT A LIST OF THE CHARACTERS SOMEONE HIT.
+ * The previous version named eleven characters and missed the rest. A line
+ * containing an unlisted one -- alpha and gamma in the refined-cell block --
+ * came out as
+ *
+ *     ±  =  9 0 d e g,   B e t a  =  9 0 d e g,   ³  =  9 0 d e g
+ *
+ * two failures at once: alpha (U+03B1) and gamma (U+03B3) rendered as the
+ * WinAnsi characters at 0xB1 and 0xB3, and jsPDF switched that whole line to a
+ * two-byte encoding, whose high bytes printed as the gaps between every
+ * letter. Beta survived only because it happened to be on the list.
+ *
+ * So the rule is inverted: everything is mapped, and whatever is left after
+ * mapping is forced into ASCII rather than passed through to be guessed at.
+ * The catch-all is what makes this safe against report text nobody has written
+ * yet -- a data file named "echantillon-2theta.raw", a mineral name with an
+ * umlaut, a future label with a subscript.
+ *
+ * @param {string} text
+ * @returns {string} ASCII only, 0x20 to 0x7E plus newline.
+ */
+function pdfAscii(text) {
+    let out = String(text);
+
+    // Multi-character forms first, before their components are replaced.
+    out = out.replace(/χ²/g, 'Chi^2').replace(/Å⁻¹/g, '1/A');
+
+    // Degree sign. `90°` needs the space that `deg` does not carry; `(°)` as a
+    // column unit does not, or the header reads "2theta ( deg)".
+    out = out.replace(/([\d)])\s*°/g, '$1 deg').replace(/°/g, 'deg');
+
+    const MAP = {
+        // Greek, lower case
+        'α':'alpha','β':'beta','γ':'gamma','δ':'delta','ε':'epsilon','ζ':'zeta',
+        'η':'eta','θ':'theta','ι':'iota','κ':'kappa','λ':'lambda','μ':'mu',
+        'ν':'nu','ξ':'xi','ο':'o','π':'pi','ρ':'rho','ς':'s','σ':'sigma',
+        'τ':'tau','υ':'upsilon','φ':'phi','χ':'chi','ψ':'psi','ω':'omega',
+        // Greek, upper case
+        'Α':'A','Β':'B','Γ':'Gamma','Δ':'Delta','Ε':'E','Ζ':'Z','Η':'H',
+        'Θ':'Theta','Ι':'I','Κ':'K','Λ':'Lambda','Μ':'M','Ν':'N','Ξ':'Xi',
+        'Ο':'O','Π':'Pi','Ρ':'P','Σ':'Sigma','Τ':'T','Υ':'Y','Φ':'Phi',
+        'Χ':'Chi','Ψ':'Psi','Ω':'Omega',
+        // Letters and units
+        'Å':'A','å':'a','µ':'u',
+        // Superscripts and subscripts
+        '²':'^2','³':'^3','¹':'^1','⁰':'^0','⁴':'^4','⁻':'^-',
+        '₀':'0','₁':'1','₂':'2','₃':'3','₄':'4',
+        // Maths
+        '×':'x','·':'.','±':'+/-','−':'-','÷':'/','∞':'inf','√':'sqrt',
+        '≈':'~','≠':'!=','≤':'<=','≥':'>=','∑':'sum','∫':'int','∂':'d',
+        '→':'->','←':'<-','↔':'<->','∙':'.',
+        // Punctuation and marks
+        '–':'-','—':'-','‘':"'",'’':"'",'“':'"','”':'"','…':'...',
+        '«':'<<','»':'>>','•':'*','·':'.','†':'+','‡':'++','′':"'",'″':'"',
+        '✓':'y','✗':'x','✕':'x','⚠':'!','○':'o','◉':'*','●':'*','■':'#','□':'-'
+    };
+    out = out.replace(/[^\x00-\x7F]/g, ch => (ch in MAP) ? MAP[ch] : ch);
+
+    // Anything still outside ASCII: strip the accent if it has one (so a file
+    // named "echantillon" keeps its letters), and only then give up.
+    out = out.replace(/[^\x00-\x7F]/g, (ch) => {
+        const bare = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return /^[\x00-\x7F]+$/.test(bare) ? bare : '?';
+    });
+
+    // Control characters other than newline would end the text object early.
+    return out.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, ' ');
+}
+
+/**
  * A PDF from monospaced text, optionally followed by the main chart.
  *
  * The body of generatePdfReport() was a text-layout loop and a canvas grab
@@ -153,14 +225,7 @@ function renderTextPdf(text, filename, withChart = true) {
     const contentWidth = doc.internal.pageSize.getWidth() - 2 * margin;
     let yPosition = 20;
 
-    // jsPDF's built-in fonts are WinAnsi, so anything outside it renders as a
-    // blank or a mojibake box.
-    const pdfText = String(text)
-        .replace(/χ²/g, 'Chi^2').replace(/°/g, 'deg').replace(/β/g, 'Beta')
-        .replace(/θ/g, 'th').replace(/η/g, 'eta').replace(/λ/g, 'lambda')
-        .replace(/σ/g, 'sigma').replace(/Å/g, 'A').replace(/²/g, '^2')
-        .replace(/·/g, '.').replace(/[–—]/g, '-')
-        .replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+    const pdfText = pdfAscii(text);
 
     doc.setFont('Courier');
     for (const line of pdfText.split('\n')) {
