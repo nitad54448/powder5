@@ -238,7 +238,6 @@ body {
     padding: 40px 56px;
     overflow-y: auto;
     background-color: var(--bg-stage);
-    max-width: 900px;
 }
 
 #content-area hr {
@@ -477,18 +476,17 @@ blockquote {
                 This document serves as a scientific and technical guide for the <strong>powder5</strong> web application, a tool for the analysis of powder X-ray diffraction (PXRD) data via whole-pattern fitting. This technique, also known as pattern decomposition, is a crucial method in materials science and crystallography for refining structural and microstructural parameters when a complete structural model is either unknown or unnecessary.
             </p>
             <p>
-                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for rigorous, unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and a physically rigorous <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using a monotonic cubic spline interpolation between user-defined
-                anchors, which are held fixed during refinement.
+                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using a monotonic cubic spline interpolation between user-defined
+                anchors, which are held fixed or fitted during refinement.
             </p>
             <p>
                 Two independent routes to a structure are provided, and either can be used without
                 the other. <strong>Charge flipping</strong> is a dual-space method: it solves for a
-                density map with no model at all, and is the right first move when the composition
+                density map with no model at all, and is the first move when the composition
                 is unknown. The <strong>Wyckoff search</strong> is a direct-space method: it fits
                 atoms on Wyckoff positions of a known composition directly to the extracted
                 intensities, needs no map, and copes far better with light atoms in the presence of
-                heavy ones - where charge-flipping ripples can be as large as the oxygen
-                peaks you are looking for.
+                heavy ones - where charge-flipping ripples can be as large as some light atoms.
             </p>
         </section>
 
@@ -500,7 +498,7 @@ blockquote {
                 Analysis commences with the loading of a powder diffraction data file. The application is designed to automatically parse numerous common ASCII-based file formats from major instrument manufacturers and standard crystallographic software.
             </p>
             <ul>
-                <li><b>Supported Formats:</b> Built-in parsers are included for Bruker (<code>.brml</code>, <code>.uxd</code>), PANalytical (<code>.xrdml</code>), Rigaku (<code>.ras</code>, <code>.rasx</code>), Philips (<code>.udf</code>, <code>.rd</code>, <code>.sd</code>), GSAS (<code>.esd</code>, <code>.gsa</code>, <code>.std</code>, <code>.xra</code>), and Jade (<code>.mdi</code>). Format detection is by content first and file extension second, so a correctly formatted file will usually be recognised even if it has been renamed.</li>
+                <li><b>Supported Formats:</b> Built-in parsers are included for Bruker (<code>.brml</code>, <code>.uxd</code>), PANalytical (<code>.xrdml</code>), Rigaku (<code>.ras</code>, <code>.rasx</code>), Philips (<code>.udf</code>), GSAS (<code>.esd</code>, <code>.gsa</code>, <code>.std</code>, <code>.xra</code>), and Jade (<code>.mdi</code>). Format detection is by content first and file extension second, so a correctly formatted file will usually be recognised even if it has been renamed. pdCIF files can also be read, at least those saved by this program or Brutus.</li>
                 <li><b>Scientific notation</b> (<code>1.5E+03</code>, <code>1.2e4</code>) is accepted in the intensity or 2&theta; column.</li>
                 <li><b>Ordering:</b> data stored in descending 2&theta; is detected and sorted ascending on load. Duplicated 2&theta; values and non-finite points are removed, with a note in the browser console.</li>
                 <li><b>Generic Data:</b> Standard two-column ASCII files (<code>.xy</code>, <code>.csv</code>, <code>.txt</code>, <code>.dat</code>, <code>.asc</code> etc.) containing $2\theta$ and intensity values are also supported. The parser accommodates space, comma, or semicolon delimiters. Comment lines prefixed with <code>#</code>, <code>!</code>, <code>;</code> or <code>//</code> are ignored, as are non-numeric header lines.</li>
@@ -509,19 +507,13 @@ blockquote {
             <div class="note">
                 <strong>Zipped formats: Rigaku <code>.rasx</code> and Bruker <code>.brml</code>.</strong>
                 Both are ZIP archives rather than plain text, and both are read by unzipping them
-                and parsing the pattern out of the archive &mdash; no conversion step is needed.
+                and parsing the pattern out of the archive - no conversion step is needed.
                 The file is read as bytes and identified by its magic number, so an archive is
                 recognised as one whatever it has been renamed to.
             </div>
-            <div class="warning-note">
-                These two formats are the only ones that need <code>lib/jszip.min.js</code>. If it
-                is missing from the deployment, they are refused with a message naming the missing
-                library rather than failing as a parse error &mdash; the distinction matters,
-                because a parse error sends you looking at the file when the problem is the
-                install. Every other format is plain text and needs nothing extra.
-            </div>
+ 
             <div class="note">
-                <strong>Before loading any data:</strong> the chart already shows a live theoretical stick pattern ($2\theta$ positions and relative Kα1/Kα2 markers) for the currently selected space group and lattice parameters, updating as you change them. The <b>report button</b> in the top-right corner works even without a data file, exporting that theoretical reflection list as a PDF — useful for previewing where reflections are expected before you have a scan in hand.
+                <strong>Before loading any data:</strong> the chart already shows a live theoretical stick pattern ($2\theta$ positions and relative Kα1/Kα2 markers) for the currently selected space group and lattice parameters, updating as you change them. The <b>report button</b> in the top-right corner works even without a data file, exporting that theoretical reflection list as a PDF - useful for previewing where reflections are expected before you have a scan in hand.
             </div>
         </section>
 
@@ -542,7 +534,7 @@ blockquote {
                     <tr><td><code>charge_flipping.wgsl</code></td><td>WebGPU kernels for the charge-flipping loop.</td></tr>
                     <tr><td><code>swarm_density.wgsl</code></td><td>Wyckoff swarm kernel scoring against a density map.</td></tr>
                     <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel scoring |F<sub>calc</sub>|&sup2; against the Pawley intensities. Used when no map is supplied.</td></tr>
-                    <tr><td><code>js/</code></td><td>All application modules &mdash; <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code>, <code>wyckoff_report.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
+                    <tr><td><code>js/</code></td><td>All application modules - <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code>, <code>wyckoff_report.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
                     <tr><td><code>lib/</code></td><td>Vendor bundles: <code>chart.umd.min.js</code>, <code>three.min.js</code>, <code>jspdf.umd.min.js</code>, <code>html2canvas.min.js</code>.</td></tr>
                     <tr><td><code>sg/</code></td><td>Space-group database (all settings of the 230 groups).</td></tr>
                     <tr><td><code>scatters/</code></td><td>Tabulated atomic scattering factors, with <code>index.json</code> naming the available tables.</td></tr>
@@ -552,7 +544,7 @@ blockquote {
                 <strong>Zero point in an exported pdCIF.</strong> The dictionary defines its
                 offset as \(2\theta_{\text{calibrated}} = 2\theta_{\text{measured}} +
                 2\theta_{\text{offset}}\), whereas powder5 works with
-                \(\text{zeroShift} = 2\theta_{\text{obs}} - 2\theta_{\text{calc}}\) &mdash; the
+                \(\text{zeroShift} = 2\theta_{\text{obs}} - 2\theta_{\text{calc}}\) - the
                 instrument zero error, positive when the diffractometer reads high. The two are
                 the same quantity with opposite signs, so <code>_pd_calib_2theta_offset</code> is
                 written negated and read back negated. A private
@@ -644,25 +636,18 @@ blockquote {
             <pre>Wyckoff search: Z = 4 (2/3), wave 2/3, restart 1/4, gen 500/1000, CC 0.8700
 Charge flipping: start 2/4, cycle 1300/2000, R 0.2841
 Refinement: 64%</pre>
+            
             <p>
-                It replaces the separate progress readouts that used to sit inside the
-                Charge Flipping and Wyckoff tabs. Those were on screen only while their
-                own tab was open, which is exactly when you least need telling that the
-                run you just started is running &mdash; switch to the plot and a
-                half-hour search looked like nothing was happening at all.
-            </p>
-            <p>
-                A phase that cannot report a fraction &mdash; building the Wyckoff
-                tables, compiling a GPU shader &mdash; shows a moving stripe rather than
+                A phase that cannot report a fraction - building the Wyckoff
+                tables, compiling a GPU shader - shows a moving stripe rather than
                 a bar stuck at zero. One-off messages (&ldquo;Stopping&hellip;&rdquo;,
-                &ldquo;complete &mdash; 3 solutions&rdquo;) appear there too and clear
-                themselves; warnings are also written to the <b>Log</b> tab, so
+                &ldquo;complete - 3 solutions&rdquo;) appear there too and clear
+                themselves; warnings are also written to the <b>Log</b> tab and to <b>Console</b>, so
                 anything important stays findable after the bar has moved on.
             </p>
             <div class="note">
-                A plain left-click that does not move is never treated as a zoom, so it falls
-                through to the Ctrl+click spline handler unchanged. Dragging less than about
-                8&nbsp;pixels is likewise ignored rather than producing an extreme zoom.
+                A plain left-click that does not move is not treated as a zoom, dragging less than about
+                8&nbsp;pixels is likewise ignored.
             </div>
         </section>
 
@@ -686,7 +671,7 @@ Refinement: 64%</pre>
                 <li><b>Intensity Extraction (Height Partitioning):</b> The observed net intensity ($y_{i,obs} - y_{i,bkg}$) at each data point is partitioned among the calculated Bragg peaks contributing to that point. The contribution of each peak is proportional to its profile function value at that point. Summing these partitioned intensities for each reflection yields a new set of "observed" integrated intensities. These are then converted back to estimated peak heights using the current profile function's area.</li>
                 <li><b>Extract, then refine:</b> The intensities are re-extracted at the top of
                     <em>every optimizer iteration</em> and then held fixed for the whole of that
-                    iteration &mdash; for the baseline residual, for every column of the Jacobian,
+                    iteration - for the baseline residual, for every column of the Jacobian,
                     and for the trial step. The optimizer adjusts only the lattice and profile
                     parameters; the background stays fixed at the spline points throughout.</li>
                 <li><b>Why not re-extract more often:</b> Re-extracting inside the objective
@@ -695,7 +680,7 @@ Refinement: 64%</pre>
                     compensates, so the residual barely responds and the width parameters become
                     indeterminate. Holding the intensities fixed within an iteration keeps the
                     minimum at the true width sharp. Alternating extraction with least-squares
-                    &mdash; rather than fusing them &mdash; is the actual Le Bail method.</li>
+                    - rather than fusing them - is the actual Le Bail method.</li>
                 <li><b>Convergence:</b> Because the alternation happens inside the iteration loop,
                     a single press of <code>Run Le Bail</code> converges self-consistently; you do
                     not need to click repeatedly for the intensities and parameters to agree.
@@ -705,9 +690,9 @@ Refinement: 64%</pre>
             </ol>
             <div class="note">
                 <strong>The extraction runs to convergence, not for a fixed number of passes.</strong>
-                Each refinement cycle restarts the decomposition from a flat seed &mdash; which
+                Each refinement cycle restarts the decomposition from a flat seed - which
                 keeps the extracted intensities a deterministic function of the current
-                parameters, rather than of the path taken to reach them &mdash; and then iterates
+                parameters, rather than of the path taken to reach them - and then iterates
                 until the relative change falls below a tolerance, with a floor of six passes and
                 a cap of twenty-four. A fixed count is either wasteful on a well-separated pattern
                 or short on a heavily overlapped one, and the overlapped case is exactly where
@@ -719,13 +704,10 @@ Refinement: 64%</pre>
             <p>
                 The Pawley method treats the peak height ($I_{hkl}$) of every Bragg
                 reflection as a free variable, fitted at the same time as the cell and
-                the profile.
-            </p>
-            <p>
-                It is <em>separable</em>. The pattern is linear in every intensity:
+                the profile. The pattern is linear in every intensity:
                 $$y(x) = \sum_j I_j\,\phi_j(x;\theta) + b(x)$$
-                so for any given set of non-linear parameters $\theta$ &mdash; cell,
-                zero-point, profile widths &mdash; the optimal intensities are not
+                so for any given set of non-linear parameters $\theta$ - cell,
+                zero-point, profile widths - the optimal intensities are not
                 something to iterate towards but the exact solution of a linear
                 least-squares problem. powder5 solves that problem outright at every
                 step and lets the minimiser search only $\theta$. This is variable
@@ -743,10 +725,10 @@ Refinement: 64%</pre>
                 The normal matrix of the linear step is <em>banded</em>: it has a
                 non-zero entry for two reflections only where their profile windows
                 overlap, and the reflection list is sorted by $2\theta$. The solve is
-                therefore $O(n\,b^2)$ in the bandwidth $b$, not $O(n^3)$ &mdash; a few
+                therefore $O(n\,b^2)$ in the bandwidth $b$, not $O(n^3)$ - a few
                 tens of milliseconds and about a megabyte for a pattern with 2500
-                reflections. The background is fixed by the
-                user-defined spline anchors and is not refined; see
+                reflections. The background is a spline through the
+                user-defined anchors, whose heights are refined only if you ask; see
                 <a href="#parameters-background">Background Modeling</a> for what that costs.
             </p>
             <p>
@@ -754,33 +736,25 @@ Refinement: 64%</pre>
                 is a measurement of a quantity whose true value is non-negative, but the
                 measurement itself carries noise, and forcing every realisation to be
                 \(\ge 0\) turns a symmetric error into a one-sided one. That bias lands hardest
-                on weak and systematically absent reflections &mdash; exactly the ones a
+                on weak and systematically absent reflections - exactly the ones a
                 space-group test needs to be honest about. A negative intensity is refined,
                 reported and rendered as a negative contribution to the pattern.
             </p>
             <div class="note">
                 <strong>The intensity derivatives are analytic.</strong>
                 \(\partial y_i / \partial I_j\) is the profile of reflection \(j\) at point
-                \(i\) &mdash; exact, and non-zero only inside that reflection's profile window.
+                \(i\) - exact, and non-zero only inside that reflection's profile window.
                 Each intensity column is therefore stored as a slice covering only the points it
                 touches, and \(J^{T}J\) is accumulated over the <em>intersection</em> of two
                 slices, so two reflections that do not overlap contribute an exact zero without
                 being visited. Profile, cell and zero-point parameters still use finite
                 differences, which is where they genuinely belong.
             </div>
-             <div class="note">
-                <strong>Pawley initialisation:</strong> a single Le Bail extraction runs
-                before the refinement to seed the intensities. With the separable solve
-                this now matters far less than it used to &mdash; the intensities are
-                re-derived exactly from the data at every step, so the seed is
-                overwritten immediately &mdash; but it still gives the first cost
-                evaluation a sensible scale, and it is what the pattern is drawn from
-                before the first iteration completes.
-            </div>
+
             <ul>
                 <li><b>Advantages:</b> The Pawley method is considered more rigorous as it avoids the iterative bias of the Le Bail method, particularly in cases of severe peak overlap. It can yield more accurate and statistically sound integrated intensities (reported as areas) and parameter uncertainties.</li>
-                <li><b>Limitations:</b> the cost is no longer the parameter count &mdash;
-                    the intensities are projected out rather than iterated &mdash; but the
+                <li><b>Limitations:</b> the cost is no longer the parameter count -
+                    the intensities are projected out rather than iterated - but the
                     information content of the data is unchanged. Where reflections
                     overlap severely their intensities remain strongly correlated, and
                     where they are <em>exactly</em> coincident only the group sum is
@@ -792,11 +766,7 @@ Refinement: 64%</pre>
             </ul>
              <div class="note">
                 <strong>Which algorithm for a Pawley fit?</strong><br>
-                This advice has reversed. Parallel tempering used to be impractical
-                here, because it proposes one scalar per replica per iteration and the
-                intensities made up almost the whole parameter vector &mdash; a
-                reflection got, on average, well under one proposal for the entire run.
-                With the intensities projected out, PT searches the same dozen
+                Parallel tempering searches the same dozen
                 non-linear parameters it searches in Le Bail mode, and is the better
                 choice whenever the starting cell is uncertain. Use
                 <strong>Levenberg-Marquardt</strong> alone when the model is already
@@ -818,7 +788,7 @@ Refinement: 64%</pre>
             <ul>
                 <li><b>Characteristics:</b> LM is a local minimizer, exhibiting rapid quadratic convergence when the initial parameters are close to the true minimum. It is the preferred method for final, high-precision refinement and is the only algorithm here that can calculate valid estimated standard deviations (ESDs) for the refined parameters from the covariance matrix.</li>
                 <li><b>Limitations:</b> It is susceptible to converging to a local minimum if the starting model is far from the global solution.</li>
-                <li><b>Parameter bounds:</b> several parameters are bounded &mdash; profile widths and
+                <li><b>Parameter bounds:</b> several parameters are bounded - profile widths and
                     Pawley intensities below at zero, the mixing parameter $\eta$ to $[0,1]$, cell
                     angles to $(0^\circ, 180^\circ)$. A step that would cross a bound is clipped to it,
                     and the gain ratio
@@ -828,8 +798,8 @@ Refinement: 64%</pre>
                     parameter $\lambda$ is shared by the whole model, so measuring $\rho$ against a
                     step that was never taken would let a handful of pinned intensities throttle the
                     cell and profile terms as well.</li>
-                <li><b>Stopping at a bound:</b> if an entire step is blocked &mdash; the model sitting in
-                    a corner of the bound box with the gradient pointing out of it &mdash; the
+                <li><b>Stopping at a bound:</b> if an entire step is blocked - the model sitting in
+                    a corner of the bound box with the gradient pointing out of it - the
                     refinement stops and reports it, rather than spending its remaining iterations
                     raising $\lambda$ against a wall.</li>
                 <li><b>Pawley Mode: Generally the recommended algorithm for Pawley refinements due to stability and efficiency.</b></li>
@@ -838,8 +808,8 @@ Refinement: 64%</pre>
                 <strong>The normal equations are solved by Cholesky factorisation</strong>, with LU
                 and partial pivoting retained as a fallback. The Marquardt-scaled matrix
                 \(D^{-1}(J^{T}J)D^{-1} + \lambda I\) is symmetric and positive definite by
-                construction; LU ignores both facts, does twice the arithmetic, and &mdash; the
-                part that matters &mdash; returns a finite &ldquo;solution&rdquo; for an
+                construction; LU ignores both facts, does twice the arithmetic, and - the
+                part that matters - returns a finite &ldquo;solution&rdquo; for an
                 indefinite matrix. An indefinite matrix means the normal equations have been
                 corrupted, and the step computed from one points in an arbitrary direction.
                 Cholesky fails on exactly that case, which is what the loop wants: it raises
@@ -849,8 +819,8 @@ Refinement: 64%</pre>
                 <strong>Parameters with no effect are dropped, and said so.</strong> A parameter
                 whose Jacobian column is identically zero is excluded from the solve and reported
                 once by name. The test is on the column itself, not on its size relative to other
-                columns: diagonals of \(J^{T}J\) are in different physical units &mdash; counts
-                per &Aring;ngstr&ouml;m for a cell edge, dimensionless for an intensity &mdash; so
+                columns: diagonals of \(J^{T}J\) are in different physical units - counts
+                per &Aring;ngstr&ouml;m for a cell edge, dimensionless for an intensity - so
                 comparing them against each other says nothing about whether either is determined.
             </div>
 
@@ -867,7 +837,7 @@ Refinement: 64%</pre>
                  solved exactly at each cost evaluation (see
                  <a href="#pawley-method">the Pawley method</a>), so a replica walks the
                  same non-linear parameters it would in Le Bail mode and the cost it
-                 reports is the reduced objective &mdash; the residual after the
+                 reports is the reduced objective - the residual after the
                  intensities have been optimised. That is the function whose minimum in
                  $\theta$ is the true minimum, so the Metropolis test and the replica
                  swaps mean what they are supposed to mean.</li>
@@ -904,7 +874,7 @@ Refinement: 64%</pre>
                     follow that same axis, so the three settings of one lattice give identical peak
                     positions and identical intensities. Switching between settings carries the angle
                     across, so the cell is not lost.</li>
-                <li><b>Startup default:</b> the application opens on $Pnma$ (No. 62, standard setting) with an orthorhombic cell of $a = 8.478$, $b = 5.397$, $c = 6.958$ &#8491;. This is only a starting point &mdash; change it to match your material before refining.</li>
+                <li><b>Startup default:</b> the application opens on $Pnma$ (No. 62, standard setting) with an orthorhombic cell of $a = 8.478$, $b = 5.397$, $c = 6.958$ &#8491;. This is only a starting point - change it to match your material before refining.</li>
             </ul>
 
             <h3 id="parameters-reflections">Reflection List &amp; Multiplicities</h3>
@@ -951,7 +921,7 @@ Refinement: 64%</pre>
             </p>
             <p>
                 Operators are taken from the <code>symops</code> field of the space-group database
-                (or the older <code>rotations</code> field, which serves equally well here &mdash; only
+                (or the older <code>rotations</code> field, which serves equally well here - only
                 the rotation parts affect a reflection orbit). The closed group is checked against the
                 <code>order_p</code> recorded for the setting before it is used. If the database
                 carries no operators, a built-in table of the Laue-class generators is used instead;
@@ -978,7 +948,7 @@ Refinement: 64%</pre>
             </p>
             <ul>
                 <li><code>Radiation 1/2 (Å) & Ratio</code>: Defines the X-ray source. For divergent-beam laboratory instruments, a Kα1/Kα2 doublet is typically used. For synchrotron radiation, the Ratio is set to 0.</li>
-                <li><code>Polarisation</code>: Selects the polarisation model used in the Lorentz&ndash;polarisation factor &mdash; <em>Lab</em> (default), <em>Synchrotron</em>, or <em>None</em>. A second field appears beside it: the monochromator angle $2\theta_M$ for a laboratory source, or the polarised fraction $f$ for a synchrotron. This setting does <strong>not</strong> affect the fit; it governs how an extracted intensity is converted into $|F|$. See <a href="#parameters-lp">Lorentz&ndash;Polarisation Factor</a>.</li>
+                <li><code>Polarisation</code>: Selects the polarisation model used in the Lorentz&ndash;polarisation factor - <em>Lab</em> (default), <em>Synchrotron</em>, or <em>None</em>. A second field appears beside it: the monochromator angle $2\theta_M$ for a laboratory source, or the polarised fraction $f$ for a synchrotron. This setting does <strong>not</strong> affect the fit; it governs how an extracted intensity is converted into $|F|$. See <a href="#parameters-lp">Lorentz&ndash;Polarisation Factor</a>.</li>
                 <li><code>Zero</code>: A refinable parameter that corrects for instrumental zero-point error in the $2\theta$ axis. It is highly correlated with lattice parameters and must be refined with caution.</li>
                 <li><code>2θ Min / Max</code>: These sliders define the refinement range. It is standard practice to exclude regions of low signal-to-noise or known artifacts from the calculation.</li>
             </ul>
@@ -987,8 +957,8 @@ Refinement: 64%</pre>
             <h3 id="parameters-lp">Lorentz&ndash;Polarisation Factor (Lp)</h3>
             <p>
                 The integrated intensity of a powder reflection is not $|F|^2$ alone. It carries two
-                geometric weights &mdash; the multiplicity $m$ of the reflection and the
-                Lorentz&ndash;polarisation factor $Lp$ &mdash; on top of an arbitrary overall scale $s$:
+                geometric weights - the multiplicity $m$ of the reflection and the
+                Lorentz&ndash;polarisation factor $Lp$ - on top of an arbitrary overall scale $s$:
             </p>
             $$I(hkl) \;=\; s \cdot m \cdot Lp(2\theta) \cdot |F(hkl)|^2$$
             <p>
@@ -1005,7 +975,7 @@ Refinement: 64%</pre>
                     it is re-partitioned from the observation each cycle, or refined as a
                     least-squares parameter. Either way it absorbs $Lp$ completely. Changing the
                     polarisation model therefore cannot move a lattice parameter, a profile
-                    coefficient, $R_{wp}$ or $\chi^2$ by so much as a digit &mdash; and if it appears
+                    coefficient, $R_{wp}$ or $\chi^2$ by so much as a digit - and if it appears
                     to, something else changed at the same time. What it changes is the
                     <em>meaning</em> of the refined intensities: $|F_o|$, the input to charge
                     flipping, the Wilson prior behind the French&ndash;Wilson correction, and the
@@ -1076,7 +1046,7 @@ Refinement: 64%</pre>
             </p>
             <p>
                 Each cell below gives $2\theta_M$ in degrees, with the resulting
-                $K = \cos^2 2\theta_M$ in brackets. <strong>Enter the angle, not $K$</strong> &mdash;
+                $K = \cos^2 2\theta_M$ in brackets. <strong>Enter the angle, not $K$</strong> -
                 Powder&nbsp;5 squares the cosine for you. Angles are computed from the K$\alpha$
                 weighted-mean wavelengths ($\alpha_1{:}\alpha_2 = 2{:}1$); a monochromator that
                 passes K$\alpha_1$ alone shifts $2\theta_M$ by less than 0.05&deg;, which is far below
@@ -1095,13 +1065,13 @@ Refinement: 64%</pre>
                     </tr>
                 </thead>
                 <tbody>
-                    <tr><td>Graphite (002), pyrolytic &mdash; the usual diffracted-beam crystal (3.354)</td>
+                    <tr><td>Graphite (002), pyrolytic - the usual diffracted-beam crystal (3.354)</td>
                         <td>39.9 (0.588)</td><td>33.6 (0.694)</td><td>31.0 (0.735)</td>
                         <td>26.6 (0.800)</td><td>12.2 (0.956)</td><td>9.6 (0.972)</td></tr>
                     <tr><td>Quartz (10$\bar{1}$1) (3.343)</td>
                         <td>40.1 (0.585)</td><td>33.7 (0.692)</td><td>31.1 (0.734)</td>
                         <td>26.7 (0.799)</td><td>12.2 (0.955)</td><td>9.6 (0.972)</td></tr>
-                    <tr><td>Ge (111) &mdash; Johansson incident-beam (3.266)</td>
+                    <tr><td>Ge (111) - Johansson incident-beam (3.266)</td>
                         <td>41.1 (0.569)</td><td>34.5 (0.679)</td><td>31.8 (0.722)</td>
                         <td>27.3 (0.790)</td><td>12.5 (0.953)</td><td>9.8 (0.971)</td></tr>
                     <tr><td>Si (111) (3.136)</td>
@@ -1119,8 +1089,8 @@ Refinement: 64%</pre>
                     <tr><td>Graded multilayer mirror (G&ouml;bel and similar)</td>
                         <td colspan="6">Enter <strong>0</strong>. The beam meets the multilayer at
                             grazing incidence, so $2\theta_M$ is a couple of degrees and
-                            $K &gt; 0.997$ &mdash; indistinguishable from an unpolarised source.</td></tr>
-                    <tr><td>None &mdash; K$\beta$ filter (Ni, Fe, &hellip;), or no filter at all</td>
+                            $K &gt; 0.997$ - indistinguishable from an unpolarised source.</td></tr>
+                    <tr><td>None - K$\beta$ filter (Ni, Fe, &hellip;), or no filter at all</td>
                         <td colspan="6">Enter <strong>0</strong> ($K = 1$). A filter absorbs; it does
                             not diffract, so it does not polarise.</td></tr>
                 </tbody>
@@ -1134,7 +1104,7 @@ Refinement: 64%</pre>
                 <p>
                     <strong>An incident-beam monochromator must lie in the same plane as the
                     diffractometer.</strong> The formula Powder&nbsp;5 uses,
-                    $P = (1 + K\cos^2 2\theta)/(1 + K)$, is the parallel case &mdash; the
+                    $P = (1 + K\cos^2 2\theta)/(1 + K)$, is the parallel case - the
                     monochromator diffracts in the equatorial plane, the same plane in which the
                     sample then diffracts. That is how a Johansson Ge&nbsp;(111) or a diffracted-beam
                     graphite crystal is mounted on essentially every laboratory instrument, so the
@@ -1143,7 +1113,7 @@ Refinement: 64%</pre>
                 <p>
                     If a monochromator is instead mounted with its diffraction plane
                     <em>perpendicular</em> to the equatorial plane, the polarisation factor becomes
-                    $P = (K + \cos^2 2\theta)/(1 + K)$ &mdash; a different function, not a different
+                    $P = (K + \cos^2 2\theta)/(1 + K)$ - a different function, not a different
                     $K$, and one this single-parameter model cannot express. There is no value of
                     $2\theta_M$ that stands in for it. The arrangement is rare outside purpose-built
                     instruments; if you have one, treat the extracted $|F|$ as carrying a known
@@ -1156,7 +1126,7 @@ Refinement: 64%</pre>
                     <em>ideally mosaic</em> result, which is the right one for graphite and for
                     ordinary pyrolytic monochromators. A genuinely perfect crystal diffracts in the
                     dynamical regime and the correct constant is $K = |\cos 2\theta_M|$ instead
-                    &mdash; 0.894 rather than 0.800 for graphite geometry. Powder&nbsp;5 implements
+                    - 0.894 rather than 0.800 for graphite geometry. Powder&nbsp;5 implements
                     the mosaic convention. If you need the perfect-crystal value, enter the
                     equivalent angle $2\theta_{M}^{\,\mathrm{eff}} = \arccos\sqrt{K}$ (for
                     $K = 0.894$, that is 19.1&deg;). In practice the two differ by well under 2% in
@@ -1179,7 +1149,7 @@ Refinement: 64%</pre>
                     chosen.</li>
                 <li><strong>Horizontal scattering plane</strong>: the field lies <em>in</em> the
                     scattering plane. Enter $f \approx 0.05$&ndash;$0.1$, which gives
-                    $P \to \cos^2 2\theta$ &mdash; a severe correction that goes to zero at
+                    $P \to \cos^2 2\theta$ - a severe correction that goes to zero at
                     $2\theta = 90^\circ$. Getting this backwards is a much worse error than
                     misjudging $f$ by a few per cent.</li>
             </ul>
@@ -1209,7 +1179,7 @@ Refinement: 64%</pre>
             </table>
             <p>
                 $Lp$ spans a factor of about 90 between $2\theta = 10^\circ$ and $90^\circ$. Omitting
-                it does not perturb a structure-solution calculation slightly &mdash; it weights the
+                it does not perturb a structure-solution calculation slightly - it weights the
                 first few peaks roughly two orders of magnitude too heavily, and a charge-flipping map
                 built on uncorrected intensities is dominated by them. The choice <em>between</em>
                 models is a much smaller effect: at most a factor of two, and concentrated near
@@ -1242,7 +1212,7 @@ Refinement: 64%</pre>
             </table>
             <p>
                 All of these read one shared calculation, evaluated at the <em>corrected</em>
-                $2\theta$ &mdash; the same angle printed in the reflection table, including the zero
+                $2\theta$ - the same angle printed in the reflection table, including the zero
                 shift and any displacement or transparency term. The charge-flipping worker takes the
                 per-reflection value computed by the refinement rather than recomputing its own, so
                 the map, the report and the prior cannot disagree about it. The charge-flipping
@@ -1286,28 +1256,57 @@ Refinement: 64%</pre>
                  <strong>Anchors outside the fitted range are removed.</strong> Narrowing the
                  \(2\theta\) range deletes any anchor that now falls outside it, and a message
                  says how many went. Leaving them would let a point at 160&deg; go on shaping the
-                 baseline for a fit that stops at 158&deg; &mdash; data explicitly excluded, still
+                 baseline for a fit that stops at 158&deg; - data explicitly excluded, still
                  pulling the background under the data that was kept. Widening the range again
                  does not bring them back; add new ones, or press Auto-points.
              </div>
+             <div class="note">
+                 <strong>Fit background.</strong> With the checkbox ticked, the <em>height</em>
+                 \(y\) of every anchor becomes a refined parameter, bounded below at zero
+                 &mdash; a negative background is not physical. The \(2\theta\) positions stay
+                 where you put them: the anchors are where you have decided the baseline can be
+                 read, and moving them is a judgement about the data, not something a
+                 least-squares step should make on your behalf.
+             </div>
+             <p>
+                 Whether you tick it changes what the numbers in the report mean.
+             </p>
+             <table class="param-table">
+                 <thead><tr><th></th><th>Background fitted</th><th>Background fixed</th></tr></thead>
+                 <tbody>
+                     <tr><td><b>ESDs</b></td>
+                         <td>Include background uncertainty. Each anchor contributes a column to
+                             \(J\), so the covariance knows that a baseline free to move absorbs
+                             some of what the peaks would otherwise have to explain.</td>
+                         <td>The background contributes no column to \(J\), so every
+                             \(\sigma\) is conditional on the anchors being exactly right.</td></tr>
+                     <tr><td><b>\(P\) and \(\chi^2\)</b></td>
+                         <td>The anchors are counted in \(P\), so the degrees of freedom are
+                             honest.</td>
+                         <td>They are not counted, so \(\chi^2\) - and every ESD scaled by
+                             it - is optimistic by roughly the number of anchors.</td></tr>
+                     <tr><td><b>Extracted intensities</b></td>
+                         <td>The baseline adjusts with the fit, so a slightly misplaced anchor
+                             corrects itself instead of being absorbed.</td>
+                         <td>Any error in the anchors goes straight into the extracted
+                             intensities, because the decomposition works on
+                             \(y_{obs} - y_{bkg}\).</td></tr>
+                 </tbody>
+             </table>
+             <p>
+                 The statistics block states which of the two applied on every run, rather than
+                 leaving it as an unstated assumption.
+             </p>
              <div class="warning-note">
-                 <strong>The background is fixed, and this has consequences that appear in the
-                 report.</strong> It is evaluated once before the refinement starts and held
-                 constant for every residual and every Jacobian column. Therefore:
-                 <ul>
-                     <li>No ESD anywhere in the output includes background uncertainty. The
-                         covariance comes from \(J^{T}J\), and the background contributes no
-                         column to \(J\), so every \(\sigma\) is conditional on the anchors
-                         being exactly right.</li>
-                     <li>The anchors are not counted in \(P\), so the degrees of freedom &mdash;
-                         and hence \(\chi^2\) and every ESD scaled by it &mdash; are optimistic
-                         by roughly the number of anchors.</li>
-                     <li>Any error in the anchors is absorbed into the extracted intensities,
-                         because the decomposition works on \(y_{obs} - y_{bkg}\).</li>
-                 </ul>
-                 The statistics block states this explicitly on every run rather than leaving it
-                 as an unstated assumption. Define the anchors carefully <strong>before</strong>
-                 refining.
+                 <strong>Fitting the background does not excuse you from placing the anchors
+                 well.</strong> A refined anchor moves in \(y\) only, so a point put in the
+                 middle of a peak will be pulled up to sit under it and the peak will lose
+                 intensity to the baseline. With few reflections, or a strongly sloping
+                 background sampled by too few anchors, a fitted background and a broad
+                 low-angle peak describe the same data equally well and the refinement cannot
+                 tell them apart. Fit the background when the anchors are already close and you
+                 want their uncertainty in the ESDs; leave it fixed while the cell and the
+                 profile are still moving.
              </div>
             <h3 id="parameters-profile4">Simple pVoigt</h3>
             <p>
@@ -1443,7 +1442,7 @@ Refinement: 64%</pre>
             </p>
             <div class="note">
                 <strong>Why Le Bail cannot be used here.</strong> Le Bail intensities are not
-                least-squares parameters &mdash; they are re-partitioned from the observed profile at
+                least-squares parameters - they are re-partitioned from the observed profile at
                 each cycle. They have no normal matrix and no covariance, so there is no way to ask
                 how well any of them is determined. The test therefore requires a
                 <a href="#pawley-method">Pawley</a> refinement run with the
@@ -1490,16 +1489,16 @@ Refinement: 64%</pre>
             <p>
                 Each row of the table is a distinct <strong>extinction symbol</strong>, not a single
                 space group. Powder diffraction cannot separate groups that predict identical
-                absences &mdash; centrosymmetric and non-centrosymmetric pairs, for instance &mdash;
+                absences - centrosymmetric and non-centrosymmetric pairs, for instance -
                 so those share one probability and are listed together. Clicking any symbol adopts
                 that setting. Note that the setting matters: $Pnma$ and $Pbnm$ are the same group
                 but predict different absences relative to the fixed axes, so they appear separately.
             </p>
             <ul>
-                <li><b>P(SG | data)</b> &mdash; the posterior for that extinction symbol.</li>
-                <li><b>absent</b> &mdash; how many of the refined reflections the group forbids.
+                <li><b>P(SG | data)</b> - the posterior for that extinction symbol.</li>
+                <li><b>absent</b> - how many of the refined reflections the group forbids.
                     A group forbidding nothing is always in the list as a baseline.</li>
-                <li><b>&lang;I/&sigma;&rang;</b> and <b>worst I/&sigma;</b> &mdash; diagnostics over
+                <li><b>&lang;I/&sigma;&rang;</b> and <b>worst I/&sigma;</b> - diagnostics over
                     the would-be-absent set, using diagonal errors only. These are the numbers a
                     crystallographer looks at first, but they are <em>not</em> what drives the
                     ranking; the probability uses the full correlation structure.</li>
@@ -1510,7 +1509,7 @@ Refinement: 64%</pre>
                 <strong>Run the Pawley refinement in a condition-free group.</strong>
                 A reflection can only be tested if it was actually a parameter of the fit. If the
                 refinement is run in, say, $Pnma$, every reflection $Pnma$ forbids was never refined
-                and carries no information &mdash; so the test is blind exactly where it matters.
+                and carries no information - so the test is blind exactly where it matters.
                 Use the group of the correct Laue class that imposes no reflection conditions:
                 $P\bar{1}$, $P2/m$, $Pmmm$, $P4/m$, $P4/mmm$, $P\bar{3}$, $P\bar{3}m1$, $P6/m$,
                 $P6/mmm$, $Pm\bar{3}$ or $Pm\bar{3}m$. The test detects this situation, names the
@@ -1529,8 +1528,8 @@ Refinement: 64%</pre>
                     In cubic and rhombohedral cells reflections such as $(333)/(511)$ or
                     $(300)/(221)$ fall at identical $2\theta$. Their individual intensities are then
                     not separately determined and no covariance matrix exists. The test is formulated
-                    in precision space precisely so that it does not need one &mdash; $\mathbf{Q}$
-                    may be singular while $\mathbf{B}_S$ never is &mdash; so the probabilities remain
+                    in precision space precisely so that it does not need one - $\mathbf{Q}$
+                    may be singular while $\mathbf{B}_S$ never is - so the probabilities remain
                     valid. The $I/\sigma$ columns fall back to conditional estimates in this case and
                     are flagged as such.</li>
             </ul>
@@ -1555,7 +1554,7 @@ Refinement: 64%</pre>
             <p>
                 Once a Pawley refinement has extracted a set of individual integrated
                 intensities, Powder&nbsp;5 can attempt to solve the crystal structure
-                <em>ab initio</em> &mdash; with no starting model &mdash; using the
+                <em>ab initio</em> - with no starting model - using the
                 dual-space <strong>charge-flipping</strong> algorithm of Oszl&aacute;nyi
                 and S&uuml;t&#337;. The result is an electron-density map and a list of
                 atomic positions, obtained purely from the diffraction intensities and
@@ -1564,8 +1563,8 @@ Refinement: 64%</pre>
             <div class="note">
                 Charge Flipping is only available after a converged Pawley fit. The
                 tab stays disabled until one exists, because the method needs the
-                individual reflection intensities that only Pawley &mdash; not
-                Le&nbsp;Bail &mdash; provides, together with the normal matrix produced
+                individual reflection intensities that only Pawley - not
+                Le&nbsp;Bail - provides, together with the normal matrix produced
                 by a Levenberg-Marquardt step (Parallel Tempering supplies this through
                 its LM polish).
             </div>
@@ -1591,7 +1590,7 @@ Refinement: 64%</pre>
                     density, then reimpose everything that is actually known about the
                     structure factors: the measured amplitudes, the point-group
                     symmetry, and the systematic absences. The <em>calculated phases</em>
-                    are kept. Reflections that were never measured are left free &mdash;
+                    are kept. Reflections that were never measured are left free -
                     that freedom is what lets the map extend beyond the data.
                 </li>
             </ol>
@@ -1653,7 +1652,7 @@ Refinement: 64%</pre>
                 The pattern gives only their sum. Powder&nbsp;5 groups such reflections
                 into a <em>cluster</em> and re-partitions the cluster's total intensity
                 between them each cycle in proportion to the current calculated values
-                &mdash; the same idea as Le&nbsp;Bail extraction, applied inside the
+                - the same idea as Le&nbsp;Bail extraction, applied inside the
                 flipping loop. The split is free; the total is fixed.
             </p>
             <div class="note">
@@ -1695,7 +1694,7 @@ Refinement: 64%</pre>
             </p>
             <div class="warning-note">
                 <strong>The trade-off.</strong> Strict symmetry cannot recover from a
-                wrong space group &mdash; it will happily converge to a low \(R\) for a
+                wrong space group - it will happily converge to a low \(R\) for a
                 structure that does not exist. If the group is uncertain, run at
                 \(\lambda = 0\) as well and compare: a density that is genuinely
                 consistent with the group will symmetrise well afterwards (high symmetry
@@ -1769,7 +1768,7 @@ Refinement: 64%</pre>
                     <tr><td><strong>Random Starts</strong></td><td>The method begins from random phases and does not converge every time. Each start is an independent trial; the best (lowest R) map is kept.</td></tr>
                     <tr><td><strong>Peak Merge (&Aring;)</strong></td><td>Maxima closer than this are treated as one atom.</td></tr>
                     <tr><td><strong>Symmetry in loop</strong></td><td>How strongly the space group is imposed on the structure factors each cycle (\(\lambda\), see <a href="#cf-symmetry">Space-Group Constraints</a>). <em>None</em> is classical \(P1\) charge flipping; <em>Damped</em> (\(\lambda = 0.5\)) is the default; <em>Strict</em> (\(\lambda = 1\)) is fastest and fixes the origin, but assumes the space group is right.</td></tr>
-                    <tr><td><strong>Overlap (&deg;2&theta;)</strong></td><td>Reflections closer than this in \(2\theta\) are treated as one measured peak and share their intensity dynamically. Exact overlaps are always caught regardless of the setting. Symmetry equivalents are unaffected &mdash; they are constrained to equal \(|F|\).</td></tr>
+                    <tr><td><strong>Overlap (&deg;2&theta;)</strong></td><td>Reflections closer than this in \(2\theta\) are treated as one measured peak and share their intensity dynamically. Exact overlaps are always caught regardless of the setting. Symmetry equivalents are unaffected - they are constrained to equal \(|F|\).</td></tr>
                     <tr><td><strong>Weak Fraction</strong></td><td>The weakest this fraction of reflections keep their <em>calculated</em> modulus and have their phase advanced by \(\pi/2\) each cycle instead of being forced onto \(|F_{\text{obs}}|\) (see <a href="#cf-symmetry">rule&nbsp;5</a>). Range 0&ndash;0.33, default 0.15. At <strong>0</strong> the readout says <em>off</em>, and the run is the original 2004 algorithm.</td></tr>
                 </tbody>
             </table>
@@ -1778,7 +1777,7 @@ Refinement: 64%</pre>
                 dominates the cost and scales as \(N^3\log N\), moving from 64&sup3; to
                 128&sup3; is roughly an eight-fold increase in run time. The iteration
                 runs inside a Web Worker so the interface stays responsive, and it uses
-                <strong>WebGPU</strong> when the browser provides it &mdash; the entire
+                <strong>WebGPU</strong> when the browser provides it - the entire
                 dual-space loop executes on the GPU, uploading the grid once and reading
                 it back once, which is many times faster than the CPU for the
                 transform-heavy inner loop. On browsers or devices without WebGPU it
@@ -1787,7 +1786,7 @@ Refinement: 64%</pre>
                 single precision and the CPU in double, so the maps agree closely rather
                 than exactly; a difference in the last digit of \(R\) between backends is
                 normal. The reported <em>Compute</em> field in the solution shows which
-                path was used. Every control affects both backends alike &mdash; including
+                path was used. Every control affects both backends alike - including
                 <strong>Weak Fraction</strong>, which is implemented in the CPU loop as well,
                 so a machine without WebGPU does not quietly solve a different problem. The
                 threshold itself is computed identically on both. The GPU path requires the file
@@ -1808,8 +1807,8 @@ Refinement: 64%</pre>
                 many and the GPU spends seconds in one uninterrupted burst, which is how a driver
                 watchdog decides the device has stopped responding and resets it. The controller
                 starts at one cycle, so the first measurement is safe on any device, and sizes
-                from a decaying worst-case estimate so a device that slows down mid-run &mdash;
-                thermal throttling, another application taking the GPU &mdash; is caught before
+                from a decaying worst-case estimate so a device that slows down mid-run -
+                thermal throttling, another application taking the GPU - is caught before
                 the next burst rather than after it. A device loss is now detected and reported;
                 previously a reset left a pending read that never settled, and the run hung with
                 no error at all.
@@ -1853,7 +1852,7 @@ Refinement: 64%</pre>
                 reported limits before it encodes anything; if the device cannot take
                 the grid, the run falls back to the CPU with a message saying so rather
                 than producing a map that was never computed. The CPU path at 128&sup3;
-                is slow &mdash; expect minutes per random start &mdash; so on a
+                is slow - expect minutes per random start - so on a
                 constrained device it is usually better to stay at 64&sup3;.
             </div>
 
@@ -1871,7 +1870,7 @@ Refinement: 64%</pre>
 
             <h4>Iterations and random starts</h4>
             <p>
-                Charge flipping does not converge gradually &mdash; it stays flat and
+                Charge flipping does not converge gradually - it stays flat and
                 then drops abruptly when the phases lock in, often after several hundred
                 cycles. Judge a run by whether that drop happened, not by the final
                 \(R\). More <em>starts</em> is usually a better investment than more
@@ -1887,7 +1886,7 @@ Refinement: 64%</pre>
                 space-group test, a known compound, an unambiguous extinction pattern):
                 it converges in fewer cycles, needs fewer random starts, and delivers the
                 map already on a standard origin. Use \(\lambda = 0\) when the group is
-                in doubt, or as an independent check on a \(\lambda = 1\) solution &mdash;
+                in doubt, or as an independent check on a \(\lambda = 1\) solution -
                 if the \(P1\) map symmetrises to a high correlation without having been
                 forced to, the group is right. \(\lambda = 0.5\) is the compromise and
                 the default: it accelerates convergence appreciably while still allowing
@@ -1902,7 +1901,7 @@ Refinement: 64%</pre>
                 that <em>were</em> resolved get to trade intensity freely, discarding
                 real information. 0.05&deg; suits sharp laboratory data; broad peaks or a
                 high-symmetry cell with many coincidences want 0.10&ndash;0.15&deg;. The
-                summary reports how many reflections ended up sharing a peak &mdash; if
+                summary reports how many reflections ended up sharing a peak - if
                 that number is close to the total, the tolerance is almost certainly too
                 large.
             </p>
@@ -1911,7 +1910,7 @@ Refinement: 64%</pre>
                 reflection-count warnings: a grid too small, or intensities on
                 systematically absent reflections, are input problems and no parameter
                 will fix them. (2) Add random starts. (3) Adjust \(\delta/\sigma\) by
-                &plusmn;0.1. (4) Try \(\lambda = 0\) and \(\lambda = 1\) &mdash; a
+                &plusmn;0.1. (4) Try \(\lambda = 0\) and \(\lambda = 1\) - a
                 solution that appears at \(\lambda = 0\) but not at \(\lambda = 1\) is
                 telling you the space group is wrong. (5) Only then increase the grid or
                 the iteration count.
@@ -1919,9 +1918,9 @@ Refinement: 64%</pre>
 
             <h4>Choosing the weak fraction</h4>
             <p>
-                <strong>Scan it; do not tune it.</strong> The published range is broad &mdash;
+                <strong>Scan it; do not tune it.</strong> The published range is broad -
                 the precursor experiment worked with anything from 10% to 50% of the data
-                inside the resolution sphere &mdash; so the setting has a plateau rather than
+                inside the resolution sphere - so the setting has a plateau rather than
                 an optimum. Try 0, 0.10, 0.20 and 0.30 and compare across <em>all</em> random
                 starts, not one. If 0.15 and 0.20 give visibly different answers, that
                 difference is trial-to-trial scatter and not the parameter.
@@ -1931,7 +1930,7 @@ Refinement: 64%</pre>
                 the observed intensities, so a large resolution sphere sweeps genuinely strong
                 reflections into the "weak" set and over-perturbs the iteration. And the
                 intensities at the high-angle edge of a Pawley fit are often badly determined,
-                which puts them in the weak set for the wrong reason &mdash; trimming the
+                which puts them in the weak set for the wrong reason - trimming the
                 reflection range is the better fix there.
             </p>
             <div class="note">
@@ -1947,15 +1946,15 @@ Refinement: 64%</pre>
                 contains:
             </p>
             <ul>
-                <li><strong>Best R.</strong> The amplitude agreement of the retained map, summed over measured peaks. Below ~0.15 is promising; above ~0.30 usually means the run has not converged &mdash; add random starts, adjust the threshold by &plusmn;0.1&sigma;, or see <a href="#cf-settings">Recommended Settings</a>.</li>
-                <li><strong>Electron-density peaks.</strong> Fractional coordinates. At \(\lambda = 0\) the map is in \(P1\) with an arbitrary origin and hand, so absolute positions are meaningless &mdash; compare interatomic <em>distances</em>. At \(\lambda &gt; 0\) the origin is pinned by the symmetrisation and the coordinates are directly comparable to the space group's Wyckoff positions. <strong>Read the <em>Charge</em> column, not <em>Height</em>, to tell a heavy atom from a light one</strong> &mdash; see <a href="#cf-peak-columns">the column descriptions</a> for why height gets this backwards.</li>
+                <li><strong>Best R.</strong> The amplitude agreement of the retained map, summed over measured peaks. Below ~0.15 is promising; above ~0.30 usually means the run has not converged - add random starts, adjust the threshold by &plusmn;0.1&sigma;, or see <a href="#cf-settings">Recommended Settings</a>.</li>
+                <li><strong>Electron-density peaks.</strong> Fractional coordinates. At \(\lambda = 0\) the map is in \(P1\) with an arbitrary origin and hand, so absolute positions are meaningless - compare interatomic <em>distances</em>. At \(\lambda &gt; 0\) the origin is pinned by the symmetrisation and the coordinates are directly comparable to the space group's Wyckoff positions. <strong>Read the <em>Charge</em> column, not <em>Height</em>, to tell a heavy atom from a light one</strong> - see <a href="#cf-peak-columns">the column descriptions</a> for why height gets this backwards.</li>
                 <li><strong>Symmetry diagnostics.</strong> The summary reports which symmetry was used (operators or Laue-table fallback), how many reflections were forced to zero as systematically absent, and how many ended up sharing a peak with another reflection. A large absence count is normal for a centred lattice; an <em>absent-but-observed</em> warning is not, and usually means the space group is wrong.</li>
-                <li><strong>Density section.</strong> A slice through the map, with selectable axis and depth. The colour bar under the image is an <em>absolute</em> scale taken from the whole map, not from the slice on screen, so slices are directly comparable and an empty one looks empty. The caption gives the slice maximum in units of the map's \(\sigma\); anything under about 3&sigma; is ripple, not an atom. The <em>Stretch each slice to its own range</em> checkbox restores per-slice auto-contrast, which is occasionally useful for tracing weak features but makes noise look like structure &mdash; the caption says so whenever it is on.</li>
+                <li><strong>Density section.</strong> A slice through the map, with selectable axis and depth. The colour bar under the image is an <em>absolute</em> scale taken from the whole map, not from the slice on screen, so slices are directly comparable and an empty one looks empty. The caption gives the slice maximum in units of the map's \(\sigma\); anything under about 3&sigma; is ripple, not an atom. The <em>Stretch each slice to its own range</em> checkbox restores per-slice auto-contrast, which is occasionally useful for tracing weak features but makes noise look like structure - the caption says so whenever it is on.</li>
                 <li><strong>3D isosurface.</strong> The same map drawn as a surface of constant density, at a level you set in units of the map's \(\sigma\) — the same units as the section caption, so the two views can be read against each other. Drag to rotate, scroll to zoom. At 1&ndash;2&sigma; you will see mostly noise; real atoms usually appear as isolated closed blobs somewhere above 3&sigma;.
                     <ul>
                         <li><em>As solved</em> is the raw charge-flipping density, exactly what the algorithm produced.</li>
                         <li><em>Symmetry-averaged</em> is the same density after the Structure step has shifted it onto the space-group origin and averaged it over the symmetry operators. It is much cleaner, because averaging \(n\) equivalent copies of the cell suppresses the noise by \(\sqrt{n}\) — but it <strong>assumes the space group is right</strong>, so judge the solution on the raw map and use this one to read it. It only becomes selectable once the structure has been built.</li>
-                        <li><em>None (atoms only)</em> draws no density at all &mdash; just the
+                        <li><em>None (atoms only)</em> draws no density at all - just the
                             cell edges and the atom spheres. Once the map has done its job and you
                             trust the solution, the surface is mostly in the way: it hides the
                             spheres it is there to justify, and judging bond geometry or spotting
@@ -1966,7 +1965,7 @@ Refinement: 64%</pre>
                             extraction is skipped outright rather than being computed and hidden,
                             so switching to it is instant even at 128&sup3;. The atom coordinates
                             are those of the symmetry-averaged frame, the same as for
-                            <em>Symmetry-averaged</em> &mdash; with no map on screen there is
+                            <em>Symmetry-averaged</em> - with no map on screen there is
                             nothing for them to be aligned against, so the structure's own frame is
                             the only meaningful choice.
                             </p></li>
@@ -1995,7 +1994,7 @@ Refinement: 64%</pre>
                             match the picture to what you believe the structure to be. The default
                             palette holds sixteen distinct colours, enough that a solution with more
                             than eight sites does not reuse one, but the defaults carry no chemical
-                            meaning &mdash; they are assigned in order of peak height and nothing more.
+                            meaning - they are assigned in order of peak height and nothing more.
                             That is exactly why recolouring is useful: charge flipping gives you
                             density, not elements (see the note under
                             <a href="#cf-structure">Building a Structure</a>), so the identification of
@@ -2006,7 +2005,7 @@ Refinement: 64%</pre>
                             </p>
                             <p>
                             The colour belongs to the <strong>site</strong>, not to the individual
-                            sphere, so every symmetry image of that atom follows at once &mdash; the same
+                            sphere, so every symmetry image of that atom follows at once - the same
                             grouping the show/hide toggle uses. Clicking the swatch opens the picker
                             without hiding the row, so recolouring and hiding stay independent.
                             <em>Reset colours</em> puts every site back to its palette default and is
@@ -2035,13 +2034,13 @@ Refinement: 64%</pre>
             <div class="note">
                 Site colours are a <strong>viewing aid only</strong>. They are not written
                 to the <code>.cif</code>, the <code>.csv</code> or the report, and they are
-                not stored with the run &mdash; so they are cleared whenever a new structure
+                not stored with the run - so they are cleared whenever a new structure
                 appears, which includes re-selecting an earlier run from the history. That is
                 deliberate rather than an omission: colours are keyed by site rank, and
                 rank&nbsp;3 of one solution has nothing to do with rank&nbsp;3 of the next.
                 Carrying them over would relabel the new structure in the one way you could
                 not check, and it would look intentional. If a colour assignment matters,
-                record it outside the program &mdash; or take a screenshot before switching
+                record it outside the program - or take a screenshot before switching
                 runs.
             </div>
 
@@ -2059,7 +2058,7 @@ Refinement: 64%</pre>
             <h3 id="cf-com-peaks">3D Center of Mass Peak Picking</h3>
             <div class="note">
                 <strong>The 3D view puts <em>c</em> vertical</strong>, following crystallographic
-                convention, and is lit differently in light and dark mode &mdash; the canvas is
+                convention, and is lit differently in light and dark mode - the canvas is
                 transparent and inherits the page, so colours tuned against black wash out against
                 white. The axis letters and cell edges are coloured at build time, so switching
                 theme with a scene already on screen re-lights it but leaves those until the next
@@ -2084,7 +2083,7 @@ Refinement: 64%</pre>
                 symmetry operators, read from the bundled database, and:
             </p>
             <ol>
-                <li>finds the origin shift that makes the map obey those operators &mdash;
+                <li>finds the origin shift that makes the map obey those operators -
                     computed in closed form from a single Fourier transform, then
                     validated by symmetrising the map and measuring the correlation;</li>
                 <li>averages the density over the symmetry operators;</li>
@@ -2098,7 +2097,7 @@ Refinement: 64%</pre>
                 job: it is the only thing that places the structure on a crystallographic
                 origin. At \(\lambda = 1\) the map already sits on a standard origin, the
                 shift found should be near zero, and the step is effectively an
-                independent check &mdash; but it is worth having either way, because
+                independent check - but it is worth having either way, because
                 the symmetry correlation it reports is the best single quality
                 indicator, and the reduction to the asymmetric unit with site
                 multiplicities is what produces the CIF.
@@ -2151,16 +2150,16 @@ Refinement: 64%</pre>
                     <tr><td><strong>Unique reflections used</strong></td><td>How many Pawley intensities entered the calculation, after dropping zero or negative values and any reflection whose orbit does not fit the grid.</td></tr>
                     <tr><td><strong>Grid points filled</strong></td><td>Total reciprocal-grid points carrying an observed amplitude, i.e. the sum of all orbit sizes. Much larger than the number of unique reflections in a high-symmetry group.</td></tr>
                     <tr><td><strong>Space group</strong></td><td>The group whose operators were used. This is the group the Pawley fit ran in, not necessarily the current selection.</td></tr>
-                    <tr><td><strong>Expansion symmetry</strong></td><td>How the orbits were generated: the number of real symmetry operators and the Laue class, or &mdash; if the database lacks the <code>symops</code> field &mdash; a note that only the Laue-class fallback was available. In the fallback case screw and glide absences are <em>not</em> applied.</td></tr>
+                    <tr><td><strong>Expansion symmetry</strong></td><td>How the orbits were generated: the number of real symmetry operators and the Laue class, or - if the database lacks the <code>symops</code> field - a note that only the Laue-class fallback was available. In the fallback case screw and glide absences are <em>not</em> applied.</td></tr>
                     <tr><td><strong>Symmetry in loop</strong></td><td>The \(\lambda\) actually used. <em>none</em> means the map was solved in \(P1\) and its origin is arbitrary.</td></tr>
-                    <tr><td><strong>Lorentz-polarisation</strong></td><td>The $Lp$ model the worker actually divided by, reported back by the worker itself rather than restated from the control panel &mdash; so a mismatch between the two would be visible here instead of silent. Where the counts differ, it also says how many reflections took the value computed by the refinement and how many the worker had to recompute. See <a href="#parameters-lp">Lorentz&ndash;Polarisation Factor</a>.</td></tr>
+                    <tr><td><strong>Lorentz-polarisation</strong></td><td>The $Lp$ model the worker actually divided by, reported back by the worker itself rather than restated from the control panel - so a mismatch between the two would be visible here instead of silent. Where the counts differ, it also says how many reflections took the value computed by the refinement and how many the worker had to recompute. See <a href="#parameters-lp">Lorentz&ndash;Polarisation Factor</a>.</td></tr>
                     <tr><td><strong>Absences forced to zero</strong></td><td>How many grid points were held at \(F = 0\) as systematically absent. Expect roughly half the grid for an \(I\) lattice and three quarters for \(F\); zero for a primitive group with no screws or glides.</td></tr>
                     <tr><td><strong>Overlapping reflections</strong></td><td>How many of the reflection orbits share a measured peak with at least one other, and how many distinct peaks they occupy. If this approaches the total, either the sample really is heavily overlapped or the overlap tolerance is set too wide.</td></tr>
                     <tr><td><strong>Symmetry correlation</strong></td><td>(From the automatic structure build.) The correlation between the map and its symmetrised copy in the chosen space group. This is the primary quality indicator: near 1 means the density genuinely obeys the symmetry; a low value means either non-convergence or a wrong space group.</td></tr>
-                    <tr><td><strong>Origin shift / hand</strong></td><td>(From the automatic structure build.) The translation applied to bring the map onto the space-group origin, and whether the inverted solution was chosen. At \(\lambda = 0\) both are arbitrary and are resolved here against the symmetry. At \(\lambda = 1\) the shift should already be close to zero &mdash; a large shift then means the in-loop symmetrisation and the origin search disagree, which is worth investigating. <strong>Hand is only shown for a chiral setting.</strong> A centrosymmetric group contains inversion, so a map and its mirror image are the same structure and reporting &ldquo;inverted&rdquo; would invite the reader to wonder what went wrong when nothing did.</td></tr>
+                    <tr><td><strong>Origin shift / hand</strong></td><td>(From the automatic structure build.) The translation applied to bring the map onto the space-group origin, and whether the inverted solution was chosen. At \(\lambda = 0\) both are arbitrary and are resolved here against the symmetry. At \(\lambda = 1\) the shift should already be close to zero - a large shift then means the in-loop symmetrisation and the origin search disagree, which is worth investigating. <strong>Hand is only shown for a chiral setting.</strong> A centrosymmetric group contains inversion, so a map and its mirror image are the same structure and reporting &ldquo;inverted&rdquo; would invite the reader to wonder what went wrong when nothing did.</td></tr>
                     <tr><td><strong>Lp model / French-Wilson</strong></td><td>How the intensities handed to the solver were prepared, reported as its own lines rather than buried in a single sentence. French-Wilson replaces every weak reflection with a Bayesian posterior mean using the correct centric or acentric distribution, and needs at least eight reflections carrying a usable \(\sigma\); when it does not apply, the report says <strong>NOT APPLIED</strong> with the reason. A map solved from corrected amplitudes and one solved from raw amplitudes are different results, and which one you have should not depend on a console line.</td></tr>
                     <tr><td><strong>Clamped to zero</strong></td><td>How many non-positive intensities were forced to zero before solving.</td></tr>
-                    <tr><td><strong>Multiplicity warning</strong></td><td>Present only when the supplied multiplicities disagree with the space-group operators. The observed intensity is \(m \cdot Lp \cdot |F|^2\) and the map divides \(m\) out by spreading it over the orbit, so a disagreement scales every \(|F|\) by the square root of the ratio &mdash; silently, and with nothing else in the output to show it.</td></tr>
+                    <tr><td><strong>Multiplicity warning</strong></td><td>Present only when the supplied multiplicities disagree with the space-group operators. The observed intensity is \(m \cdot Lp \cdot |F|^2\) and the map divides \(m\) out by spreading it over the orbit, so a disagreement scales every \(|F|\) by the square root of the ratio - silently, and with nothing else in the output to show it.</td></tr>
                 </tbody>
             </table>
 
@@ -2170,8 +2169,8 @@ Refinement: 64%</pre>
                 <tbody>
                     <tr><td><strong>#</strong></td><td>Peak rank by height (1 = strongest).</td></tr>
                     <tr><td><strong>x, y, z</strong></td><td>Fractional coordinates. In the raw peak list these are in \(P1\) with an arbitrary origin; in the built structure they are placed on the space-group origin.</td></tr>
-                    <tr><td><strong>Height</strong></td><td>The map value at the peak, relative to the strongest (set to 1). <strong>It does not rank atoms by atomic number.</strong> It is one voxel: it depends on where the atom falls relative to the grid, on its displacement parameters, and on the series-termination ripples of its neighbours &mdash; and the heaviest atom, having the largest ripples, erodes its own maximum. On a real PbSO<sub>4</sub> solution the sulfur came out at 1.000 and the lead at 0.728.</td></tr>
-                    <tr><td><strong>Charge</strong></td><td>The map <em>integrated</em> over a 0.65&nbsp;&Aring; sphere with a local baseline removed, relative to the largest integral. This is the column that tracks atomic number. Both columns are on an arbitrary scale &mdash; \(F(000)\) is held at zero throughout charge flipping, so the map has zero mean &mdash; and only ratios mean anything. The radius stays below half the shortest bond you expect to resolve, or the integral swallows the neighbours. <strong>Empty on a Wyckoff structure</strong> &mdash; that method has no map, and filling this in would mean scoring it against the charge-flipping one.</td></tr>
+                    <tr><td><strong>Height</strong></td><td>The map value at the peak, relative to the strongest (set to 1). <strong>It does not rank atoms by atomic number.</strong> It is one voxel: it depends on where the atom falls relative to the grid, on its displacement parameters, and on the series-termination ripples of its neighbours - and the heaviest atom, having the largest ripples, erodes its own maximum. On a real PbSO<sub>4</sub> solution the sulfur came out at 1.000 and the lead at 0.728.</td></tr>
+                    <tr><td><strong>Charge</strong></td><td>The map <em>integrated</em> over a 0.65&nbsp;&Aring; sphere with a local baseline removed, relative to the largest integral. This is the column that tracks atomic number. Both columns are on an arbitrary scale - \(F(000)\) is held at zero throughout charge flipping, so the map has zero mean - and only ratios mean anything. The radius stays below half the shortest bond you expect to resolve, or the integral swallows the neighbours. <strong>Empty on a Wyckoff structure</strong> - that method has no map, and filling this in would mean scoring it against the charge-flipping one.</td></tr>
                     <tr><td><strong>Nearest peak (&Aring;)</strong></td><td>(Peak list.) Distance to the closest <em>other</em> peak in the list. Not a resolution limit and not a bond length: it says how isolated each peak is. A value far below any real bond means the peak is a ripple beside a stronger neighbour, not an atom.</td></tr>
                     <tr><td><strong>Mult</strong></td><td>Site multiplicity: how many symmetry-equivalent copies of this site exist in the unit cell. See the note on the asterisk below.</td></tr>
                     <tr><td><strong>Element</strong></td><td>(Site table.) Blank as <code>?</code> on a charge-flipping structure, which yields density and not chemistry. Filled in on a <a href="#cf-wyckoff">Wyckoff</a> structure, where the element on each site is part of the model being fitted rather than something read off a map.</td></tr>
@@ -2179,8 +2178,8 @@ Refinement: 64%</pre>
             </table>
             <div class="note">
                 <strong>The asterisk (*) on a multiplicity</strong> marks a
-                <em>special position</em>. A site lying on a symmetry element &mdash; a
-                mirror plane, rotation axis or inversion centre &mdash; maps onto itself
+                <em>special position</em>. A site lying on a symmetry element - a
+                mirror plane, rotation axis or inversion centre - maps onto itself
                 under one or more symmetry operators, so it has <em>fewer</em>
                 equivalent copies than a general position. Its multiplicity is therefore
                 smaller than the space group's general multiplicity, and the asterisk
@@ -2188,7 +2187,7 @@ Refinement: 64%</pre>
                 coordinates are constrained by symmetry. For example, in \(Pnma\) a general
                 site has multiplicity 8; an atom on the mirror at \(y=\tfrac14\) has
                 multiplicity 4, shown as <code>4*</code>. Special positions are common and
-                expected &mdash; many atoms in real structures sit on them &mdash; and
+                expected - many atoms in real structures sit on them - and
                 recognising them is the first step toward assigning Wyckoff letters.
             </div>
 
@@ -2231,7 +2230,7 @@ Refinement: 64%</pre>
                 it consumes a space group, a cell, a composition and the Pawley intensities, and
                 not one of those comes from a density map. <strong>It does not require a
                 charge-flipping run, and it cannot read one.</strong> The two methods share only
-                the Pawley intensity list &mdash; the same measurement, seen independently.
+                the Pawley intensity list - the same measurement, seen independently.
             </p>
             <div class="note">
                 <strong>The independence is enforced, not merely intended.</strong> The
@@ -2248,7 +2247,7 @@ Refinement: 64%</pre>
                 in \(Pnma\) has <strong>nine</strong> free positional parameters against a few
                 hundred observations, whereas charge flipping solves for thousands of grid
                 amplitudes and phases from the same data. It has no phase problem, no origin
-                ambiguity, no hand ambiguity and no series-termination ripples &mdash; and because
+                ambiguity, no hand ambiguity and no series-termination ripples - and because
                 the composition is enforced by construction, it cannot invent an atom where there
                 is nothing to explain it.
             </p>
@@ -2276,8 +2275,8 @@ Refinement: 64%</pre>
                 folded in as \(f(s)\exp(-Bs^2/4)\), pre-computed per (reflection, element) on the
                 host. \(B\) is estimated by a <strong>Wilson plot</strong> over resolution shells
                 from the extracted intensities themselves. The Pawley intensities do not lack a
-                temperature factor &mdash; they <em>contain</em> the real one, because they are a
-                measurement &mdash; so the model needs one to reproduce their fall-off.
+                temperature factor - they <em>contain</em> the real one, because they are a
+                measurement - so the model needs one to reproduce their fall-off.
             </p>
 
             <h3>Penalties and hard constraints</h3>
@@ -2297,10 +2296,10 @@ Refinement: 64%</pre>
                 positions are kept, with the reason recorded.
             </p>
 
-            <h3>Resolution ramp &mdash; and why the running CC is not the final one</h3>
+            <h3>Resolution ramp - and why the running CC is not the final one</h3>
             <div class="warning-note">
-                The swarm starts on a <strong>subset</strong> of the reflection groups &mdash; as
-                few as a quarter &mdash; and reaches the full set part-way through each restart.
+                The swarm starts on a <strong>subset</strong> of the reflection groups - as
+                few as a quarter - and reaches the full set part-way through each restart.
                 The figure shown while a search runs is computed on whatever subset is active, so
                 it reads considerably higher than the final value and is labelled
                 <strong>CC (partial res.)</strong>. Only the full-resolution figure from the
@@ -2315,8 +2314,8 @@ Refinement: 64%</pre>
                 <thead><tr><th>Control</th><th>Description &amp; defaults</th></tr></thead>
                 <tbody>
                     <tr><td><strong>Formula</strong></td><td>Target composition, e.g. <code>PbSO4</code>. Required; the Search button stays disabled and says why until one is entered.</td></tr>
-                    <tr><td><strong>Z</strong></td><td>Formula units per cell, as a whole number of 1 or more. <strong>Blank means Auto</strong>, which is a <em>scan</em> over every plausible \(Z\) rather than a single estimate &mdash; see <a href="#wy-z">Z, the density window and the scan</a>. A typed \(Z\) is used exactly as typed, and the panel shows the density it implies as you type it.</td></tr>
-                    <tr><td><strong>Max sites / elem</strong></td><td>Most distinct Wyckoff positions one element may occupy, as a whole number of 1 or more; blank means Auto. This is a <em>per-element</em> cap and says nothing about the total &mdash; see the capacity note below.</td></tr>
+                    <tr><td><strong>Z</strong></td><td>Formula units per cell, as a whole number of 1 or more. <strong>Blank means Auto</strong>, which is a <em>scan</em> over every plausible \(Z\) rather than a single estimate - see <a href="#wy-z">Z, the density window and the scan</a>. A typed \(Z\) is used exactly as typed, and the panel shows the density it implies as you type it.</td></tr>
+                    <tr><td><strong>Max sites / elem</strong></td><td>Most distinct Wyckoff positions one element may occupy, as a whole number of 1 or more; blank means Auto. This is a <em>per-element</em> cap and says nothing about the total - see the capacity note below.</td></tr>
                     <tr><td><strong>Max reuse / pos</strong></td><td>Most independent atoms sharing one Wyckoff position, as a whole number of 1 or more; blank means Auto.</td></tr>
                     <tr><td><strong>Density min / max (g/cm&sup3;)</strong></td><td>The window \(Z\) = Auto scans, in whole g/cm&sup3;, from 1 to 22, default <strong>2 to 10</strong>. The minimum is held strictly below the maximum. Ignored when \(Z\) is typed. Narrowing it is the cheapest way to shorten a scan: it is the only part of the calculation that knows what kind of material you have.</td></tr>
                     <tr><td><strong>Max Z searched</strong></td><td>How many values of \(Z\) one scan may search (1&ndash;12, default 3). Each is a full swarm run, so this is what bounds the total time. The candidates dropped are the least plausible on volume per atom, and the log names them.</td></tr>
@@ -2338,7 +2337,7 @@ Refinement: 64%</pre>
                 Read the first two carefully, because neither counts what its name suggests:
                 <ul>
                     <li><strong>32 sites</strong> counts <em>independent atoms in the asymmetric
-                        unit</em>, summed over every element &mdash; not Wyckoff <em>letters</em>.
+                        unit</em>, summed over every element - not Wyckoff <em>letters</em>.
                         A position used three times counts three, because each use is an atom
                         with its own free coordinates.</li>
                     <li><strong>8 elements</strong> counts <em>distinct chemical elements</em>,
@@ -2348,7 +2347,7 @@ Refinement: 64%</pre>
                 So the two limits are close to independent, and a single-element structure can
                 use the whole site budget. C<sub>60</sub> in \(Pa\bar{3}\) is the illustrative
                 case: 240 carbons per cell, the molecule on a \(\bar{3}\) site, so its 60 atoms
-                split into \(60/6 = 10\) orbits &mdash; <strong>1 element and 10 sites</strong>,
+                split into \(60/6 = 10\) orbits - <strong>1 element and 10 sites</strong>,
                 inside both caps with room to spare.
                 <br><br>
                 In practice the kernel caps are rarely what stops you. <strong>Max sites /
@@ -2361,13 +2360,13 @@ Refinement: 64%</pre>
                 <br><br>
                 These four limits belong to the Wyckoff search alone.
                 <a href="#charge-flipping">Charge flipping</a> has no composition, no elements
-                and no Wyckoff positions, so none of them applies to it &mdash; it can return
+                and no Wyckoff positions, so none of them applies to it - it can return
                 more than 32 sites, and routinely does before the spurious peaks are weeded out.
                 <ul>
                     <li><em>Sites.</em> Assignments needing more than 32 are dropped during
                         enumeration and the count is reported, because an over-wide assignment
                         is one candidate among many. If <em>every</em> assignment needs more,
-                        the run stops and says so &mdash; which normally means \(Z\) is too
+                        the run stops and says so - which normally means \(Z\) is too
                         large for the group. See <a href="#wy-how-many-sites">how many sites a
                         structure needs</a> for the arithmetic behind that message.</li>
                     <li><em>Elements, rules and slots.</em> The run is refused before it
@@ -2379,14 +2378,14 @@ Refinement: 64%</pre>
                 Nothing is silently truncated. A restraint you typed and the search did not
                 apply is the worst failure mode available here: it costs a full run, the answer
                 looks reasonable, and the structure then violates a constraint the report
-                correctly flags &mdash; which reads as a bad structure rather than a dropped rule.
+                correctly flags - which reads as a bad structure rather than a dropped rule.
             </div>
 
             <div class="note">
                 <strong>Loading a new pattern resets this panel.</strong> The formula, \(Z\),
                 the two site caps, the minimum contact, the distance constraints and the density
                 window all describe the <em>sample</em>, and carried across to a different
-                diffractogram every one of them is a statement about the wrong material &mdash;
+                diffractogram every one of them is a statement about the wrong material -
                 the formula worst of all, because the search will run happily on it and return a
                 structure. The run histories go with them. What is deliberately kept is
                 everything describing the <em>machine</em> or your patience: chains, iterations,
@@ -2403,9 +2402,9 @@ Refinement: 64%</pre>
                 full-resolution quench inside the swarm. The coordinate refinement below runs
                 afterwards and is unaffected, so a stopped run still reports \(wR(F^2)\) and a
                 Refined positions table, and those are real. What is <em>not</em> final is the
-                <strong>Search: CC</strong> &mdash; without the quench it carries whatever
+                <strong>Search: CC</strong> - without the quench it carries whatever
                 subset of reflections the resolution ramp had reached, so it is not a
-                full-resolution figure and is not comparable with \(wR\) &mdash; and the
+                full-resolution figure and is not comparable with \(wR\) - and the
                 <strong>ranking</strong> that chose this candidate over the others, which was
                 made on the same partial figure. Treat a stopped run as a preview of where the
                 search was heading rather than as a finished answer.
@@ -2421,7 +2420,7 @@ Refinement: 64%</pre>
             </p>
             <p>
                 Leaving the box blank selects <strong>Auto</strong>, which does not estimate
-                \(Z\) &mdash; it <strong>scans</strong>. Every plausible value is searched in
+                \(Z\) - it <strong>scans</strong>. Every plausible value is searched in
                 full and the best structure for each is offered, because a rule of thumb about
                 cell volume is a <em>prior</em> and the intensities are <em>evidence</em>, and
                 the evidence has to be allowed to overrule the prior.
@@ -2444,7 +2443,7 @@ Refinement: 64%</pre>
             <ol>
                 <li><strong>The density window.</strong> Two sliders, whole g/cm<sup>3</sup>,
                     1 to 22, default 2 to 10. The bounds are rounded <em>inward</em>, so every
-                    candidate's density genuinely lies inside what the sliders say &mdash; a
+                    candidate's density genuinely lies inside what the sliders say - a
                     maximum of 10 will not admit a \(Z\) at 10.3. This is the only step that
                     uses knowledge the program does not have, so it is the one you set.</li>
                 <li><strong>What the space group permits.</strong> Pure arithmetic, described
@@ -2489,7 +2488,7 @@ Refinement: 64%</pre>
                 <strong>In \(P1\) and \(P\bar{1}\) the rule says nothing</strong>, because
                 \(g = 1\). That is correct and not a gap: a triclinic cell really can hold any
                 \(Z\), and pruning there would risk discarding the true answer to save time.
-                It is also why low-symmetry problems are the expensive ones &mdash; the space
+                It is also why low-symmetry problems are the expensive ones - the space
                 group offers no help, and <strong>Max Z searched</strong> is what bounds the
                 run instead. A fractional subscript (a solid solution written
                 Fe<sub>0.5</sub>Ni<sub>0.5</sub>) also voids the argument, which is an integer
@@ -2498,9 +2497,9 @@ Refinement: 64%</pre>
 
             <h4>One search per \(Z\), and a list of solutions</h4>
             <p>
-                Every surviving \(Z\) gets its own complete search &mdash; all the restarts, the
+                Every surviving \(Z\) gets its own complete search - all the restarts, the
                 resolution ramp, the closing quench, the contact filter and the coordinate
-                refinement &mdash; and the best structure it produced is kept. The plausibility
+                refinement - and the best structure it produced is kept. The plausibility
                 ranking (volume per atom nearest 16&nbsp;&Aring;<sup>3</sup>, with a mild
                 preference for a \(Z\) commensurate with the group order) decides only the
                 <em>order</em> of the searches, so stopping part-way through means the most
@@ -2509,16 +2508,16 @@ Refinement: 64%</pre>
             <p>
                 The results tab then opens with a <strong>Solutions</strong> table: one row per
                 \(Z\), with its density, atoms per cell, assignment, search CC and
-                \(wR(F^2)\). <strong>Click a row</strong> and everything below it &mdash; the
+                \(wR(F^2)\). <strong>Click a row</strong> and everything below it - the
                 coordinate tables, the R factor, the CIF export, the contacts, the bond valences,
-                the structure plot and the PDF report &mdash; switches to that solution. The
+                the structure plot and the PDF report - switches to that solution. The
                 run-history label carries both numbers: <code>Z=8/3</code> means the best of
                 three solutions was \(Z = 8\).
             </p>
             <p>
                 The ranking is by \(wR(F^2)\). A solution whose refinement did not run has no
                 \(wR\), and is placed <em>below</em> every solution that has one and ranked
-                among its peers on search CC &mdash; the two are different quantities measured
+                among its peers on search CC - the two are different quantities measured
                 against different things, and mixing them on a common scale would invent a
                 comparison that does not exist. Values of \(Z\) that produced nothing are listed
                 with their reasons rather than quietly omitted.
@@ -2527,8 +2526,8 @@ Refinement: 64%</pre>
                 <strong>A better \(wR\) does not by itself make a \(Z\) right.</strong> More
                 atoms means more free parameters, so a larger \(Z\) has more freedom to fit the
                 same data and will often score better for that reason alone. Read the solutions
-                table alongside the density &mdash; which you know something about and the
-                refinement does not &mdash; and the contacts and bond valences below it. Two
+                table alongside the density - which you know something about and the
+                refinement does not - and the contacts and bond valences below it. Two
                 values of \(Z\) that both fit respectably is a real result and the reason the
                 list exists; it is not something the program should resolve on your behalf.
             </div>
@@ -2536,15 +2535,15 @@ Refinement: 64%</pre>
                 <strong>A scan costs roughly \(N\) times a single run.</strong> With the default
                 2&ndash;10 window a typical compound yields one to four candidates, but a light
                 formula in a low-symmetry group can fill the cap. If a scan is taking too long,
-                narrow the density window first &mdash; it is the only control that carries
-                information about your sample &mdash; then lower <strong>Max Z searched</strong>.
+                narrow the density window first - it is the only control that carries
+                information about your sample - then lower <strong>Max Z searched</strong>.
             </div>
 
             <h4>Typing a \(Z\) instead</h4>
             <p>
                 A typed \(Z\) is honoured exactly as typed and the density window is not
                 consulted. The panel still computes what that \(Z\) implies and shows it as you
-                type, in either order &mdash; entering the formula after the \(Z\) works as well
+                type, in either order - entering the formula after the \(Z\) works as well
                 as before it:
             </p>
             <p style="text-align:center;">
@@ -2556,8 +2555,8 @@ Refinement: 64%</pre>
                 starts.</strong> Lithium is 0.53&nbsp;g/cm<sup>3</sup> and osmium 22.59, so
                 outside <strong>0.5 to 22.5&nbsp;g/cm<sup>3</sup></strong> the \(Z\), the
                 formula and the cell are not describing the same solid. The search would still
-                produce a structure &mdash; nothing in the objective knows what a density is
-                &mdash; after several minutes of GPU time, so it is refused instead, with a
+                produce a structure - nothing in the objective knows what a density is
+                - after several minutes of GPU time, so it is refused instead, with a
                 toast naming the number. The commonest cause by far is \(Z\) counting
                 <em>atoms</em> rather than <em>formula units</em>; the next is a formula that is
                 the cell contents rather than the formula unit.
@@ -2565,7 +2564,7 @@ Refinement: 64%</pre>
             <div class="note">
                 <strong>A typed \(Z\) that breaks the space-group rule is warned about, not
                 blocked.</strong> If it is not a multiple of the step derived above, the search
-                will almost certainly find no legal assignment &mdash; but it runs anyway,
+                will almost certainly find no legal assignment - but it runs anyway,
                 because you asked for that \(Z\), and swapping in a different one behind your
                 back would be worse than failing.
             </div>
@@ -2583,7 +2582,7 @@ Refinement: 64%</pre>
                 Atoms per cell is the formula unit times \(Z\), counting hydrogen. The largest
                 multiplicity is the general position, which for a symmorphic group is the group
                 order. Take cimetidine, C<sub>10</sub>H<sub>16</sub>N<sub>6</sub>S with
-                \(Z = 2\) &mdash; 66 atoms per cell:
+                \(Z = 2\) - 66 atoms per cell:
             </p>
             <table class="param-table">
                 <thead><tr><th>Group order</th><th>Example</th><th>Sites needed</th><th></th></tr></thead>
@@ -2598,7 +2597,7 @@ Refinement: 64%</pre>
                 cliff is steep: one step down in symmetry doubles the requirement. In
                 \(P2_1/c\) the narrowest assignment cimetidine admits is
                 5&times;4<em>e</em> C, 8&times;4<em>e</em> H, 3&times;4<em>e</em> N and one
-                sulfur on a 2-fold inversion site &mdash; 17 sites. The odd sulfur is what makes
+                sulfur on a 2-fold inversion site - 17 sites. The odd sulfur is what makes
                 66, which is not divisible by 4, work out at all.
             </p>
             <div class="warning-note">
@@ -2616,7 +2615,7 @@ Refinement: 64%</pre>
                 The search finishes with a least-squares refinement of the free Wyckoff
                 coordinates against \(|F_{\text{obs}}|^2\), weighted by \(1/\sigma^2\) and
                 re-projecting each atom onto its symmetry element every step. It uses the same
-                scattering factors and the same \(B\) as the search &mdash; if those two ever
+                scattering factors and the same \(B\) as the search - if those two ever
                 disagree they are not fitting the same model, and no arrangement of atoms can
                 satisfy both.
             </p>
@@ -2661,11 +2660,11 @@ Refinement: 64%</pre>
             <ul>
                 <li><strong>Cell content, volume and calculated density.</strong> The formula
                     per cell is built from the multiplicity <em>counted</em> from the symmetry
-                    expansion, not read off the Wyckoff label &mdash; a site that has drifted
+                    expansion, not read off the Wyckoff label - a site that has drifted
                     onto a special position during refinement generates fewer distinct images,
                     and the counted value is the one the contacts and the mass are actually
                     built from. A density far from what the compound should have usually means
-                    the wrong \(Z\), not a wrong coordinate &mdash; and if the search ran
+                    the wrong \(Z\), not a wrong coordinate - and if the search ran
                     on <a href="#wy-z">\(Z\) = Auto</a>, the other values of \(Z\) are
                     already sitting in the Solutions table above.</li>
                 <li><strong>Structure plot.</strong> Drag to rotate, wheel to zoom, click an atom
@@ -2686,8 +2685,8 @@ Refinement: 64%</pre>
 
             <h4>Coordination number</h4>
             <p>
-                Taken over the counter-ions &mdash; anions around a cation, cations around an
-                anion &mdash; and cut at the first clear break in the sorted distances rather
+                Taken over the counter-ions - anions around a cation, cations around an
+                anion - and cut at the first clear break in the sorted distances rather
                 than at the cutoff, <em>separately for each neighbouring element</em>. This info is not relevant for molecular structures.
             </p>
             <p>
@@ -2697,7 +2696,7 @@ Refinement: 64%</pre>
                 the SO<sub>4</sub> tetrahedron and the next oxygen in the lattice and a spread
                 that describes nothing. And an oxygen in that same sulfate sits 1.5&nbsp;&Aring;
                 from its sulfur and 2.4&nbsp;&Aring; from the nearest lead, so a break taken over
-                the merged list would stop at the S&ndash;O bond and report CN&nbsp;1 &mdash; the
+                the merged list would stop at the S&ndash;O bond and report CN&nbsp;1 - the
                 sulfate group, not the oxygen's coordination. Per-element breaks give
                 CN&nbsp;12 for the lead, 4 for the sulfur and 4 for the oxygen, which is the
                 structure as a chemist would describe it.
@@ -2743,7 +2742,7 @@ Refinement: 64%</pre>
                         <td>Either the coordinate is wrong, or the oxidation state assumed for it
                             is. An under-valued cation is usually one that has been placed too
                             far from its anions; a badly over-valued one is usually too close.</td></tr>
-                    <tr><td><strong>no parameters</strong></td><td>&mdash;</td>
+                    <tr><td><strong>no parameters</strong></td><td>-</td>
                         <td>No tabulated \(R_0\) for one of the pairs involved. The pair is left
                             out of the sum and the site is not judged. An invented \(R_0\) would
                             produce a number that looks like a measurement and is not one.</td></tr>
@@ -2769,7 +2768,7 @@ Refinement: 64%</pre>
             <div class="warning-note">
                 <strong>This is a plausibility check, not a figure of merit.</strong> Nothing
                 here is fitted, and none of it should be reported as evidence that a structure is
-                correct &mdash; a bond-valence sum can be satisfied by a wrong structure with
+                correct - a bond-valence sum can be satisfied by a wrong structure with
                 roughly the right coordination distances. It is reliable in the other direction:
                 a site that comes out at half its formal valence is telling you something real
                 about that site, and it will keep telling you after Rietveld refinement has
@@ -2780,7 +2779,7 @@ Refinement: 64%</pre>
                 <strong>Three limits worth knowing.</strong> Site occupancies are taken as 1,
                 so a partially occupied or mixed site will not balance. Hydrogen is not located
                 by these methods at all, so hydrogen-bond contributions are missing from every
-                oxygen sum in a hydrate or a hydroxide &mdash; expect those to read low.
+                oxygen sum in a hydrate or a hydroxide - expect those to read low.
                 And the coordination number, though not the valence sum, depends on the contact
                 cutoff you set; the value in force is stated under the table.
             </div>
@@ -2821,8 +2820,8 @@ Refinement: 64%</pre>
                     always.</strong> There is one implementation of it, in
                     <code>profile.js</code>, shared by the on-screen preview and the refinement
                     worker. An earlier version also carried a WebGPU kernel; it was removed
-                    because it was a second implementation of the same model &mdash; a place for
-                    the two to drift apart, which had already happened once &mdash; and because
+                    because it was a second implementation of the same model - a place for
+                    the two to drift apart, which had already happened once - and because
                     it returned single precision into a double-precision pipeline, so every
                     derivative, every ESD and therefore every refined parameter depended on
                     whether WebGPU happened to initialise. WebGPU is still used where the
@@ -2842,7 +2841,7 @@ Refinement: 64%</pre>
                     peak as a small constant &ldquo;pedestal&rdquo;. The profile therefore reaches
                     zero continuously at the window edge instead of stepping off a cliff. An
                     earlier version used a separate height cutoff, which put a small discontinuity
-                    in the calculated pattern &mdash; and hence in the derivatives &mdash; wherever
+                    in the calculated pattern - and hence in the derivatives - wherever
                     a peak was truncated.
                 </p>
             </div>
@@ -2881,14 +2880,14 @@ Refinement: 64%</pre>
                 <li><strong>Profile fitting</strong> weights each data point by counting
                     statistics, \(w_i = 1/\max(y_i, \text{floor})\), the right model for a
                     measured count.</li>
-                <li><strong>Structure fitting</strong> &mdash; the Wyckoff search and the final
-                    coordinate refinement &mdash; weights each observation by \(1/\sigma^2\)
+                <li><strong>Structure fitting</strong> - the Wyckoff search and the final
+                    coordinate refinement - weights each observation by \(1/\sigma^2\)
                     from the Pawley decomposition. Counting statistics are the <em>wrong</em>
                     model there: the uncertainty on an extracted intensity comes from the
                     decomposition, not from how many photons arrived, and for a heavily
                     overlapped reflection it is far larger than \(\sqrt{I}\). A measured 200
                     with an ESD of 500 gets weight \(1/200\) under counting statistics and
-                    \(1/500^2\) from its real uncertainty &mdash; three orders of magnitude of
+                    \(1/500^2\) from its real uncertainty - three orders of magnitude of
                     difference in how much a number consistent with anything from &minus;300 to
                     700 is allowed to say.</li>
             </ul>
@@ -2926,9 +2925,10 @@ Refinement: 64%</pre>
             <div class="note">
                 These uncertainties come from the diagonal of the covariance matrix, scaled
                 by the reduced $\\chi^2$. They are the precision of the fit, not the accuracy
-                of the measurement: they do not include background uncertainty, sample
-                displacement not modelled by the zero-point, or any systematic error in the
-                wavelength. A cell edge good to $3 \\times 10^{-4}$&nbsp;&Aring; by this
+                of the measurement: they exclude sample displacement not modelled by the
+                zero-point, and any systematic error in the wavelength. They include
+                background uncertainty only if the background was fitted; with it fixed,
+                every one of them is conditional on the anchors being exactly right. A cell edge good to $3 \\times 10^{-4}$&nbsp;&Aring; by this
                 measure can still be wrong in the third decimal for reasons the refinement
                 cannot see.
             </div>
@@ -2943,12 +2943,12 @@ Refinement: 64%</pre>
                 <tbody>
                     <tr><td><code>Yes</code></td><td>Refined against the data.</td>
                         <td>Its own.</td></tr>
-                    <tr><td><code>= a</code></td><td>Not refined independently &mdash; set equal to another
+                    <tr><td><code>= a</code></td><td>Not refined independently - set equal to another
                         parameter every time the model changes. In a hexagonal cell $b$ is not an
                         assumption, it <em>is</em> $a$.</td>
                         <td>That of its master, and exactly so: the same parameter has the same
                         uncertainty, not merely a similar one.</td></tr>
-                    <tr><td><code>No</code></td><td>Held at a constant &mdash; $\\gamma = 120^\\circ$ in that
+                    <tr><td><code>No</code></td><td>Held at a constant - $\\gamma = 120^\\circ$ in that
                         same cell, or anything you left unticked.</td>
                         <td>None. The data did not determine it.</td></tr>
                 </tbody>
@@ -2990,7 +2990,7 @@ Refinement: 64%</pre>
                     \(\sqrt{y}\) overstates \(\sigma\) by the same \(\sqrt{n}\).</li>
                 <li><strong>Smoothing or rebinning.</strong> Both correlate neighbouring points,
                     which removes point-to-point scatter without touching \(y\). This one cannot
-                    be undone after the fact &mdash; fit the unsmoothed data if you still have it.</li>
+                    be undone after the fact - fit the unsmoothed data if you still have it.</li>
             </ul>
             <div class="note">
                 <strong>&chi;&sup2; is itself the diagnostic, because the relationship is linear.</strong>
@@ -2998,7 +2998,7 @@ Refinement: 64%</pre>
                 \(\chi^2\) by exactly \(k\). So a run reporting \(\chi^2 = 0.05\) is telling
                 you its data sit about twenty times below a count scale: scale the intensities up
                 by twenty before loading and \(\chi^2\) arrives near 1. If you know the original
-                counts &mdash; 500&nbsp;000 at the strongest peak, normalised to 100 &mdash; that
+                counts - 500&nbsp;000 at the strongest peak, normalised to 100 - that
                 ratio should agree with the one \(\chi^2\) implies, and it is worth checking that
                 it does.
             </div>
@@ -3025,8 +3025,8 @@ Refinement: 64%</pre>
                 The failure is asymmetric, and only one direction is safe to ignore. A
                 \(\chi^2\) far <em>below</em> 1 is almost always this scale problem and leaves the
                 model intact. A \(\chi^2\) far <em>above</em> 1 can also come from an
-                over-optimistic \(\sigma\), but it is much more often a real deficiency &mdash;
-                a missing phase, a wrong peak shape, an unmodelled background &mdash; and should
+                over-optimistic \(\sigma\), but it is much more often a real deficiency -
+                a missing phase, a wrong peak shape, an unmodelled background - and should
                 not be scaled away.
             </div>
 
@@ -3037,7 +3037,7 @@ Refinement: 64%</pre>
                 the calculated pattern, so the data cannot say how it divides between them: the
                 normal matrix is near-singular in that direction and the diagonal of its inverse
                 blows up. A large ESD there is the fit reporting, correctly, that <em>this
-                reflection's share is undetermined</em> &mdash; not a failed fit, and the peak may
+                reflection's share is undetermined</em> - not a failed fit, and the peak may
                 look perfect on screen.
             </p>
             <p>
@@ -3051,7 +3051,7 @@ Refinement: 64%</pre>
                 total and misses the point.
             </p>
             <p>
-                K&alpha;<sub>2</sub> is included when deciding what overlaps &mdash; at high angle
+                K&alpha;<sub>2</sub> is included when deciding what overlaps - at high angle
                 the satellite is displaced by several FWHM and lands on unrelated reflections,
                 correlating pairs that look well separated in a list of K&alpha;<sub>1</sub>
                 positions. Members whose \(\sigma\) exceeds their intensity are marked with an
@@ -3073,7 +3073,7 @@ Refinement: 64%</pre>
                 The linear system is then exactly singular in those directions. Powder&nbsp;5
                 factors it with a modified Cholesky that repairs only the pivots that fail,
                 so the several hundred intensities that <em>are</em> determined come back
-                untouched &mdash; a single damping term large enough to get past every
+                untouched - a single damping term large enough to get past every
                 coincidence would have biased those too. The affected reflections are listed
                 in the report under <em>Exactly Coincident Reflections</em>, with the group
                 total.
@@ -3084,7 +3084,7 @@ Refinement: 64%</pre>
                 leaves the others near zero. That number is not a measurement, and nothing
                 in the pattern distinguishes it from any other division adding to the same
                 total. Read the group line, not the rows. Without this section a coincident
-                pair reads as one strong reflection and one absent one &mdash; which, for a
+                pair reads as one strong reflection and one absent one - which, for a
                 space-group test or a structure solution, is a conclusion the data never
                 supported.
             </div>
@@ -3123,8 +3123,8 @@ Refinement: 64%</pre>
 
             <div class="note">
                 <strong>Two independent estimates are reported.</strong> The TCH profile already
-                separates the two effects analytically &mdash; $Y$ broadens as $1/\cos\theta$
-                (size) while $X$ and $U$ broaden as $\tan\theta$ (strain) &mdash; so size and
+                separates the two effects analytically - $Y$ broadens as $1/\cos\theta$
+                (size) while $X$ and $U$ broaden as $\tan\theta$ (strain) - so size and
                 strain can be read straight off the refined parameters with no linear fit at
                 all. The report prints these as <code>from Y directly (nm)</code> and
                 <code>from X,U directly (%)</code> alongside the fitted Williamson-Hall values.
@@ -3153,18 +3153,18 @@ Refinement: 64%</pre>
             <table class="param-table">
                 <thead><tr><th>Tab in front</th><th>What the button produces</th></tr></thead>
                 <tbody>
-                    <tr><td><b>Plot</b></td><td>The pattern, never a refinement. With data loaded: the calculated reflection list and the plot. With no data: the theoretical reflection list alone &mdash; <code>h k l</code>, the $d$-spacing, the K&alpha;<sub>1</sub> (and K&alpha;<sub>2</sub>) positions, the multiplicity and $Lp$ &mdash; and no plot page, because there is nothing to plot.</td></tr>
+                    <tr><td><b>Plot</b></td><td>The pattern, never a refinement. With data loaded: the calculated reflection list and the plot. With no data: the theoretical reflection list alone - <code>h k l</code>, the $d$-spacing, the K&alpha;<sub>1</sub> (and K&alpha;<sub>2</sub>) positions, the multiplicity and $Lp$ - and no plot page, because there is nothing to plot.</td></tr>
                     <tr><td><b>Le Bail results</b></td><td>The run selected in that tab's history, with the fit to the pattern.</td></tr>
                     <tr><td><b>Pawley results</b></td><td>The run selected in that tab's history, with the fit to the pattern.</td></tr>
-                    <tr><td><b>Charge Flipping</b></td><td>The selected run: map statistics, the built structure, and the <b>electron-density peak table</b> with each peak&rsquo;s distance to its nearest neighbour. The peaks are the observation and the structure is an interpretation of them, so the report carries both. No powder plot &mdash; that is the Plot tab&rsquo;s report.</td></tr>
-                    <tr><td><b>Wyckoff</b></td><td>The selected solution: refined positions, and the <b>structure quality table</b> &mdash; coordination number, mean contact distance, spread and bond-valence sum per site. The wR says the fit converged; this table says whether the result is chemistry. For a $Z$ scan, the solution currently displayed, not necessarily the best. No powder plot.</td></tr>
-                    <tr><td><b>Log</b></td><td>The whole session: the log, followed by the most recent run from each of the four histories that has one. The per-tab reports answer &ldquo;what does this run say&rdquo;; this one answers &ldquo;what did I do today&rdquo;. Only the last run of each history is included &mdash; thirty Pawley attempts would make a document nobody reads, and the earlier ones are still reachable one at a time from their own tab.</td></tr>
+                    <tr><td><b>Charge Flipping</b></td><td>The selected run: map statistics, the built structure, and the <b>electron-density peak table</b> with each peak&rsquo;s distance to its nearest neighbour. The peaks are the observation and the structure is an interpretation of them, so the report carries both. No powder plot - that is the Plot tab&rsquo;s report.</td></tr>
+                    <tr><td><b>Wyckoff</b></td><td>The selected solution: refined positions, and the <b>structure quality table</b> - coordination number, mean contact distance, spread and bond-valence sum per site. The wR says the fit converged; this table says whether the result is chemistry. For a $Z$ scan, the solution currently displayed, not necessarily the best. No powder plot.</td></tr>
+                    <tr><td><b>Log</b></td><td>The whole session: the log, followed by the most recent run from each of the four histories that has one. The per-tab reports answer &ldquo;what does this run say&rdquo;; this one answers &ldquo;what did I do today&rdquo;. Only the last run of each history is included - thirty Pawley attempts would make a document nobody reads, and the earlier ones are still reachable one at a time from their own tab.</td></tr>
                 </tbody>
             </table>
             <p>
                 <b>A refinement is reported only from its own tab, and only for the run
                 selected in that tab's history selector.</b> The Plot tab reports the
-                pattern and nothing else &mdash; otherwise the same button on the same tab
+                pattern and nothing else - otherwise the same button on the same tab
                 would produce a Le Bail report after a Le Bail run and a Pawley one after
                 a Pawley run, with nothing on screen saying which you were about to get.
             </p>
@@ -3199,7 +3199,7 @@ Refinement: 64%</pre>
                             index triple.</td></tr>
                     <tr><td><code>2th_corr</code></td>
                         <td>Peak position after the zero shift and any displacement or transparency
-                            correction &mdash; where the peak actually sits, not the ideal Bragg
+                            correction - where the peak actually sits, not the ideal Bragg
                             angle.</td></tr>
                     <tr><td><code>d</code></td><td>Interplanar spacing in &Aring;ngstr&ouml;m.</td></tr>
                     <tr><td><code>m</code></td>
@@ -3210,7 +3210,7 @@ Refinement: 64%</pre>
                             declared model. See <a href="#parameters-lp">Lorentz&ndash;Polarisation
                             Factor</a>.</td></tr>
                     <tr><td><code>I_hkl</code></td>
-                        <td>Integrated intensity of the whole reflection &mdash; peak height times
+                        <td>Integrated intensity of the whole reflection - peak height times
                             profile area, summed over the K&alpha;1/K&alpha;2 pair, with the scale
                             factor applied. This is an <em>area</em>, not a height: a height
                             underweights the high-angle reflections by the full profile broadening,
@@ -3222,7 +3222,7 @@ Refinement: 64%</pre>
                             partition fractions.</td></tr>
                     <tr><td><code>|Fo|</code></td>
                         <td>$\sqrt{I_{hkl} / (m \cdot Lp \cdot (1 + I_2/I_1))}$, on an arbitrary
-                            scale. Blank for a non-positive intensity &mdash; see the note
+                            scale. Blank for a non-positive intensity - see the note
                             below.</td></tr>
                     <tr><td><code>I_obs</code> <em>(Pawley only)</em></td>
                         <td>The same reflection re-integrated from the observed pattern by
@@ -3268,7 +3268,7 @@ Refinement: 64%</pre>
                 Oszlányi, G. &amp; Sütő, A. (2004). "Ab initio structure solution by charge flipping". <em>Acta Crystallographica Section A</em>, 60(2), 134-141.
             </div>
             <div class="reference-item">
-                <strong>Charge Flipping &mdash; practice and variants:</strong><br>
+                <strong>Charge Flipping - practice and variants:</strong><br>
                 Oszlányi, G. &amp; Sütő, A. (2008). "The charge flipping algorithm". <em>Acta Crystallographica Section A</em>, 64(1), 123-134.
             </div>
             <div class="reference-item">
@@ -3361,9 +3361,9 @@ Refinement: 64%</pre>
             </p>
 
             <p>
-                All numerical work &mdash; the skyline Cholesky behind the covariance
+                All numerical work - the skyline Cholesky behind the covariance
                 matrix and the ESDs, the banded solver for the separable Pawley
-                intensities, and the least-squares machinery itself &mdash; is
+                intensities, and the least-squares machinery itself - is
                 implemented locally. An earlier version depended on
                 <a href="https://mathjs.org/" target="_blank">math.js</a> for these; it was removed
                 so that a refinement can never be blocked by a content-delivery network, and so the
@@ -3385,7 +3385,7 @@ Refinement: 64%</pre>
             </div>
         </section>
         <footer id="help-footer">
-            Powder 5, version 168, 30 August 2026
+            Powder 5, version 170, 01 sept 2026
         </footer>
     </main>
 </div>

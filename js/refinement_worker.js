@@ -680,7 +680,9 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
         backgroundNote: nBackgroundAnchors > 0
             ? `Background: spline through ${nBackgroundAnchors} user anchor point`
               + `${nBackgroundAnchors === 1 ? '' : 's'}, `
-              + (isBgRefined ? `Y positions refined.` : `not refined. Its ${nBackgroundAnchors} `
+              + (isBgRefined ? `Y positions refined (2-theta positions fixed). They are `
+              + `counted in P, and reported ESDs include background uncertainty.`
+              : `not refined. Its ${nBackgroundAnchors} `
               + `degree${nBackgroundAnchors === 1 ? '' : 's'} of freedom are not counted in P, and no `
               + `reported ESD includes background uncertainty.`)
             : 'Background: none defined (zero baseline), not refined.'

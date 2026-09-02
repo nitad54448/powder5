@@ -93,14 +93,14 @@ after the page has loaded.
 
 ## Citing and credits
 
-Developed by Nita Dragoe, Université Paris-Saclay. It is the successor to
+Developed by Nita Dragoe, Université Paris-Saclay. It is the successor to Powder4, and previously
 PowderV2 — Dragoe, N. (2001), *J. Appl. Cryst.* **34**, 535.
 
 Methods implemented here are due to their authors; the help file lists the
 references in full. The principal ones are Le Bail *et al.* (1988), Pawley
 (1981), Thompson, Cox & Hastings (1987), Stephens (1999), Oszlányi & Sütő
 (2004) for charge flipping, and Larson & Von Dreele (2004) for the GSAS profile
-parameterisation.
+parameterisation. The Wyckoff direct space fit is - imho - original, but it is a way of "manually" determining the structures from powder data.
 
 > **Disclaimer.** Provided for research and teaching. The algorithms are
 > standard and the implementation is tested, but this is not a substitute for

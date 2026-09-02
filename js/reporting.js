@@ -462,7 +462,10 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         // Stating it here rather than leaving it implicit: it is the reason no
         // sigma below carries background uncertainty, and the reason chi-square
         // is optimistic by roughly the anchor count.
-        `Background:   ${stats.backgroundNote || 'fixed spline through user anchor points, not refined'}`,
+        // The worker composes backgroundNote and distinguishes the fitted case.
+        // The fallback is only reached when a result predates that field, so it
+        // must not assert either way.
+        `Background:   ${stats.backgroundNote || 'spline through user anchor points'}`,
         ''
     ];
 
@@ -766,9 +769,14 @@ function generateReportContent(format = 'summary', resultsArg = null) {
             const z = fitFlags.zeroShift ? formatWithEsd(finalParams.zeroShift, esds.zeroShift) : null;
             out.push(`zero shift = ${z !== null ? z : fmtNum(finalParams.zeroShift, 5)}\u00b0`);
         }
+        // Whether the background contributes to these depends on whether it was
+        // refined, so say which -- the statistics block above states it too,
+        // but this block is the one that gets copied out on its own.
         out.push('Uncertainties are in units of the last digit shown, and come from the',
                  'diagonal of the covariance matrix scaled by the reduced chi-squared.',
-                 'They do not include background uncertainty; see the note above.', '');
+                 fitFlags.fitBackground
+                    ? 'They include background uncertainty: the anchor heights were refined.'
+                    : 'They exclude background uncertainty: the anchors were held fixed.', '');
         return out;
     })();
     cellSummary.forEach(l => paramLines.push(l));
