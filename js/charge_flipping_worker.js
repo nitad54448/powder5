@@ -1280,16 +1280,54 @@ globalThis.onmessage = async function (e) {
             postMessage({ type: 'cf-result', results: out }, [out.map.buffer, out.rHistory.buffer]);
             return;
         }
-if (job.type === 'build-structure') {
+        if (job.type === 'build-structure') {
             const out = await buildStructure(job);
             if (out.error) { postMessage({ type: 'cf-error', message: out.error }); return; }
             postMessage({ type: 'cf-structure', results: out }, [out.map.buffer]);
             return;
         }
 
+        // EVERY MESSAGE GETS AN ANSWER.
+        //
+        // There was no else, so a job type this worker does not recognise --
+        // a typo, or a caller updated without the worker -- produced no reply
+        // at all. The main thread has no way to distinguish that from a job
+        // still running, so its completion handler never fires and the panel
+        // sits on a spinner until the page is reloaded. A wrong message should
+        // be a visible error, not a hang.
+        postMessage({
+            type: 'cf-error',
+            message: `The charge-flipping worker does not handle job type "${job.type}".`
+        });
+
     } catch (err) {
         postMessage({ type: 'cf-error', message: (err && err.message) || String(err) });
     }
+};
+
+// LAST-RESORT REPORTING. The try/catch above covers everything reachable from
+// onmessage, but not a fault outside it: a failure while the script itself is
+// evaluating, or a rejection from a promise nothing is awaiting. Those used to
+// terminate quietly, leaving the caller waiting for a reply that would never
+// come. Reported as a normal cf-error so the existing handler unwinds the UI.
+globalThis.onerror = function (msg, src, line, col, err) {
+    try {
+        postMessage({
+            type: 'cf-error',
+            message: 'Charge-flipping worker crashed: ' + ((err && err.message) || msg || 'unknown error')
+        });
+    } catch (_) { /* the port may already be gone */ }
+    return false;   // still log to the console
+};
+
+globalThis.onunhandledrejection = function (ev) {
+    const reason = ev && ev.reason;
+    try {
+        postMessage({
+            type: 'cf-error',
+            message: 'Charge-flipping worker crashed: ' + ((reason && reason.message) || String(reason))
+        });
+    } catch (_) { /* the port may already be gone */ }
 };
 
 // ===========================================================================
@@ -1325,6 +1363,51 @@ async function cfAcquireGPU() {
         }
     })();
     return _gpuDevicePromise;
+}
+
+/**
+ * mapAsync, raced against a watchdog and against device loss.
+ *
+ * Awaiting a bare mapAsync is an unconditional hang: a device the driver has
+ * reset never settles its pending maps, so the worker sits on the await with no
+ * error, no progress and no way out but closing the tab. The R-factor drain
+ * already guarded itself this way; the final read-back of the best iterate did
+ * not, and that is the one map on the critical path of every successful run.
+ * Factored out here so there is one implementation rather than two that can
+ * drift.
+ *
+ * Rejects rather than resolving on timeout or loss. The caller is inside the
+ * try whose finally destroys the tracked buffers, so a rejection lands the job
+ * on the CPU path with a message instead of stalling.
+ */
+async function cfMapGuarded(device, buf, what, offset, size) {
+    const WATCHDOG_MS = 30000;
+    let timer = null;
+    const guard = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(
+            `The GPU stopped responding (no result for ${WATCHDOG_MS / 1000} s while ` +
+            `${what}). This usually means the driver reset the device; try a smaller ` +
+            `grid or fewer iterations.`)), WATCHDOG_MS);
+    });
+
+    const mapPromise = (size === undefined)
+        ? buf.mapAsync(GPUMapMode.READ)
+        : buf.mapAsync(GPUMapMode.READ, offset, size);
+    // Suppress the unhandled rejection if the race is settled by guard or loss.
+    mapPromise.catch(() => {});
+
+    try {
+        await Promise.race([mapPromise, guard]);
+    } catch (err) {
+        if (device.__lostInfo) {
+            throw new Error('WebGPU device lost during charge flipping: ' +
+                            (device.__lostInfo.message || device.__lostInfo.reason || 'unknown') +
+                            '. A smaller grid or fewer iterations usually avoids this.');
+        }
+        throw err;
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
 }
 
 let _cfShaderSrc = null;
@@ -1828,43 +1911,21 @@ async function runChargeFlippingGPU(job) {
      */
     const drainRBatch = async (firstIter, count) => {
         if (count <= 0) return;
-        // Race the map against the device-lost promise and a watchdog. A lost
-        // device never settles its pending maps, so awaiting one bare is an
-        // unconditional hang; and a driver that is merely wedged reports
-        // nothing at all, which the timeout turns into a real error instead of
-        // a spinner that runs until the tab is closed.
-        const WATCHDOG_MS = 30000;
-        let timer = null;
-        const guard = new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error(
-                `The GPU stopped responding (no result for ${WATCHDOG_MS / 1000} s at ` +
-                `grid ${N}). This usually means the driver reset the device; try a ` +
-                `smaller grid or fewer iterations.`)), WATCHDOG_MS);
-        });
+        // Raced against the watchdog and against device loss; see cfMapGuarded.
+        await cfMapGuarded(device, headerRead, `reading R factors at grid ${N}`, 0, count * 16);
 
-
-
-            const mapPromise = headerRead.mapAsync(GPUMapMode.READ, 0, count * 16);
-            mapPromise.catch(() => {}); // Suppress unhandled rejection if it outlives the race
-
-            try {
-                await Promise.race([mapPromise, guard]);
-            } catch (err) {
-                if (device.__lostInfo) {
-                    throw new Error('WebGPU device lost during charge flipping: ' +
-                                    (device.__lostInfo.message || device.__lostInfo.reason || 'unknown') +
-                                    '. A smaller grid or fewer iterations usually avoids this.');
-                }
-                throw err;
-            } finally {
-                if (timer) clearTimeout(timer);
-            }
-
-
-
-
-        const hdr = new Float32Array(headerRead.getMappedRange(0, count * 16)).slice();
-        headerRead.unmap();
+        // UNMAPPED IN A FINALLY. Everything between getMappedRange and unmap is
+        // arithmetic on a fixed-size view and should not throw -- but if it ever
+        // does, an un-unmapped buffer poisons every later drain in the run,
+        // because mapAsync on an already-mapped buffer rejects. The failure then
+        // reports itself from the NEXT batch rather than from the one that
+        // actually broke, which is a bad place to start reading a stack trace.
+        let hdr;
+        try {
+            hdr = new Float32Array(headerRead.getMappedRange(0, count * 16)).slice();
+        } finally {
+            headerRead.unmap();
+        }
         for (let k = 0; k < count; k++) {
             const num = hdr[4 * k + 1], den = hdr[4 * k + 2];
             const R = den > 0 ? num / den : NaN;
@@ -1981,9 +2042,17 @@ async function runChargeFlippingGPU(job) {
         enc.copyBufferToBuffer(haveBest ? bestBuf : bufA, 0, readbackBuf, 0, cplxBytes);
         device.queue.submit([enc.finish()]);
     }
-    await readbackBuf.mapAsync(GPUMapMode.READ);
-    const factors = new Float32Array(readbackBuf.getMappedRange()).slice();
-    readbackBuf.unmap();
+    // Guarded exactly like the R-factor drain above. This map used to be bare,
+    // and it is the one every successful run has to pass through: a device lost
+    // on the last copy left the worker awaiting a promise that would never
+    // settle, with the progress bar at 100% and nothing to report.
+    await cfMapGuarded(device, readbackBuf, `reading the map back at grid ${N}`);
+    let factors;
+    try {
+        factors = new Float32Array(readbackBuf.getMappedRange()).slice();
+    } finally {
+        readbackBuf.unmap();
+    }
 
     const re = new Float64Array(N3), im = new Float64Array(N3);
     for (let i = 0; i < N3; i++) { re[i] = factors[2 * i]; im[i] = factors[2 * i + 1]; }

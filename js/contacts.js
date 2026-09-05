@@ -109,6 +109,29 @@ function ctShellRange(orth, cutoff, options = {}) {
     const cap = options.maxShellRange ?? CT_DEFAULTS.maxShellRange;
     const w = ctCellWidths(orth);
     if (!w || !(cutoff > 0)) return [1, 1, 1];
+    // THE CEILING NOW ACTUALLY REPORTS ITSELF.
+    //
+    // CT_DEFAULTS.maxShellRange is documented as "Reaching it is reported, not
+    // hidden", and nothing reported it: Math.min clamped and the function
+    // returned. That matters more here than it looks. Clamping means the
+    // enumeration is too small for the cutoff, so pairs within it are never
+    // generated -- which is precisely the silent loss of neighbours this
+    // function was written to fix (see the note above about a = 2.9 A cells).
+    // A cell degenerate enough to hit a ceiling of 5 has an axis under a
+    // fifth of the cutoff, so it is a broken refinement rather than chemistry,
+    // and saying so is the whole point of having a ceiling.
+    const wanted = w.map(d => (d > 0 ? Math.ceil(cutoff / d) : cap));
+    if (wanted.some(v => v > cap)) {
+        // Deduped against the previous message, so a summary that calls this
+        // once per site reports the condition rather than one line per atom.
+        const msg = `CONTACTS: cell too small for a ${cutoff} A cutoff -- would need ` +
+                    `${wanted.join('/')} shells, capped at ${cap}. Some neighbours ` +
+                    `will be missing; check the cell parameters.`;
+        if (msg !== ctShellRange._lastWarning) {
+            ctShellRange._lastWarning = msg;
+            console.warn(msg);
+        }
+    }
     return w.map(d => {
         if (!(d > 0)) return cap;
         return Math.max(1, Math.min(cap, Math.ceil(cutoff / d)));

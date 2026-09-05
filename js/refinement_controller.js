@@ -16,6 +16,42 @@ let fitWatchdog = null;
 let fitLastProgressAt = 0;
 let fitObservedGapMs = 0;
 
+// REBUILD BUDGET.
+//
+// Both recovery paths below -- onerror and the watchdog -- terminate the worker
+// and build a replacement, and neither used to count how often it had done so.
+// That is fine for a transient fault and unbounded for a permanent one: if
+// js/refinement_worker.js cannot be fetched or throws while loading, the fresh
+// worker fires onerror as soon as it is constructed, which rebuilds, which
+// fires onerror. The Worker constructor does not throw for a missing script, so
+// nothing in the cycle ever failed loudly enough to stop it -- the tab simply
+// spawned workers until it was closed.
+//
+// The budget is refilled the moment a worker posts ANY message, because that is
+// proof the script loaded and is running. So a worker that dies once mid-fit
+// still gets its three retries back on the next successful run, and only a
+// worker that never manages to speak at all exhausts the budget.
+const FIT_WORKER_MAX_REBUILDS = 3;
+let fitWorkerRebuilds = 0;
+
+/** Replace a worker that has failed, unless it has already failed too often. */
+function rebuildRefinementWorker() {
+    if (fitWorkerRebuilds >= FIT_WORKER_MAX_REBUILDS) {
+        console.error(`Refinement worker failed ${fitWorkerRebuilds} times without ` +
+                      `running; not rebuilding again. Reload the page once ` +
+                      `js/refinement_worker.js is reachable.`);
+        if (window.showToast) {
+            window.showToast('The refinement worker could not be started. Reload the page to try again.', 'error');
+        }
+        return;
+    }
+    fitWorkerRebuilds++;
+    // Guarded, so a worker that cannot be constructed at all does not throw
+    // out of an error handler.
+    try { createRefinementWorker(); }
+    catch (rebuildErr) { console.error('Worker rebuild failed:', rebuildErr); }
+}
+
 function disarmFitWatchdog() {
     if (fitWatchdog !== null) { clearTimeout(fitWatchdog); fitWatchdog = null; }
 }
@@ -44,7 +80,7 @@ function armFitWatchdog() {
         window.setUIState(false);
         controls.progressBar.style.width = '0%';
         showToast("Refinement stopped responding and was cancelled.", "error");
-        createRefinementWorker();   // rebuild so the next fit can still run
+        rebuildRefinementWorker();   // rebuild so the next fit can still run
     }, budget);
 }
 
@@ -55,6 +91,10 @@ function createRefinementWorker() {
 
         //   Worker Message Handler
         refinementWorker.onmessage = function(e) {
+            // Any message at all proves the script loaded and is executing, so
+            // the rebuild budget is refilled. See FIT_WORKER_MAX_REBUILDS.
+            fitWorkerRebuilds = 0;
+
             const { type, value, message, results } = e.data;
 
             if (type === 'warning') {
@@ -178,10 +218,10 @@ function createRefinementWorker() {
             // runFit answers "Refinement worker is not available" until the
             // page is reloaded: one transient fault, permanently.
             //
-            // Guarded, so a worker that cannot be constructed at all does
-            // not throw out of an error handler.
-            try { createRefinementWorker(); }
-            catch (rebuildErr) { console.error("Worker rebuild failed:", rebuildErr); }
+            // Budgeted, because the rebuild is itself a route back into this
+            // handler when the worker script cannot load at all -- see
+            // FIT_WORKER_MAX_REBUILDS.
+            rebuildRefinementWorker();
         };
 
     } catch (e) {

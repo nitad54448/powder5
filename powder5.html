@@ -1292,7 +1292,54 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 171, O5 sept 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 172, O6 sept 2026";
+
+// ===========================================================================
+//  LAST-RESORT ERROR REPORTING
+//
+//  Nothing caught what the ~120 try blocks in this program do not. A throw in
+//  an event handler, or a rejection from a promise nobody awaited, went to the
+//  console and no further: the button that started the work simply never
+//  finished, and the only way to find out why was to have had devtools open at
+//  the time. Anyone using the program rather than developing it saw a control
+//  that quietly did nothing.
+//
+//  Reporting only. It shows a toast, writes the log line, and returns -- it
+//  does not swallow the error (onerror returns false so the console still gets
+//  it) and it does not try to recover any state, because it has no idea what
+//  was in flight. Registered at the top of the script so it covers everything
+//  that follows.
+//
+//  Every reference is guarded. This runs at the worst possible moment by
+//  definition, showToast and logEvent are defined much further down, and
+//  sessionLog is a const whose temporal dead zone this could in principle fall
+//  inside. A reporter that throws while reporting would replace one silent
+//  failure with two.
+// ===========================================================================
+    function reportUncaught(what, err) {
+        const detail = (err && err.message) || String(err || 'unknown error');
+        try { console.error(what + ':', err); } catch (_) { /* no console */ }
+        try {
+            if (typeof logEvent === 'function') logEvent(`${what}: ${detail}`);
+        } catch (_) { /* log not ready yet */ }
+        try {
+            if (typeof showToast === 'function') showToast(`${what}: ${detail}`, 'error');
+        } catch (_) { /* toast not ready yet */ }
+    }
+
+    window.addEventListener('error', (ev) => {
+        // Resource load failures (a missing <script src> or image) also fire
+        // 'error' on window, with no `error` object and a target that is not
+        // the window. Those are reported by the loader that asked for them, so
+        // passing them on here would double up.
+        if (ev && ev.target && ev.target !== window) return;
+        reportUncaught('Unexpected error', ev && ev.error ? ev.error : (ev && ev.message));
+    });
+
+    window.addEventListener('unhandledrejection', (ev) => {
+        reportUncaught('Unhandled error', ev && ev.reason);
+    });
+
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1455,7 +1502,9 @@
     if (logClear) logClear.addEventListener('click', () => {
         sessionLog.length = 0;
         const el = document.getElementById('log-content');
-        if (el) el.textContent = '';
+        // The counter goes with the text, or the next logEvent would append its
+        // line after an emptied element and think the history was still there.
+        if (el) { el.textContent = ''; el.__loggedCount = 0; }
         logEvent('Log cleared.');
     });
 
@@ -3006,7 +3055,28 @@ function logEvent(message) {
     sessionLog.push(line);
     const el = document.getElementById('log-content');
     if (el) {
-        el.textContent = sessionLog.join('\n');
+        // APPEND THE NEW LINE, DO NOT REBUILD THE WHOLE LOG.
+        //
+        // This used to be `el.textContent = sessionLog.join('\n')` on every
+        // call: joining an array that never shrinks and handing the browser a
+        // fresh string to re-lay-out, once per entry. That is quadratic in the
+        // number of entries, and a long refinement session writes thousands --
+        // by which point every single log line costs a visible pause, during
+        // the run, for output nobody is reading yet.
+        //
+        // The rendered count is kept ON the element, so the two can never drift
+        // apart without being noticed: the Clear button empties textContent (and
+        // the counter goes with it), and if the element is ever replaced the
+        // fresh one has no counter at all. Either way the check below falls back
+        // to one full rebuild and appends from there.
+        const shown = el.__loggedCount;
+        if (shown === sessionLog.length - 1) {
+            el.appendChild(document.createTextNode((shown > 0 ? '\n' : '') + line));
+        } else {
+            el.textContent = sessionLog.join('\n');
+        }
+        el.__loggedCount = sessionLog.length;
+
         const body = document.getElementById('log-run-body');
         // Only follow the tail if the reader is already at it; scrolling out
         // from under someone reading an earlier entry is worse than not
@@ -5604,7 +5674,30 @@ function exportChargeFlipMap() {
                     if (dropped.has(j)) { L[i * n + j] = 0; continue; }
                     
                     let s = JtJ[i][j] / (d[i] * d[j]);
-                    if (!isFinite(s)) s = (i === j ? 1 : 0);
+                    // A NON-FINITE ENTRY IS CORRUPTION, NOT A ZERO.
+                    //
+                    // This used to read `if (!isFinite(s)) s = (i === j ? 1 : 0)`,
+                    // which quietly replaced a NaN or Infinity in the normal
+                    // matrix with a plausible-looking number and carried on. The
+                    // covariance that came back then described a matrix that was
+                    // not the one the fit had used, and nothing downstream could
+                    // tell: the ESDs printed as ordinary numbers.
+                    //
+                    // A non-finite diagonal is already caught by the scan above
+                    // and reported as undetermined, so the case that reached
+                    // here was an off-diagonal -- a Jacobian column that went
+                    // bad -- and every parameter correlated with it inherits the
+                    // damage. Dropping the row confines it: the parameter is
+                    // marked undetermined, gets no ESD, and is named in the
+                    // report, which is what solveCholesky already does by
+                    // returning null rather than guessing.
+                    if (!isFinite(s)) {
+                        dropped.add(i);
+                        undetermined.push(i);
+                        for (let k = 0; k <= i; k++) L[i * n + k] = 0;
+                        L[i * n + i] = 1;
+                        break;
+                    }
                     
                     const fj = firstNonZero[j];
                     const startK = Math.max(fi, fj);
@@ -8649,6 +8742,12 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
 //  latest -- by handing the stored snapshot to the existing exporters.
 // ===========================================================================
 const rpHistory = { lebail: [], pawley: [], cf: [], wyckoff: [] };
+// How many charge-flipping runs the history keeps. Only the CF bucket is
+// capped: its entries carry a full density map, where a Le Bail or Pawley entry
+// carries a data slice a couple of orders of magnitude smaller. Ten is roughly
+// what the run dropdown can show without scrolling, and at the largest grid
+// still bounds the history at about 80 MB.
+const RP_MAX_CF_RUNS = 10;
 window.rpHistory = rpHistory;
 const rpSelected = { lebail: null, pawley: null, cf: null, wyckoff: null };
 let rpRunCounter = 0;
@@ -9211,6 +9310,26 @@ function rpSnapshotCF(result, opts) {
         result, opts
     };
     rpHistory.cf.push(entry);
+
+    // BOUNDED HISTORY.
+    //
+    // A charge-flipping entry keeps its whole density map, which is a
+    // Float32Array of gridSize^3: 1 MB at 64^3, 3.4 MB at 96^3, 8 MB at 128^3,
+    // per run. Nothing trimmed this list -- it was only ever emptied wholesale
+    // when a new pattern was loaded -- so a session spent trying grids and
+    // thresholds grew by a map per attempt and never gave any of it back. At
+    // 128^3 that is 80 MB after ten runs and climbing.
+    //
+    // The oldest go first, and only ever from the front, so the run just pushed
+    // (which rpSelected.cf is about to point at) can never be the one dropped.
+    // Both places that look an entry up handle a miss already -- rpRenderCFRun
+    // hides the panel, and the structure-cache write is guarded by `if (entry)`
+    // -- so a stale selection degrades to an empty panel rather than a throw.
+    // Dropping the entry releases its map only if nothing else still holds it;
+    // cfLastResult is re-pointed at the new run two lines down, so an evicted
+    // map is genuinely unreachable.
+    while (rpHistory.cf.length > RP_MAX_CF_RUNS) rpHistory.cf.shift();
+
     rpSelected.cf = entry.id;
     rpRefreshRunSelect('cf');
     rpRenderCFRun();

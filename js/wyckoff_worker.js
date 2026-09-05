@@ -1539,7 +1539,15 @@ globalThis.onmessage = async (e) => {
     // WHILE a search is running.
     if (job.type === 'cancel-wyckoff') { wyckoffStopRequested = true; return; }
 
-    if (job.type !== 'wyckoff-search') return;
+    // EVERY OTHER MESSAGE GETS AN ANSWER. The bare `return` here dropped an
+    // unrecognised job type without a word, and the panel cannot tell silence
+    // from a search still running, so it waited on a reply that was never
+    // coming. A wrong message should be a visible error, not a hang.
+    if (job.type !== 'wyckoff-search') {
+        postBoth({ type: 'wy-error',
+                   message: `The Wyckoff worker does not handle job type "${job.type}".` });
+        return;
+    }
 
     try {
         const symops = job.symops || [];
@@ -1601,4 +1609,26 @@ globalThis.onmessage = async (e) => {
     } catch (err) {
         postBoth({ type: 'wy-error', message: (err && err.message) || String(err) });
     }
+};
+
+// LAST-RESORT REPORTING. The try/catch in onmessage covers everything reachable
+// from a job, but not a fault outside it: a failure while this script is being
+// evaluated, or a rejection from a promise nothing is awaiting. Those used to
+// end the worker quietly, leaving the panel waiting on a reply that would never
+// arrive. Reported as an ordinary wy-error so the existing handler unwinds the
+// UI the same way it does for a search that fails.
+globalThis.onerror = function (msg, src, line, col, err) {
+    try {
+        postBoth({ type: 'wy-error',
+                   message: 'Wyckoff worker crashed: ' + ((err && err.message) || msg || 'unknown error') });
+    } catch (_) { /* the port may already be gone */ }
+    return false;   // still log to the console
+};
+
+globalThis.onunhandledrejection = function (ev) {
+    const reason = ev && ev.reason;
+    try {
+        postBoth({ type: 'wy-error',
+                   message: 'Wyckoff worker crashed: ' + ((reason && reason.message) || String(reason)) });
+    } catch (_) { /* the port may already be gone */ }
 };

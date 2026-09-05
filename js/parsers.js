@@ -64,6 +64,33 @@ const sniffWavelengthFromXml = (xml) => {
 };
 
 /**
+ * Does this parse result actually hold plottable points?
+ *
+ * The acceptance tests below used to ask only `r.tth && r.tth.length`, which
+ * an array of NaN passes. A container whose first RawData member has a
+ * malformed startPosition therefore RETURNED that member -- length right,
+ * every value non-finite -- and in returning it skipped every remaining entry
+ * in the archive. normalizeParsedData then rejected it at the end of the load,
+ * so a .brml holding one bad member and one good one failed outright, with an
+ * error about the file having no usable points rather than about the member
+ * that was broken.
+ *
+ * Two finite pairs, because that is what normalizeParsedData requires further
+ * down; accepting anything less here only defers the same rejection. Scans the
+ * whole array rather than sampling it: a header row parsed as a point puts the
+ * only finite values at the front.
+ */
+const hasUsablePoints = (r) => {
+    if (!r || !r.tth || !r.intensity) return false;
+    const n = Math.min(r.tth.length, r.intensity.length);
+    let good = 0;
+    for (let i = 0; i < n; i++) {
+        if (isFinite(r.tth[i]) && isFinite(r.intensity[i]) && ++good >= 2) return true;
+    }
+    return false;
+};
+
+/**
  * Parse an unzipped archive, given its entries as {name, text}.
  *
  * Tried in order of how specifically the entry names identify the vendor, so a
@@ -82,7 +109,7 @@ const parseZipEntries = (entries, fileName) => {
     for (const e of raw) {
         try {
             const r = parseBrukerBrmlFile(e.text);
-            if (r && r.tth && r.tth.length) {
+            if (hasUsablePoints(r)) {
                 if (!r.wavelength) {
                     for (const x of xml) {
                         const wl = sniffWavelengthFromXml(x.text);
@@ -99,7 +126,7 @@ const parseZipEntries = (entries, fileName) => {
     for (const e of prof) {
         try {
             const r = parseDataFile(e.text, `${fileName}:${e.name}`);
-            if (r && r.tth && r.tth.length) {
+            if (hasUsablePoints(r)) {
                 for (const x of xml) {
                     const wl = sniffWavelengthFromXml(x.text);
                     if (wl) { r.wavelength = wl; break; }
@@ -117,7 +144,7 @@ const parseZipEntries = (entries, fileName) => {
         if (/(^|\/)(\[Content_Types\]|_rels|docProps)/i.test(e.name)) continue;
         try {
             const r = detectAndParseFile(e.name, e.text);
-            if (r && r.tth && r.tth.length > 1) return r;
+            if (hasUsablePoints(r)) return r;
         } catch (err) { problems.push(`${e.name}: ${err.message}`); }
     }
 
@@ -414,7 +441,7 @@ const detectAndParseBuffer = async (fileName, buffer) => {
         };
 
         const parseXrdmlFile = (xmlString) => { const parser = new DOMParser(); const xmlDoc = parser.parseFromString(xmlString, "application/xml"); if (xmlDoc.querySelector("parsererror")) { throw new Error("Error parsing XRDML file."); } let wavelength = null; const kAlpha1Node = xmlDoc.querySelector("kAlpha1"); if (kAlpha1Node?.textContent) wavelength = parseFloat(kAlpha1Node.textContent); const intensityNode = xmlDoc.querySelector("intensities") || xmlDoc.querySelector("counts"); if (!intensityNode) throw new Error("Could not find <intensities> or <counts> in XRDML file."); const intensity = intensityNode.textContent.trim().split(/\s+/).map(Number); const positionsNode = xmlDoc.querySelector('positions[axis="2Theta"]'); if (!positionsNode) throw new Error("Could not find <positions> in XRDML file."); const startPosNode = positionsNode.querySelector("startPosition"); const endPosNode = positionsNode.querySelector("endPosition"); if (!startPosNode || !endPosNode) throw new Error("Could not find start/end positions in XRDML."); const startPos = parseFloat(startPosNode.textContent); const endPos = parseFloat(endPosNode.textContent); if (!isFinite(startPos) || !isFinite(endPos)) throw new Error("XRDML start/end positions are not numeric."); if (intensity.length < 2) throw new Error("XRDML file contains fewer than two data points."); /* FIX: (length - 1) was an unguarded divisor -> Infinity for a 1-point scan. */ const step = (endPos - startPos) / (intensity.length - 1); const tth = Array.from({ length: intensity.length }, (_, i) => startPos + i * step); return { tth, intensity, wavelength }; };
-        const parseBrukerBrmlFile = (xmlString) => { const parser = new DOMParser(); const xmlDoc = parser.parseFromString(xmlString, "application/xml"); if (xmlDoc.querySelector("parsererror")) { throw new Error("Error parsing BRML file."); } let wavelength = null; const wlNode = xmlDoc.querySelector('usedWavelength'); if (wlNode) { const kAlpha1 = wlNode.getAttribute('kAlpha1'); if (kAlpha1) wavelength = parseFloat(kAlpha1); } const intensityNode = xmlDoc.querySelector("dataPoints > counts"); if (!intensityNode) throw new Error("No <counts> data found in BRML file."); const intensity = intensityNode.textContent.trim().split(/\s+/).map(Number); const startPosNode = xmlDoc.querySelector('startPosition[axis="TwoTheta"]'); const stepSizeNode = xmlDoc.querySelector('increment[axis="TwoTheta"]'); if (!startPosNode || !stepSizeNode) throw new Error("Could not find scan parameters in BRML file."); const startPos = parseFloat(startPosNode.textContent); const stepSize = parseFloat(stepSizeNode.textContent); const tth = Array.from({ length: intensity.length }, (_, i) => startPos + i * stepSize); return { tth, intensity, wavelength }; };
+        const parseBrukerBrmlFile = (xmlString) => { const parser = new DOMParser(); const xmlDoc = parser.parseFromString(xmlString, "application/xml"); if (xmlDoc.querySelector("parsererror")) { throw new Error("Error parsing BRML file."); } let wavelength = null; const wlNode = xmlDoc.querySelector('usedWavelength'); if (wlNode) { const kAlpha1 = wlNode.getAttribute('kAlpha1'); if (kAlpha1) wavelength = parseFloat(kAlpha1); } const intensityNode = xmlDoc.querySelector("dataPoints > counts"); if (!intensityNode) throw new Error("No <counts> data found in BRML file."); const intensity = intensityNode.textContent.trim().split(/\s+/).map(Number); const startPosNode = xmlDoc.querySelector('startPosition[axis="TwoTheta"]'); const stepSizeNode = xmlDoc.querySelector('increment[axis="TwoTheta"]'); if (!startPosNode || !stepSizeNode) throw new Error("Could not find scan parameters in BRML file."); const startPos = parseFloat(startPosNode.textContent); const stepSize = parseFloat(stepSizeNode.textContent); /* FIX: the only scan parser with no finiteness check on its axis. A non-numeric startPosition or increment made parseFloat return NaN, and every 2-theta with it, which the caller's length-only test accepted as a successful parse. Same guard, and same wording, as XRDML, UXD and both GSAS readers. */ if (!isFinite(startPos) || !isFinite(stepSize) || stepSize === 0) throw new Error("BRML scan parameters are not numeric (startPosition / increment)."); const tth = Array.from({ length: intensity.length }, (_, i) => startPos + i * stepSize); return { tth, intensity, wavelength }; };
         const parseRigakuRasFile = (text) => { const lines = text.trim().split(/\r?\n/); const tth = [], intensity = []; let inDataSection = false; let wavelength = null; for (const line of lines) { const upperLine = line.toUpperCase(); if (upperLine.startsWith('*WAVE_LENGTH') || upperLine.startsWith('*MEAS_COND_XG_WAVE_LENGTH')) { const parts = line.trim().split(/\s+/); if (parts.length > 1) { const wl = parseFloat(parts[1]); if (!isNaN(wl)) wavelength = wl; } } if (upperLine.startsWith('*RAS_INT_START')) { inDataSection = true; continue; } if (upperLine.startsWith('*RAS_INT_END')) break; if (inDataSection) { const parts = line.trim().split(/[\s,]+/); if (parts.length >= 2) { const x = parseFloat(parts[0]); const y = parseFloat(parts[1]); if (!isNaN(x) && !isNaN(y)) { tth.push(x); intensity.push(y); } } } } if (tth.length === 0) throw new Error("No data found in RAS file data section."); return { tth, intensity, wavelength }; };
         const parseGsasEsdFile = (text) => { const lines = text.trim().split(/\r?\n/); let wavelength = null; let startTth, stepSize; let dataStartIndex = -1; lines.forEach((line, index) => { const upperLine = line.toUpperCase(); if (upperLine.includes('WAVELENGTH')) { const match = line.match(/wavelength\s+([0-9.]+)/i); if (match && match[1]) wavelength = parseFloat(match[1]); } if (upperLine.startsWith('BANK')) { const parts = line.trim().split(/\s+/); /* FIX: was >= 6 while reading parts[6]; a 6-token BANK line produced stepSize = NaN, which passed the `undefined` guard below and made every 2-theta NaN. */ if (parts.length >= 7 && parts[4].toUpperCase() === 'CONST') { startTth = parseFloat(parts[5]) / 100.0; stepSize = parseFloat(parts[6]) / 100.0; dataStartIndex = index + 1; } } }); if (!isFinite(startTth) || !isFinite(stepSize) || stepSize === 0) throw new Error("GSAS Parse Error: Could not find a valid 'BANK' line with CONST scan parameters."); if (dataStartIndex !== -1 && lines[dataStartIndex]?.toUpperCase().includes('STD')) dataStartIndex++; if (dataStartIndex === -1 || dataStartIndex >= lines.length) throw new Error("GSAS Parse Error: Found scan parameters but no subsequent data lines."); const intensity = []; for (let i = dataStartIndex; i < lines.length; i++) { const parts = lines[i].trim().split(/\s+/); for (let j = 1; j < parts.length; j += 2) { const val = parseFloat(parts[j]); if (!isNaN(val)) intensity.push(val); } } if (intensity.length === 0) throw new Error("GSAS Parse Error: No intensity data could be parsed."); const tth = Array.from({ length: intensity.length }, (_, i) => startTth + i * stepSize); return { tth, intensity, wavelength }; };
         

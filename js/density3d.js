@@ -354,6 +354,20 @@ const Density3D = {
         if (!this.isAvailable() || !canvas) return false;
         if (this._three && this._three.canvas === canvas) return true;
 
+        // A DIFFERENT CANVAS MEANS THE OLD ONE HAS TO GO FIRST.
+        //
+        // This used to overwrite this._three and walk away, which stranded the
+        // previous WebGLRenderer (and its GL context -- browsers keep only a
+        // handful and drop the oldest), its ResizeObserver, its five pointer and
+        // wheel listeners, and every geometry and material in its scene.
+        //
+        // Worse than the memory: the old render loop kept running. _loop's step
+        // only tested `this._three` for truthiness, so replacing the object did
+        // not stop it -- two loops then ran forever against one renderer, each
+        // reading a different `needsRender` flag. dispose() nulls _three, which
+        // the identity check in _loop now uses to retire the old loop cleanly.
+        if (this._three) this.dispose();
+
         const THREE = global.THREE;
         let renderer;
         try {
@@ -410,15 +424,26 @@ const Density3D = {
         const el = t.canvas;
         let dragging = false, lastX = 0, lastY = 0;
 
+        // DETACHABLE. These five closures capture `t`, so a set left behind by a
+        // re-init pins the whole previous scene AND drives the stale state: on a
+        // canvas that outlives one renderer -- the results panel reuses its
+        // element -- a second init stacked a second set of handlers, and one
+        // drag then moved two cameras. One AbortController removes all five in
+        // dispose(); without support for it the behaviour is exactly as before,
+        // which is the case that was already shipping.
+        const ac = (typeof global.AbortController === 'function') ? new global.AbortController() : null;
+        t.controlsAbort = ac;
+        const opts = ac ? { signal: ac.signal } : undefined;
+
         el.addEventListener('pointerdown', (e) => {
             dragging = true; lastX = e.clientX; lastY = e.clientY;
             el.setPointerCapture(e.pointerId);
-        });
+        }, opts);
         el.addEventListener('pointerup', (e) => {
             dragging = false;
             try { el.releasePointerCapture(e.pointerId); } catch (_) { /* already gone */ }
-        });
-        el.addEventListener('pointercancel', () => { dragging = false; });
+        }, opts);
+        el.addEventListener('pointercancel', () => { dragging = false; }, opts);
         el.addEventListener('pointermove', (e) => {
             if (!dragging) return;
             t.theta -= (e.clientX - lastX) * 0.008;
@@ -428,20 +453,28 @@ const Density3D = {
             t.phi = Math.max(0.05, Math.min(Math.PI - 0.05, t.phi));
             lastX = e.clientX; lastY = e.clientY;
             t.needsRender = true;
-        });
+        }, opts);
+        // passive:false is load-bearing here -- the wheel handler calls
+        // preventDefault to stop the page scrolling under the viewer -- so the
+        // signal is merged into it rather than replacing it.
         el.addEventListener('wheel', (e) => {
             e.preventDefault();
             t.radius *= Math.exp(e.deltaY * 0.0012);
             t.radius = Math.max(0.4, Math.min(50, t.radius));
             t.needsRender = true;
-        }, { passive: false });
+        }, ac ? { passive: false, signal: ac.signal } : { passive: false });
     },
 
     _loop() {
         const t = this._three;
         if (!t) return;
         const step = () => {
-            if (!this._three) return;
+            // IDENTITY, NOT TRUTHINESS. `t` is the state this loop was started
+            // for; this._three is whatever is current. They differ after a
+            // re-init, and the old loop must stop rather than keep scheduling
+            // itself against a renderer that has been disposed. Testing only
+            // `!this._three` let every re-init leave another loop running.
+            if (this._three !== t) return;
             if (t.needsRender) { this._draw(); t.needsRender = false; }
             global.requestAnimationFrame(step);
         };
@@ -820,9 +853,24 @@ const Density3D = {
     dispose() {
         const t = this._three;
         if (!t) return;
-        if (t.resizeObserver) t.resizeObserver.disconnect();
-        [t.surface, t.cell, t.sites].forEach(o => this._disposeObject(o));
-        t.renderer.dispose();
+        // ORDER MATTERS: _disposeObject reads this._three itself and returns
+        // early when it is null, so the teardown has to happen while the state
+        // is still installed. Nulling first would silently skip every geometry
+        // and material -- the leak this method exists to prevent. dispose() is
+        // synchronous, so no RAF tick can interleave and see the half-torn-down
+        // state anyway; the loop retires on its next tick via the identity check
+        // in _loop.
+        //
+        // Each step guarded on its own: a failure releasing one resource must
+        // not strand the rest, and this now runs on the re-init path.
+        try { if (t.controlsAbort) t.controlsAbort.abort(); } catch (e) { /* no AbortController */ }
+        try { if (t.resizeObserver) t.resizeObserver.disconnect(); } catch (e) { /* already gone */ }
+        try { [t.surface, t.cell, t.sites].forEach(o => this._disposeObject(o)); }
+        catch (e) { console.warn('Density3D: dispose failed:', e); }
+        // NOT forceContextLoss(). The canvas is often reused -- init() with the
+        // same element is the common case -- and a forcibly lost context cannot
+        // be re-acquired on it.
+        try { t.renderer.dispose(); } catch (e) { /* already gone */ }
         this._three = null;
     },
 

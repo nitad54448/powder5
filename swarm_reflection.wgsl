@@ -376,10 +376,24 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
             prop_sites[s] = project_onto_wyckoff(pos, p_mat, t_vec);
         }
         
+        workgroupBarrier();
+        // AFTER THE BARRIER, NOT BEFORE IT.
+        //
+        // Every lane reads mcmcState[pIdx].seed at the top of this function to
+        // build its own stream. Lane 0 then writes the field back. With the
+        // write placed before the barrier the two were unsynchronised: lanes in
+        // a second subgroup could reach their read only after lane 0 had already
+        // stored, and would hash the NEW seed instead of the one the rest of the
+        // workgroup used. That is a genuine data race -- it does not corrupt the
+        // structure, but it correlates the lane streams and makes a run with a
+        // fixed seed non-reproducible, which is exactly what the per-lane hash
+        // above exists to prevent.
+        //
+        // The barrier already had to be here for prop_sites; moving the write
+        // below it costs nothing and orders the read against the write.
         if (lid == 0u) {
             mcmcState[pIdx].seed = rng_state;
         }
-        workgroupBarrier();
 
         for (var g = lid; g < nTot; g = g + WG) {
             let pk = genPack[gBase + g];

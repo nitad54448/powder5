@@ -1022,6 +1022,18 @@ async function runWyckoffSearch(o) {
 
 
 
+        // ONE lost-chain for the whole run, not one per call.
+        //
+        // device.lost settles at most once, so every `device.lost.then(...)` a
+        // call made stayed on its reaction list for the life of the device. At
+        // one or two per generation over a long search that is thousands of
+        // retained promise objects that can never fire. Built once here and
+        // shared; the semantics are identical because the promise is immutable.
+        const lostPromise = device.lost.then(info => {
+            throw new Error('WebGPU device lost: ' + (info?.message || info?.reason || 'unknown'));
+        });
+        lostPromise.catch(() => {});
+
         /**
          * Safely awaits mapAsync against TDR hangs and device loss,
          * without leaking floating promise rejections.
@@ -1041,14 +1053,25 @@ async function runWyckoffSearch(o) {
             const mapPromise = Promise.all(buffers.map(b => b.mapAsync(GPUMapMode.READ)));
             mapPromise.catch(() => {}); 
 
-            // Convert device.lost into a throwable rejection, caught safely
-            const lostPromise = device.lost.then(info => {
-                throw new Error('WebGPU device lost: ' + (info?.message || info?.reason || 'unknown'));
-            });
-            lostPromise.catch(() => {});
-
             try {
                 await Promise.race([mapPromise, lostPromise, guard]);
+            } catch (err) {
+                // A LOST RACE CAN STILL LEAVE A BUFFER MAPPED, and that is
+                // sticky: mapAsync on an already-mapped buffer rejects, so one
+                // watchdog trip used to make every later readback fail for a
+                // reason unrelated to the original fault.
+                //
+                // Promise.all rejects on the first failure but does not cancel
+                // the others, and the watchdog does not cancel anything at all,
+                // so at this point a buffer may be mapped or still pending.
+                // unmap() is the correct handling for both: it releases a mapped
+                // buffer and aborts a pending map (whose rejection the catch
+                // above already swallows). Guarded individually because a
+                // destroyed buffer must not throw out of an error path.
+                for (const b of buffers) {
+                    try { if (b.mapState !== 'unmapped') b.unmap(); } catch (e) { /* already gone */ }
+                }
+                throw err;
             } finally {
                 if (timer) clearTimeout(timer);
             }
@@ -1075,14 +1098,21 @@ async function runWyckoffSearch(o) {
             device.queue.submit([enc.finish()]);
 
             await safeMapAsync([bufStateRead]);
-            const stateF32 = new Float32Array(bufStateRead.getMappedRange());
-            const S32 = SW_STATE_STRIDE / 4;
+            // UNMAPPED IN A FINALLY. The copy out is plain arithmetic on a
+            // fixed-size view, but a buffer left mapped is not a recoverable
+            // state: every later map on it rejects, so a single throw here would
+            // surface as a cascade of unrelated failures for the rest of the run.
             const out = new Float32Array(numParticles * 2);
-            for (let i = 0; i < numParticles; i++) {
-                out[i] = stateF32[i * S32 + 0];               // fit
-                out[numParticles + i] = stateF32[i * S32 + 1]; // cc
+            try {
+                const stateF32 = new Float32Array(bufStateRead.getMappedRange());
+                const S32 = SW_STATE_STRIDE / 4;
+                for (let i = 0; i < numParticles; i++) {
+                    out[i] = stateF32[i * S32 + 0];               // fit
+                    out[numParticles + i] = stateF32[i * S32 + 1]; // cc
+                }
+            } finally {
+                bufStateRead.unmap();
             }
-            bufStateRead.unmap();
             return out;
         }
 
@@ -1101,32 +1131,42 @@ async function runWyckoffSearch(o) {
 
             await safeMapAsync([bufPosRead, bufStateRead]);
 
-            const posF32 = new Float32Array(bufPosRead.getMappedRange());
-            positions.set(posF32.subarray(0, totalCoordFloats));
-            bestPositions.set(posF32.subarray(totalCoordFloats, totalCoordFloats * 2));
+            // UNMAPPED IN A FINALLY, and both of them unconditionally. This is
+            // the one synchronisation point of the generation loop, so a throw
+            // between the map and the unmap -- a length mismatch in the set()
+            // calls below, say -- would leave the readback buffers mapped and
+            // every subsequent generation would then fail on mapAsync instead of
+            // on whatever actually went wrong.
+            try {
+                const posF32 = new Float32Array(bufPosRead.getMappedRange());
+                positions.set(posF32.subarray(0, totalCoordFloats));
+                bestPositions.set(posF32.subarray(totalCoordFloats, totalCoordFloats * 2));
 
-            const range = bufStateRead.getMappedRange();
-            const stateF32 = new Float32Array(range);
-            const stateU32r = new Uint32Array(range);
-            const S32 = SW_STATE_STRIDE / 4;
-            let accepted = 0;
-            for (let i = 0; i < numParticles; i++) {
-                const b = i * S32;
-                curFit[i]   = stateF32[b + 0];
-                curCC[i]    = stateF32[b + 1];
-                curPen[i]   = stateF32[b + 2];
-                stepSize[i] = stateF32[b + 3];
-                accepted   += stateU32r[b + 6];
-                bestFit[i]  = stateF32[b + 8];
-                bestCC[i]   = stateF32[b + 9];
-                bestPen[i]  = stateF32[b + 10];
+                const range = bufStateRead.getMappedRange();
+                const stateF32 = new Float32Array(range);
+                const stateU32r = new Uint32Array(range);
+                const S32 = SW_STATE_STRIDE / 4;
+                let accepted = 0;
+                for (let i = 0; i < numParticles; i++) {
+                    const b = i * S32;
+                    curFit[i]   = stateF32[b + 0];
+                    curCC[i]    = stateF32[b + 1];
+                    curPen[i]   = stateF32[b + 2];
+                    stepSize[i] = stateF32[b + 3];
+                    accepted   += stateU32r[b + 6];
+                    bestFit[i]  = stateF32[b + 8];
+                    bestCC[i]   = stateF32[b + 9];
+                    bestPen[i]  = stateF32[b + 10];
+                }
+                if (mcmcSinceSync > 0) {
+                    acceptRate = accepted / (numParticles * mcmcSinceSync);
+                }
+            } finally {
+                // Guarded individually so a failure on the first does not strand
+                // the second still mapped.
+                try { bufPosRead.unmap(); } catch (e) { /* already gone */ }
+                try { bufStateRead.unmap(); } catch (e) { /* already gone */ }
             }
-            if (mcmcSinceSync > 0) {
-                acceptRate = accepted / (numParticles * mcmcSinceSync);
-            }
-
-            bufPosRead.unmap();
-            bufStateRead.unmap();
         }
 
     /* ---- 8. Run ---- */

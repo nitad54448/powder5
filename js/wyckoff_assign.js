@@ -968,7 +968,17 @@ function weightedAssign(ids, numParticles, minPer, weights) {
 
     let p = 0;
     ids.forEach((a, k) => { for (let n = 0; n < counts[k] && p < numParticles; n++) out[p++] = a; });
-    while (p < numParticles) out[p++] = ids[p % ids.length];
+    // `p` IS READ BEFORE IT IS INCREMENTED.
+    //
+    // This was `out[p++] = ids[p % ids.length]`. JavaScript evaluates the
+    // assignment target first, so `p++` had already advanced by the time the
+    // right-hand side read `p`, and slot k was filled with ids[k+1] rather than
+    // ids[k] -- the whole padding run shifted one place round the cycle.
+    //
+    // Every value it writes is still a valid assignment id, and the path only
+    // runs when the guard above bailed out of the rebalance, so nothing ever
+    // crashed on it. It is simply not what the line says it does.
+    while (p < numParticles) { out[p] = ids[p % ids.length]; p++; }
     return out;
 }
 

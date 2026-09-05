@@ -246,7 +246,18 @@
         }
         const fn = parseExpression(m[1]);
         const divisor = parseInt(m[2], 10);
-        if (!fn || !divisor) return null;
+        if (!fn || !divisor) {
+            // WARNED, LIKE THE BRANCH ABOVE. A rule that matches
+            // CONDITION_RE but whose expression parseExpression cannot build,
+            // or whose divisor comes back 0 or NaN, was dropped without a
+            // word. A dropped condition does not fail loudly -- it lets
+            // through reflections that are systematically absent, which is
+            // precisely the damage the comment above documents for the seven
+            // I-centred groups. Both ways of losing a rule now say so.
+            console.warn('SG_ENGINE: unusable reflection condition:', str,
+                         '(expression', m[1], ', divisor', m[2], ')');
+            return null;
+        }
         return { fn, divisor, raw: str };
     }
 

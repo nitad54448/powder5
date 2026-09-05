@@ -575,8 +575,24 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                         const undeterminedNames = [];
                         parameterInfo.forEach((p_info, i) => {
                              if (cov_matrix[i] && cov_matrix[i][i] !== undefined) {
-                                 const variance = cov_matrix[i][i] * reduced_chi_sq;
-                                  if (variance >= 0 && isFinite(variance)) {
+                                 // THE SENTINEL IS TESTED BEFORE THE SCALING.
+                                 //
+                                 // covarianceFromJtJ marks an undetermined
+                                 // parameter by writing -1 on the diagonal, and
+                                 // this used to detect it only through
+                                 // `variance >= 0` after multiplying by
+                                 // reduced_chi_sq. That test does not hold for a
+                                 // perfect fit: -1 * 0 is -0 in IEEE arithmetic,
+                                 // -0 >= 0 is TRUE in JavaScript, and sqrt(-0) is
+                                 // -0 -- so a parameter the data does not
+                                 // determine at all was reported with an ESD of
+                                 // zero, which reads as infinitely well
+                                 // determined. Exactly backwards, and on
+                                 // simulated data (ss_res at or near nought) it
+                                 // is reachable.
+                                 const rawVar = cov_matrix[i][i];
+                                 const variance = rawVar * reduced_chi_sq;
+                                  if (rawVar >= 0 && variance >= 0 && isFinite(variance)) {
                                       const sigma_scaled = Math.sqrt(variance);
                                       const scale = p_info.scale || 1.0;
                                       esds[p_info.name] = sigma_scaled * scale;

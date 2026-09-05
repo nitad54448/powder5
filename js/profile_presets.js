@@ -169,9 +169,19 @@ function saveProfileState(profileId) {
             //   updatePreviewPattern() bails internally when prerequisites
             //   are missing (no data / no space group / no chart), so it's
             //   safe to call unconditionally.
-            try { updateStephensAnisotropyUI(); } catch (_) {}
-            try { invalidateHklCache(); } catch (_) {}     //   widths feed peak shapes
-            try { updatePreviewPattern(); } catch (_) {}
+            //   LOGGED, NOT SWALLOWED. These three used to discard their
+            //   exception entirely. The preset still reported success and the
+            //   toast still said so, but the chart, the cached HKL widths or the
+            //   anisotropy panel had silently stopped tracking the parameters --
+            //   the display then disagreed with the state it claimed to show,
+            //   with nothing anywhere saying why. Still caught individually, so
+            //   one failure does not stop the other two or abort the load.
+            try { updateStephensAnisotropyUI(); }
+            catch (e) { console.error('Preset load: anisotropy panel refresh failed:', e); }
+            try { invalidateHklCache(); }        //   widths feed peak shapes
+            catch (e) { console.error('Preset load: HKL cache invalidation failed:', e); }
+            try { updatePreviewPattern(); }
+            catch (e) { console.error('Preset load: preview replot failed:', e); }
 
             const tail = unknownCount > 0 ? ` (${unknownCount} unknown key${unknownCount===1?'':'s'} ignored)` : '';
             showToast(`Loaded ${getProfileLabel(profileId)}: ${appliedCount} parameter${appliedCount===1?'':'s'}${tail}.`, 'success');
