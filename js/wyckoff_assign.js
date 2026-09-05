@@ -53,13 +53,18 @@ const SHARKO_WYCKOFF_ASSIGN_VERSION = '1.1.0';
      WY_MAX_OPS    genOp is packed into 12 bits. Group orders top out at 192.
      WY_MAX_RULES  MAX_BOND_RULES.
      WY_MAX_COORD_SLOTS  width of the private `slot` array, shared across every
-                   counted rule.
+                   counted rule. Private, not workgroup - it does not compete
+                   with MAX_GEN_ATOMS for the 16 kB, and the kernel initialises
+                   only the slots the rules claimed - so 64 (= WY_MAX_RULES x 8)
+                   is affordable and stops this bound binding on any real
+                   coordination shell. PbSO4 with S-O 4, Pb-O 8 and Pb-S 8
+                   needs 20, which the old 16 refused.
    ------------------------------------------------------------------ */
 const WY_MAX_SITES = 32;
 const WY_MAX_ELEM = 8;
 const WY_MAX_OPS = 4096;
 const WY_MAX_RULES = 8;
-const WY_MAX_COORD_SLOTS = 16;
+const WY_MAX_COORD_SLOTS = 64;
 
 /* ------------------------------------------------------------------ */
 /*  Wyckoff position helpers                                           */

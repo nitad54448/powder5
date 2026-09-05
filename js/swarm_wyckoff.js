@@ -175,11 +175,26 @@ function swInject(src, maxGen, minImageShell = 0, groupStride = 3, countShell = 
         `const COUNT_SHELL: i32 = ${countShell}; //__injected__`);
     if (out === beforeCount) throw new Error('COUNT_SHELL marker not found in the kernel source.');
 
-    // GROUP_STRIDE only exists in the reflection kernel, so a missing marker is
-    // not an error here - the density kernel legitimately has none.
+    // GROUP_STRIDE IS NOT OPTIONAL, AND A MISSING MARKER IS AN ERROR.
+    //
+    // This used to fall through silently, on the grounds that "the density
+    // kernel legitimately has none". swarm_density.wgsl is deleted, so the
+    // only kernel this function is ever handed is the reflection one -- and
+    // that one cannot run without the substitution. swPackReflections packs
+    // groupMeta at a stride of FOUR (start, count, Iobs, 1/sigma^2), while the
+    // file on disk ships with `3u` so it reads as the unweighted form. The
+    // injection is therefore load-bearing on every single run.
+    //
+    // Failing quietly here is the worst available outcome: the kernel would
+    // walk the group table at stride 3 over data written at stride 4, so every
+    // group's start, count and Iobs would come from the wrong offsets and the
+    // weight branch would fold away to 1.0. Nothing would throw. The run would
+    // finish and report a correlation computed against shifted garbage.
+    const beforeStride = out;
     out = out.replace(
         /const\s+GROUP_STRIDE\s*:\s*u32\s*=\s*\d+u\s*;\s*\/\/__GROUP_STRIDE__/,
         `const GROUP_STRIDE: u32 = ${groupStride}u; //__injected__`);
+    if (out === beforeStride) throw new Error('GROUP_STRIDE marker not found in the kernel source.');
     return out;
 }
 
@@ -474,11 +489,35 @@ async function runWyckoffSearch(o) {
     const log = [];
     const say = m => { log.push(m); if (o.onLog) o.onLog(m); };
 
-    // Auto-Tuner: Probes hardware limits and prevents WebGPU/TDR crashes
-    const maxExpectedAtoms = 150; // Safe upper ceiling for generated XYZ atoms per structure
-    const bytesPerParticle = maxExpectedAtoms * 24; // 3 floats * 4 bytes * 2 arrays (current + best)
+    // Auto-Tuner: Probes hardware limits and prevents WebGPU/TDR crashes.
+    //
+    // THIS SIZES bufPos, AND bufPos DOES NOT HOLD ATOMS.
+    //
+    // It used to be `maxExpectedAtoms = 150` at 24 bytes each, described as
+    // "generated XYZ atoms per structure". A particle's coordinate vector is
+    // coordsPerParticle = T.maxSites * 3 -- the free coordinates of the
+    // ASYMMETRIC UNIT, one triple per independent Wyckoff site. The
+    // symmetry-expanded atoms never reach a storage buffer at all: the kernel
+    // regenerates them into gx/gy/gz each dispatch, which is what
+    // MAX_GEN_ATOMS and swMaxGenAtoms() bound, against WORKGROUP memory.
+    //
+    // So the old figure was in the wrong units and disagreed by 4.7x with the
+    // check at bufPosBytes below, which is derived correctly. It erred toward a
+    // tighter cap, so it never let through a swarm that would crash - but two
+    // places computing the size of one buffer and getting different answers is
+    // how the next edit introduces a real one.
+    //
+    // T does not exist yet (buildAssignmentTables runs after the enumeration,
+    // which needs the composition, which needs this cap not to have thrown), so
+    // the kernel's ceiling stands in for T.maxSites. WY_MAX_SITES is the most
+    // any assignment can carry - buildAssignmentTables throws above it - so
+    // this is the true worst case rather than a guess, and being an upper bound
+    // it keeps the cap conservative.
+    const FLOATS_PER_SITE = 3;      // x, y, z
+    const POS_COPIES = 2;           // bufPos holds current + best-ever
+    const bytesPerParticle = WY_MAX_SITES * FLOATS_PER_SITE * POS_COPIES * 4;
     const limitMem = Math.floor(o.device.limits.maxStorageBufferBindingSize / bytesPerParticle);
-    const limitCompute = o.device.limits.maxComputeWorkgroupsPerDimension * 64;
+    const limitCompute = o.device.limits.maxComputeWorkgroupsPerDimension * SW_WG;
     
     const safeMax = Math.floor(Math.min(limitMem, limitCompute) * 0.95); // 5% safety margin
     

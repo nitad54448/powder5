@@ -2,20 +2,22 @@
 // Reciprocal-space |Fcalc|^2 fitness for the Wyckoff search.
 //
 // ---------------------------------------------------------------------------
-//  WHAT THIS IS, AND WHY IT IS A SEPARATE FILE
+//  WHAT THIS IS, AND WHY IT IS THE ONLY SWARM KERNEL
 // ---------------------------------------------------------------------------
-//  swarm_density.wgsl scores a candidate structure by how much CHARGE FLIPPING
-//  DENSITY sits under its atoms. This file scores the same candidate by how
-//  well its calculated intensities match the PAWLEY INTENSITIES. Everything
-//  else -- the RNG, the Wyckoff projection, the symmetry expansion, the
-//  Metropolis step, the bond-rule penalties, the reduction -- is identical and
-//  deliberately kept identical, so the two objectives stay comparable and a
-//  fix to the shared machinery can be applied to both by diffing them.
+//  There used to be a sibling, swarm_density.wgsl, which scored a candidate by
+//  how much CHARGE FLIPPING DENSITY sat under its atoms. It is DELETED, and
+//  the objective with it -- see the reasoning at the top of wyRunWithDevice()
+//  in wyckoff_worker.js. In short: point-sampling a map couples this method to
+//  the charge-flipping result it exists to be independent of, and the sample
+//  is biased in the wrong direction, since a heavy atom's own
+//  series-termination ripples dig a trough underneath it and rank it BELOW a
+//  light one.
 //
-//  Two objectives, two files, rather than one file with a mode switch: the
-//  scoring sections share no arithmetic at all, and a `if (mode)` in the
-//  hottest loop in the program would cost both paths for the benefit of
-//  neither.
+//  What that means for anyone editing this file: the shared machinery -- the
+//  RNG, the Wyckoff projection, the symmetry expansion, the Metropolis step,
+//  the bond-rule penalties, the reduction -- no longer has a second copy to be
+//  kept in step with. A fix here is the whole fix. If you resurrect a second
+//  objective, resurrect the diffing discipline with it.
 //
 //  WHY THE DIRECT-SPACE OBJECTIVE IS WORTH HAVING. The density objective can
 //  only be as good as the map, and on a heavy-atom structure the map is the
@@ -102,7 +104,18 @@ const MIN_IMAGE_SHELL: i32 = 0;  //__MIN_IMAGE_SHELL__
 const GROUP_STRIDE: u32 = 3u; //__GROUP_STRIDE__
 const MAX_BOND_RULES: u32 = 8u;
 const RULE_STRIDE: u32 = 6u;
-const MAX_COORD_SLOTS: u32 = 16u;
+// `slot` is a FUNCTION-SCOPE array, not workgroup storage, so this constant
+// costs nothing against the 16 kB budget that MAX_GEN_ATOMS is competing for.
+// It is per-lane scratch: 64 f32 is 256 bytes a thread, and because
+// slot[slotOff[k] + m] is dynamically indexed the array was already spilling
+// out of registers at 16 -- raising it resizes an existing spill rather than
+// creating one.
+//
+// 64 = MAX_BOND_RULES * 8, so the sum-of-coordination-numbers check on the
+// host stops binding for any chemistry that fits in eight rules at all. The
+// per-atom initialisation below runs to slotTotal, the slots the rules
+// actually claimed, so a run needing 20 does not pay for the other 44.
+const MAX_COORD_SLOTS: u32 = 64u;
 const NO_PARTNER_CHARGE: f32 = 5.0;
 const COORD_SOFT_A: f32 = 0.25;
 
@@ -289,6 +302,17 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
 
     let nTot   = min(u32(params.nTot), MAX_GEN_ATOMS);
     let nRules = min(u32(params.nBondRules), MAX_BOND_RULES);
+    // Hoisted above the generation loop so gT can be clamped against the
+    // COMPOSITION rather than only against MAX_ELEM. Both tables gT indexes
+    // are nElem wide, not MAX_ELEM wide: local_rMin is filled to nElem^2 and
+    // the scattering row for a reflection is nElem long. A type of 7 in a
+    // three-element composition was therefore inside the old clamp and still
+    // read past the filled region of one and into the next reflection's row of
+    // the other. Unreachable while genType comes from the host's demand index,
+    // which is what this clamp is for.
+    let nElem      = u32(params.nElem);
+    let nElemClamp = min(nElem, MAX_ELEM);
+    let maxType    = max(nElemClamp, 1u) - 1u;
     let ruleOff = u32(params.ruleOff);
 
     // TWO DIFFERENT NUMBERS, AND THEY MUST NOT BE CONFLATED.
@@ -305,7 +329,15 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     let maxSites   = min(siteStride, MAX_SITES);
 
         let A     = particleAssign[pIdx];
-        let gBase = A * nTot;
+        // RAW params.nTot, not the clamped `nTot`, for exactly the reason
+        // siteStride is raw above: this is the stride the HOST allocated
+        // genPack with (nAssign x nTot entries), so clamping it would slide
+        // every assignment's row rather than shortening it. The loop below
+        // still runs to the clamped `nTot`, so a host/kernel mismatch
+        // truncates the cell -- which the reduction and the restraints both
+        // survive -- instead of reading another assignment's atoms, which
+        // they do not.
+        let gBase = A * u32(params.nTot);
         let pBase = pIdx * siteStride * 3u;
 
         // `particles` is JS-allocated at double length: the first half is
@@ -385,7 +417,7 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
         // genPack carries 4 bits of type, so a malformed table could present
         // 15; local_rMin holds MAX_ELEM^2 entries and the scattering table has
         // a row of nElem, so either reader would run off the end.
-        gT[g] = min(ty, MAX_ELEM - 1u);
+        gT[g] = min(ty, maxType);
     }
     workgroupBarrier();
 
@@ -408,7 +440,10 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     //  Iobs is packed as sum(mult * Fo^2) over the group, so Icalc is
     //  accumulated as sum(mult * |F|^2) to match it term for term.
     // ----------------------------------------------------------------------
-    let nElem   = u32(params.nElem);
+    // nElem is declared at the top of main() so the generation loop's type
+    // clamp can use it; it is the row stride of both the r_min table and the
+    // scattering table, and is deliberately NOT clamped where it is used as a
+    // stride - see the fill length at nElemSq below.
     let fTabOff = u32(params.fTabOff);
     let nGroups = u32(params.nGroupsActive);
     let nReflTot = u32(params.nRefl);
@@ -535,6 +570,14 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     // structure which cannot satisfy its own restraints.
     var slotOff: array<u32, MAX_BOND_RULES>;
     var slotN:   array<u32, MAX_BOND_RULES>;
+    // How many slots the rules between them actually claimed. Hoisted out of
+    // the block below because the per-atom loop needs it: `slot` is re-declared
+    // on every iteration of that loop and has to be re-initialised each time,
+    // and initialising all MAX_COORD_SLOTS entries would make the cost of the
+    // constant proportional to the constant rather than to the demand. Entries
+    // at or above slotTotal are never read - no slotOff[k] + m reaches them -
+    // so stopping there is not an approximation.
+    var slotTotal: u32 = 0u;
     {
         var acc: u32 = 0u;
         for (var k = 0u; k < nRules; k = k + 1u) {
@@ -546,6 +589,7 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
             slotN[k] = nk;
             acc = acc + nk;
         }
+        slotTotal = acc;
     }
 
     var pen: f32 = 0.0;
@@ -564,7 +608,7 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
             inWindow[k] = 0.0;
         }
         var slot: array<f32, MAX_COORD_SLOTS>;
-        for (var m = 0u; m < MAX_COORD_SLOTS; m = m + 1u) { slot[m] = NO_NEIGHBOUR; }
+        for (var m = 0u; m < slotTotal; m = m + 1u) { slot[m] = NO_NEIGHBOUR; }
 
         for (var j = 0u; j < nTot; j = j + 1u) {
             let tj = gT[j];

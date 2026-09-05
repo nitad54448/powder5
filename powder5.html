@@ -3534,7 +3534,7 @@ function validateDistanceConstraints(text, formula) {
     // Compile-time array bounds in swarm_reflection.wgsl.
     // See the note above on why these are local rather than shared.
     const WY_MAX_BOND_RULES = 8;    // MAX_BOND_RULES
-    const WY_MAX_COORD_SLOTS = 16;  // MAX_COORD_SLOTS
+    const WY_MAX_COORD_SLOTS = 64;  // MAX_COORD_SLOTS
 
     const r = parseDistanceConstraints(text || '');
     const errors = r.bad.slice();
@@ -3573,7 +3573,14 @@ function validateDistanceConstraints(text, formula) {
     // REFUSES to run rather than silently dropping the surplus, so five
     // constraints could pass here and then fail at launch.
     const ruleCount = r.windows.reduce((n, w) => {
-        const hasCount = Number.isFinite(w.count) && w.count > 0;
+        // `>= 0`, NOT `> 0`, because that is what buildRestraintTables tests.
+        // "S O 0 1.4/1.8" -- no oxygen within the window of any sulfur -- is a
+        // legitimate exclusion rule: the builder emits it as a counted rule,
+        // directed and unmirrored, costing ONE rule and no slots. Counting it
+        // here as a bare upper bound made it cost two, so this check and the
+        // builder disagreed by one rule on every such line, in the direction
+        // that refuses a set of constraints the builder would have accepted.
+        const hasCount = Number.isFinite(w.count) && w.count >= 0;
         if (!hasCount && !Number.isFinite(w.dmax)) return n;
         const mirrored = !hasCount && w.bothWays !== false &&
                          String(w.a).toUpperCase() !== String(w.b).toUpperCase();

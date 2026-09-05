@@ -462,6 +462,7 @@ blockquote {
             <li><a href="#cf-wyckoff">Wyckoff Search</a></li>
             <li><a href="#wy-objective" class="sub-link">The Objective</a></li>
             <li><a href="#wy-controls" class="sub-link">Controls &amp; Capacities</a></li>
+            <li><a href="#wy-constraints" class="sub-link">Distance Constraints</a></li>
             <li><a href="#wy-z" class="sub-link">Z, Density Window &amp; the Scan</a></li>
             <li><a href="#wy-how-many-sites" class="sub-link">How Many Sites</a></li>
             <li><a href="#wy-refinement" class="sub-link">Coordinate Refinement</a></li>
@@ -543,8 +544,7 @@ blockquote {
                     <tr><td><code>powder5.html</code></td><td>The application itself.</td></tr>
                     <tr><td><code>style.css</code></td><td>All styling.</td></tr>
                     <tr><td><code>charge_flipping.wgsl</code></td><td>WebGPU kernels for the charge-flipping loop.</td></tr>
-                    <tr><td><code>swarm_density.wgsl</code></td><td>Wyckoff swarm kernel scoring against a density map.</td></tr>
-                    <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel scoring |F<sub>calc</sub>|&sup2; against the Pawley intensities. Used when no map is supplied.</td></tr>
+                    <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel. Scores a trial structure by |F<sub>calc</sub>|&sup2; against the Pawley intensities; this is the only objective the Wyckoff search has.</td></tr>
                     <tr><td><code>js/</code></td><td>All application modules - <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code>, <code>wyckoff_report.js</code>, <code>simulation.js</code>, <code>scatterers.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
                     <tr><td><code>lib/</code></td><td>Vendor bundles: <code>chart.umd.min.js</code>, <code>three.min.js</code>, <code>jspdf.umd.min.js</code>, <code>html2canvas.min.js</code>.</td></tr>
                     <tr><td><code>sg/</code></td><td>Space-group database (all settings of the 230 groups).</td></tr>
@@ -2856,7 +2856,7 @@ Refinement: 64%</pre>
                     <tr><td><strong>Iterations</strong></td><td>Steps per chain (100&ndash;10000, default 2000).</td></tr>
                     <tr><td><strong>Restarts</strong></td><td>Independent restarts (1&ndash;20, default 4).</td></tr>
                     <tr><td><strong>Min contact (&Aring;)</strong></td><td>Floor applied to every unlike pair, default 1.0&nbsp;&Aring;.</td></tr>
-                    <tr><td><strong>Distance constraints</strong></td><td><code>ElemA ElemB N dmin/dmax</code>, one per line, e.g. <code>S O 4 1.35/1.65</code>. Sets both the bond-window penalty during the search and the floor used to reject a candidate afterwards.</td></tr>
+                    <tr><td><strong>Distance constraints</strong></td><td><code>ElemA ElemB N dmin/dmax</code>, one per line, e.g. <code>S O 4 1.40/1.80</code>. Sets both the bond-window penalty during the search and the floor used to reject a candidate afterwards. The grammar, what each form costs and the common mistakes are in <a href="#wy-constraints">Distance constraints</a> below.</td></tr>
                 </tbody>
             </table>
 
@@ -2864,7 +2864,7 @@ Refinement: 64%</pre>
                 <strong>Capacities, and what happens when you exceed one.</strong> The search
                 kernel holds at most <strong>32 independent atomic sites</strong> in one
                 assignment, <strong>8 distinct elements</strong>, <strong>8 distance
-                rules</strong>, and <strong>16 coordination slots</strong> shared across all
+                rules</strong>, and <strong>64 coordination slots</strong> shared across all
                 rules. These are fixed array sizes, not preferences.
                 <br><br>
                 Read the first two carefully, because neither counts what its name suggests:
@@ -2876,6 +2876,14 @@ Refinement: 64%</pre>
                     <li><strong>8 elements</strong> counts <em>distinct chemical elements</em>,
                         not atoms and not sites. An element occupying nine positions is still
                         one element.</li>
+                    <li><strong>64 slots</strong> is the <em>sum</em> of the coordination
+                        numbers over every line that states one, not a per-line limit.
+                        <code>S O 4 1.40/1.80</code> plus <code>Pb O 8 2.00/3.00</code> plus
+                        <code>Pb S 8 2.00/4.00</code> spends 4 + 8 + 8 = 20 of the 64. Lines
+                        that state no coordination number spend none. Since no line can ask
+                        for more than it can fit and there are only 8 rules, 64 is enough for
+                        eight simultaneous 8-coordinate shells - in practice this limit no
+                        longer binds, and the rule count is what you will hit first.</li>
                 </ul>
                 So the two limits are close to independent, and a single-element structure can
                 use the whole site budget. C<sub>60</sub> in \(Pa\bar{3}\) is the illustrative
@@ -2941,6 +2949,117 @@ Refinement: 64%</pre>
                 <strong>ranking</strong> that chose this candidate over the others, which was
                 made on the same partial figure. Treat a stopped run as a preview of where the
                 search was heading rather than as a finished answer.
+            </div>
+
+            <h3 id="wy-constraints">Distance constraints</h3>
+            <p>
+                One rule per line, blank lines and lines starting with <code>#</code> ignored.
+                Element symbols are matched case-insensitively and must appear in the target
+                formula; anything else is inert and is reported as an error rather than
+                skipped. The general form is
+            </p>
+            <pre>ElemA ElemB [count] dmin/dmax</pre>
+            <p>
+                and every field except the two symbols is optional, which is why the same
+                intention can be written several ways. What matters is which of three
+                different mechanisms a line ends up switching on:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Field</th><th>What it does</th></tr></thead>
+                <tbody>
+                    <tr><td><code>dmin</code></td><td><strong>A hard floor on the pair.</strong> It replaces the <strong>Min contact</strong> slider for this pair - not the larger of the two, not the smaller, in either direction - so a constraint can hold one pair further apart than the slider or admit an approach the slider would forbid. Charged as a clash penalty that grows with the depth of the overlap. Costs no rule.</td></tr>
+                    <tr><td><code>dmax</code></td><td>With no count: <strong>the nearest partner must be within it.</strong> A pure nearest-neighbour condition, symmetric, so it is applied in both directions and <em>costs two rules</em>. With a count: the upper edge of the window the shell is measured against.</td></tr>
+                    <tr><td><code>count</code></td><td><strong>A coordination number.</strong> The kernel keeps the <em>count</em> nearest partners and charges each one by how far it misses the window, so the penalty is graded by distance rather than by a bare tally - a partner at 2.5&nbsp;&Aring; when you asked for 1.80 is not scored the same as no partner at all. Directed and never mirrored: costs one rule and <em>count</em> slots.</td></tr>
+                </tbody>
+            </table>
+
+            <h4>Worked examples</h4>
+            <p>
+                Rule and slot costs are shown against the budget of 8 rules and 64 slots. The
+                constraint box totals them live and refuses the run before it starts rather
+                than dropping the surplus.
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Line</th><th>Meaning</th><th>Rules</th><th>Slots</th></tr></thead>
+                <tbody>
+                    <tr><td><code>S O 4 1.40/1.80</code></td><td>Every S wants exactly four O between 1.40 and 1.80&nbsp;&Aring;. Also floors S&ndash;O at 1.40.</td><td>1</td><td>4</td></tr>
+                    <tr><td><code>S O 4+ 1.40/1.80</code></td><td>The same, but <em>at least</em> four - a fifth O in the window is not penalised. Use this when the coordination is uncertain; the bare number also charges for excess.</td><td>1</td><td>4</td></tr>
+                    <tr><td><code>Pb O 8 2.00/3.00</code></td><td>Every Pb wants eight O in 2.00&ndash;3.00&nbsp;&Aring;.</td><td>1</td><td>8</td></tr>
+                    <tr><td><code>O O 2.40</code></td><td>O&ndash;O no closer than 2.40&nbsp;&Aring;. A floor and nothing else - the cheapest kind of line.</td><td>0</td><td>0</td></tr>
+                    <tr><td><code>O O - 2.40/</code></td><td>Identical to the above. The <code>-</code> is an explicit &ldquo;no count&rdquo; and the empty right-hand side an explicit &ldquo;no upper bound&rdquo;; both are optional.</td><td>0</td><td>0</td></tr>
+                    <tr><td><code>Pb O /3.00</code></td><td>The nearest O to any Pb must be within 3.00&nbsp;&Aring;, and vice versa. No count, so it is mirrored - which is where the two rules go.</td><td>2</td><td>0</td></tr>
+                    <tr><td><code>Pb O 2.00 3.00</code></td><td>The same window written without a slash. Two bare numbers are read as dmin then dmax.</td><td>2</td><td>0</td></tr>
+                    <tr><td><code># Pb S: no bond expected</code></td><td>A comment. Useful for parking a rule you may want back.</td><td>0</td><td>0</td></tr>
+                </tbody>
+            </table>
+
+            <h4>A complete example: PbSO<sub>4</sub></h4>
+            <pre># anglesite, Pnma, Z = 4
+S  O   4  1.40/1.80     # sulfate tetrahedron
+Pb O   8  2.00/3.00     # lead coordination shell
+O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
+            <p>
+                Two rules and twelve slots, well inside both budgets. The third line costs
+                nothing at all: it is a floor, and floors live in the clash matrix rather than
+                in the rule table. Note what is <em>not</em> constrained - no Pb&ndash;S rule,
+                because there is no Pb&ndash;S bond and the O&ndash;O floor plus the two
+                coordination shells already fix the packing. Constraining a distance you have
+                no chemical reason to constrain is the commonest way to make the right answer
+                unreachable.
+            </p>
+
+            <h4>Direction is not decoration</h4>
+            <p>
+                A coordination number is tested from its <em>first</em> element outward.
+                <code>S O 4 1.40/1.80</code> asks every sulfur for four oxygens;
+                <code>O S 4 1.40/1.80</code> asks every oxygen for four sulfurs, which in a
+                sulfate is false and will be paid for on every single evaluation. Writing both
+                is not one bond counted once - they are two independent demands costing two
+                rules and eight slots, and the box warns when it sees the pair. Put the count on
+                the centre of the polyhedron.
+            </p>
+            <p>
+                Upper bounds without a count are the exception: they are symmetric statements
+                about nearest neighbours, so they are applied both ways automatically. That is
+                convenient and it is also why one typed line becomes two rules.
+            </p>
+
+            <div class="note">
+                <strong>Running out of budget.</strong> With 8 rules and 64 slots the rule count
+                is the binding constraint, and almost always because of mirrored upper bounds.
+                In order of what to try:
+                <ul>
+                    <li>Drop upper bounds you do not need. <code>Pb O /3.00</code> costs two
+                        rules; if what you actually meant was &ldquo;Pb has eight oxygens around
+                        it&rdquo;, <code>Pb O 8 2.00/3.00</code> says it better and costs one.</li>
+                    <li>Turn windows you only care about the near side of into floors. A line
+                        with a dmin and no dmax and no count is free.</li>
+                    <li>Constrain the cation polyhedra, not the anion&ndash;anion contacts. The
+                        latter follow from the former.</li>
+                </ul>
+                Nothing is silently truncated at either limit - the run is refused with a
+                message naming the total and the limit it passed.
+            </div>
+
+            <div class="warning-note">
+                <strong>A count with no upper distance counts the whole cell.</strong>
+                <code>S O 4 1.40/</code> asks for four oxygens further than 1.40&nbsp;&Aring;
+                from each sulfur, which every oxygen in the structure satisfies, so the demand
+                is met by any arrangement and constrains nothing. The box warns about this. A
+                bare integer with no distance at all - <code>S O 4</code> - is rejected outright
+                rather than guessed at, because it is equally readable as a 4&nbsp;&Aring;
+                distance.
+            </div>
+
+            <div class="note">
+                <strong>Constraints are soft during the search and hard afterwards.</strong> The
+                clash, bond-window and coordination penalties are ramped in as the search
+                proceeds, so early generations can pass through geometry the constraints forbid;
+                that is deliberate, and it is what lets a chain cross a barrier instead of being
+                trapped behind it. The floors are then applied again as a filter when candidates
+                are ranked, so a structure that ends up violating one is rejected rather than
+                reported. If a candidate you expected is missing, an over-tight floor is the
+                first thing to check.
             </div>
 
             <h3 id="wy-z">\(Z\), the density window, and the scan</h3>
