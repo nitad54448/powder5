@@ -27,6 +27,12 @@
     <script src="js/charting.js"></script>
     <script src="js/spline_background.js"></script>
     <script src="js/refinement_controller.js"></script>
+    <!-- Simulation. scatterers.js was previously reachable only from
+         wyckoff_worker.js through importScripts; the forward calculation needs
+         the same tables on the main thread, and loading the one file twice is
+         better than keeping two copies of the coefficients. -->
+    <script src="js/scatterers.js"></script>
+    <script src="js/simulation.js"></script>
     <script src="lib/jszip.min.js"></script>
     <script src="lib/jspdf.umd.min.js"></script>
     <script src="lib/html2canvas.min.js"></script>
@@ -58,6 +64,177 @@
       .wy-sol-table tbody tr.wy-sol-row-on {
           background: var(--system-gray-6, rgba(127,127,127,0.14));
       }
+
+      /* ---- No refine flags while simulating ------------------------------
+         A "Fit" checkbox marks a parameter as free in a least-squares
+         refinement. Under Simulation there is no refinement, so every one of
+         them is a control with nothing to control.
+
+         DONE IN CSS, NOT BY WALKING THE DOM. The lattice flags are rebuilt
+         from scratch by updateUIForSystemChange() every time the crystal
+         system changes -- which now includes loading a CIF -- and the profile
+         flags are swapped out whenever the peak-shape type changes. A JS pass
+         would have to be re-run after each of those, and the one that got
+         missed would put the flags back on a tab where they mean nothing. A
+         rule applies to elements that do not exist yet.
+
+         Hidden, not disabled or removed: the boxes keep their state, so a
+         round trip through Simulation leaves every refinement flag exactly as
+         it was. .sim-keep opts out the three checkboxes that borrow this class
+         for its styling without being refine flags (the spline-point toggle,
+         the export range limit, and the simulation's own scale switch). */
+      body.sim-active .fit-checkbox:not(.sim-keep) { display: none; }
+
+      /* ---- Atoms tab (simulation) ----------------------------------------
+         Three lines per atom, every field live. Eight controls across a panel
+         this narrow left each coordinate about six characters, and a
+         fractional coordinate is the one number here that is always read and
+         edited to four decimals.
+
+         Values are var()s from style.css with no fallbacks: this block is only
+         ever loaded beside it, and a fallback colour would be a second
+         definition of the palette that nothing keeps in step. */
+      .sim-atom-card {
+          border: 1px solid var(--rule-soft);
+          border-radius: var(--r-2);
+          background: var(--bg-panel);
+          padding: 7px 10px;
+          margin-bottom: 5px;
+      }
+      /* Name and Wyckoff carry the identity of the site, so they are the
+         two things that should be readable at a glance down a list of a dozen
+         atoms -- larger than the field captions, not smaller. */
+      /* Collapsed by default: one line per atom, click to open. A twenty-atom
+         structure is unreadable as twenty three-line blocks, and the point of
+         folding it is to see the whole thing at once -- so the closed line
+         still carries the coordinates, which is what gets compared down a
+         list. */
+      .sim-atom-bar {
+          display: grid;
+          grid-template-columns: 10px auto auto 1fr auto;
+          gap: 7px;
+          align-items: baseline;
+          cursor: pointer;
+          user-select: none;
+          border-radius: var(--r-1);
+          margin: -2px -4px;
+          padding: 3px 4px;
+      }
+      .sim-atom-bar:hover { background: var(--bg-inset); }
+      .sim-atom-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .sim-chev {
+          font-size: 13px;
+          line-height: 1;
+          color: var(--fg-3);
+          transform: rotate(0deg);
+          transition: transform 0.15s ease;
+      }
+      .sim-atom-card.open .sim-chev { transform: rotate(90deg); }
+      .sim-atom-name {
+          font-family: var(--font-mono);
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--fg);
+      }
+      .sim-atom-wy {
+          font-family: var(--font-mono);
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--accent);
+      }
+      .sim-atom-wy::before { content: '\00b7 '; color: var(--fg-3); font-weight: 400; }
+      /* Truncates rather than wrapping: a summary that pushes the row to two
+         lines has given back the space the fold was for. */
+      .sim-atom-sum {
+          font-family: var(--font-mono);
+          font-size: 10.5px;
+          color: var(--fg-3);
+          text-align: right;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          min-width: 0;
+      }
+      .sim-atom-card.open .sim-atom-sum { visibility: hidden; }
+      .sim-atom-body { display: none; padding-top: 9px; }
+      .sim-atom-card.open .sim-atom-body { display: block; }
+      .sim-atom-card.open { padding-bottom: 8px; }
+      .sim-atom-sp {
+          font-size: 10.5px;
+          color: var(--fg-3);
+          margin-top: -2px;
+      }
+      .sim-atom-card .sim-del {
+          background: transparent;
+          border: none;
+          color: var(--fg-3);
+          font-size: 17px;
+          line-height: 1;
+          cursor: pointer;
+          padding: 0 2px;
+          transition: color 0.12s;
+      }
+      .sim-atom-card .sim-del:hover { color: var(--danger); }
+      /* Caption row then control row, so the three captions sit exactly over
+         the three fields without needing a wrapper per column. */
+      .sim-atom-line {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 2px 8px;
+          margin-bottom: 8px;
+      }
+      .sim-cap {
+          font-size: 10.5px;
+          font-weight: 500;
+          letter-spacing: 0.02em;
+          color: var(--fg-3);
+          margin: 0;
+      }
+      .sim-atom-card .control-input,
+      .sim-atom-card .control-select {
+          height: 27px;
+          padding: 4px 8px;
+          font-size: 12.5px;
+          min-width: 0;
+          width: 100%;
+          box-sizing: border-box;
+      }
+      .sim-atom-card .control-select { background-position: calc(100% - 12px) 11px, calc(100% - 7px) 11px; }
+      .sim-atom-card .sim-num { text-align: right; font-family: var(--font-mono); }
+      .sim-atom-card .sim-bad { border-color: var(--danger) !important; }
+
+      /* ---- Atom picker modal ---------------------------------------------
+         Chrome comes from .sg-modal*; only the parts the space-group dialog
+         does not have are defined here. */
+      .sim-el-list {
+          margin: 8px 0 14px 0;
+          height: 190px;
+          overflow-y: auto;
+          border: 1px solid var(--rule);
+          border-radius: var(--r-1);
+          background: var(--bg-stage);
+      }
+      /* .sg-list-item is a 48px / 1fr / 110px grid built for space-group rows;
+         Z, label and atom-or-ion want much less room on the right. */
+      .sim-el-list .sg-list-item { grid-template-columns: 34px 1fr 44px; padding: 5px 10px; }
+      .sim-el-list .sg-list-item span:nth-child(2) { font-family: var(--font-mono); }
+
+      .sim-modal-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 10px 10px;
+      }
+      .sim-wyck-readout {
+          margin-top: 12px;
+          padding: 8px 10px;
+          border-radius: var(--r-1);
+          background: var(--bg-inset);
+          border: 1px solid var(--rule-soft);
+          font-size: 11.5px;
+          color: var(--fg-2);
+          min-height: 17px;
+      }
+      .sim-wyck-readout b { font-family: var(--font-mono); color: var(--fg); }
     </style>
 </head>
 <body>
@@ -100,6 +277,11 @@
                 <button class="tab-btn active" data-tab="sample">Sample</button>
                 <button class="tab-btn" data-tab="background">Background</button>
                 <button class="tab-btn" data-tab="profile">Profile</button>
+                <!-- Shown only when the Method is Simulation: nothing outside
+                     that mode reads the atom list, and a tab that silently
+                     does nothing is worse than one that is not there. -->
+                <button class="tab-btn" id="tab-btn-atoms" data-tab="atoms" style="display:none;"
+                        title="Build a structure and simulate its powder pattern.">Atoms</button>
                 <button class="tab-btn" id="tab-btn-charge-flipping" data-tab="charge-flipping"
                         title="Solve the structure ab initio from the Pawley intensities.">Charge</button>
                 <button class="tab-btn" id="tab-btn-wyckoff" data-tab="wyckoff"
@@ -208,7 +390,7 @@
                        </div>
                         <div class="form-row" style="margin-bottom: 16px;">
                            <label for="show-spline-points-checkbox" class="control-label">Show Points on Chart</label>
-                           <input type="checkbox" id="show-spline-points-checkbox" class="fit-checkbox" style="justify-self: end;">
+                           <input type="checkbox" id="show-spline-points-checkbox" class="fit-checkbox sim-keep" style="justify-self: end;">
                        </div>
                         <div id="spline-points-list" style="height: clamp(160px, calc(100vh - 420px), 62vh); overflow-y: auto; resize: vertical; border: 1px solid var(--system-gray-4); border-radius: 8px; padding: 8px 0 8px 8px;">
                             </div>
@@ -730,18 +912,104 @@
                      removing the element without redirecting them would have
                      stopped them being said. -->
             </div>
+
+            <!-- ================================================================
+                 ATOMS  (Method = Simulation)
+
+                 The forward calculation: atoms in, powder pattern out. The
+                 cell, the space group, the wavelength and the profile all come
+                 from the tabs that were already here -- this panel adds only
+                 what none of them carry, which is the contents of the
+                 asymmetric unit.
+
+                 The Wyckoff column is DERIVED and read-only. It is the
+                 multiplicity the pattern was actually computed with, not a
+                 label the user asserts, so it cannot disagree with the curve
+                 on screen. See simWyckoffFor() in js/simulation.js.
+                 ================================================================ -->
+            <div id="tab-panel-atoms" class="tab-content-panel">
+                <div class="control-group">
+                    <h2>Asymmetric Unit</h2>
+
+                    <div id="sim-atom-rows"></div>
+
+                    <div class="run-row" style="margin-top: 10px;">
+                        <button type="button" id="sim-add-atom" class="btn btn-primary">Add atom</button>
+                        <button type="button" id="sim-expand-all" class="btn" style="display:none;"
+                                data-action="expand"
+                                title="Open or close every atom at once.">Expand all</button>
+                        <button type="button" id="sim-load-cif" class="btn"
+                                title="Read the asymmetric unit from a crystal-structure CIF. This replaces the whole list — a CIF is one structure, not additions to another.">Load CIF</button>
+                        <input type="file" id="sim-cif-file" accept=".cif,.mcif,.txt" style="display:none;">
+                    </div>
+
+                    <div id="sim-summary" class="cf-hint" style="margin-top: 10px;"></div>
+                    <div id="sim-status" class="cf-hint" style="margin-top: 6px;"></div>
+                </div>
+
+                <div class="control-group">
+                    <h2>Pattern</h2>
+                    <div class="form-row">
+                        <label for="sim-step" class="control-label">Step (°2&theta;)</label>
+                        <input type="number" id="sim-step" value="0.01" step="0.001" min="0.0001" max="0.1"
+                               class="control-input"
+                               title="Step of the calculated 2-theta axis. Only used when no data file is open — with data the simulation is calculated on the measured points so the two can be subtracted.">
+                    </div>
+                    <div class="form-row">
+                        <label for="sim-background" class="control-label">Background</label>
+                        <input type="number" id="sim-background" value="10" step="1" min="0" max="100"
+                               class="control-input"
+                               title="A flat background added under the calculated pattern, in the same units as Max intensity. Only used when no data file is open — with data, the background is the measured one from the spline.">
+                    </div>
+                    <div class="form-row">
+                        <label for="sim-noise" class="control-label">Noise (&times; counts)</label>
+                        <input type="number" id="sim-noise" value="0.5" step="0.1" min="0" max="10"
+                               class="control-input"
+                               title="Counting statistics, in units of themselves. 0 is a clean calculated curve; 1 is the scatter a real detector would give for this many counts (sigma = sqrt(I)); above 1 is a noisier measurement at the same intensity scale. The draw is deterministic, so the same settings always give the same pattern. Only used when no data file is open.">
+                    </div>
+                    <div class="form-row">
+                        <label for="sim-scale-max" class="control-label">Max intensity</label>
+                        <input type="number" id="sim-scale-max" value="10000" step="100" min="1"
+                               class="control-input"
+                               title="The simulated pattern is normalised to this maximum. The absolute scale of a calculated pattern is arbitrary - it stands for the beam intensity, the sample volume and the counting time, none of which exist here.">
+                    </div>
+                    <div class="parameter-grid-3col">
+                        <label for="sim-scale-auto" class="control-label">Match data</label>
+                        <span style="font-size:12px; color: var(--fg-3);">
+                            scale to tallest peak
+                        </span>
+                        <input type="checkbox" id="sim-scale-auto" class="fit-checkbox sim-keep" checked
+                               title="With a pattern loaded, scale the simulation so its tallest peak matches the tallest measured peak above background. Ignored when no file is open.">
+                    </div>
+                    <div class="cf-hint" style="margin-top: 10px;">
+                        The 2&theta; range, the wavelengths, the zero point and the
+                        peak shape are the ones set on the Sample and Profile tabs,
+                        so a simulation and a fit of the same model are computed
+                        through exactly the same profile.
+                    </div>
+                </div>
+            </div>
+
             </div> <!-- Closes tab-content-panels -->
 
 
 
 <div class="bottom-actions"> 
                  <div class="control-group" style="border-top: none; padding-top: 0;">
-                     <h2>Refinement</h2>
+                     <h2>Method</h2>
                      <div class="parameter-grid-2col" style="gap: 12px; width: 100%;">
                          <label for="algorithm-select" class="control-label">Method</label>
                          <select id="algorithm-select" class="control-select">
                             <option value="lm">Levenberg-Marquardt</option>
                             <option value="pt" selected>Parallel Tempering</option>
+                            <!-- Last, and after a separator in spirit: the two
+                                 above are minimisers, this one is not. It sits
+                                 with them because this selector is what the
+                                 user reaches for to answer "what is this
+                                 program doing with my model?". The fit-only
+                                 controls hide themselves when it is chosen;
+                                 see simApplyMode(). -->
+                            <option value="sim">Simulation</option>
                          </select>
 
                          <label class="control-label" for="iterations-slider">Max Iterations</label>
@@ -1024,7 +1292,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 170, O1 sept 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 171, O5 sept 2026";
    //v5 of the py script includes the Harker section, 31 juillet 2026
     //v7 includes roations and translations
     //7 aug 2026, removed the Harker part from the reports, implemented in Harko directly
@@ -1038,6 +1306,7 @@
     //removed the cctbx dependencies, all data is in /sg and /scatter
     //28 aug, changed JtJ in the PAwley fit
     // v 170, reporting changed to print esd
+    //v 171, added a Simulate function
 
     document.addEventListener('DOMContentLoaded', async () => {     
     
@@ -5211,7 +5480,15 @@ L.push('loop_');
     if (isWy) L.push('_atom_site_Wyckoff_symbol');
     L.push('_atom_site_occupancy');
     st.sites.forEach(s => {
-        const elem = s.element || 'Q';
+        // THE FORMULA PARSER UPPER-CASES SYMBOLS SO THEY MATCH THE KERNEL'S
+        // TYPE TABLE CASE-INSENSITIVELY, and that is the right thing to
+        // compare on and the wrong thing to print -- wyDescribeRule() already
+        // carries the same note for the same reason. Written straight out,
+        // lead became "PB", which is not an element symbol: a CIF reader
+        // looking up _atom_site_type_symbol will not find it, so the phase
+        // loads with an unidentified scatterer.
+        const capEl = (x) => String(x).charAt(0).toUpperCase() + String(x).slice(1).toLowerCase();
+        const elem = s.element ? capEl(s.element) : 'Q';
         // '?' is the CIF null. `${undefined}` printed the literal text
         // "undefined", which is not a value any parser will accept.
         const mult = Number.isFinite(s.multiplicity) ? s.multiplicity : '?';
@@ -5480,12 +5757,26 @@ if (tooltipContainer && tooltipContent) {
         // Expose UI and helper functions required by spacegroup_ui.js
         window.cfLorentzPolarization = cfLorentzPolarization;
         window.generateAndCacheHklIndices = generateAndCacheHklIndices;
+        // The full operator list of the current setting. js/simulation.js needs
+        // it to expand the asymmetric unit and to derive the Wyckoff letter,
+        // and it was reachable only from inside this closure.
+        window.getSymopsForSetting = getSymopsForSetting;
         window.handleSpaceGroupApplied = handleSpaceGroupApplied;
         window.showToast = showToast;
 
         // Expose helper functions required by profile_presets.js
         window.updateStephensAnisotropyUI = updateStephensAnisotropyUI;
         window.invalidateHklCache = invalidateHklCache;
+        // downloadTextFile() is declared inside this DOMContentLoaded closure,
+        // so a separate script file cannot see it by name. js/simulation.js
+        // needs it to write the pdCIF the report button produces; without this
+        // line its `typeof downloadTextFile === 'function'` test failed and the
+        // button did nothing at all.
+        window.downloadTextFile = downloadTextFile;
+        // Same problem as downloadTextFile: js/simulation.js guarded every log
+        // call with `typeof logEvent === 'function'`, which was false from
+        // another file, so the simulation was invisible in the session log.
+        window.logEvent = logEvent;
         window.updatePreviewPattern = updatePreviewPattern;
 
         // Expose helper functions required by charting.js
@@ -5690,6 +5981,13 @@ const base =
         // Called when the user clicks Apply in the modal.
         function handleSpaceGroupApplied(rec) {
             currentSG = rec;
+            // The simulation caches the operator list per setting. Two settings
+            // of one group have the same NUMBER of operators and different
+            // operators, so a cache that survived this would expand the
+            // asymmetric unit with the previous setting's symmetry and give a
+            // structure that is wrong in a way the cell and the absences agree
+            // with.
+            if (window.SIM) { SIM.invalidateSymmetry(); SIM.refreshWyckoff(); }
             updateUIForSystemChange();
             if (typeof handleFullHklRecalculation === 'function') {
                 handleFullHklRecalculation();
@@ -6311,6 +6609,23 @@ if (spaceGroup && typeof spaceGroup.number === 'number' && params) {
 
  //   Worker & Main Thread Cache Update  
     if (cacheKey !== null && typeof self !== 'undefined') {
+         // BOUNDED. The key encodes the cell, the wavelength and the 2-theta
+         // range, so every drag of a lattice or range control mints a new one
+         // and the old entry -- a few thousand reflection objects -- was never
+         // released. Twenty-one steps of the 2-theta slider retained 45,000
+         // reflection objects in testing, and nothing ever evicted them.
+         //
+         // Insertion-ordered eviction rather than true LRU: the access pattern
+         // here is "the last few parameter values", which the oldest key
+         // approximates well enough, and a real LRU would need bookkeeping on
+         // every cache hit for no measurable gain.
+         const MAX_HKL_CACHE_ENTRIES = 24;
+         const keys = Object.keys(hklIndexCache);
+         if (keys.length >= MAX_HKL_CACHE_ENTRIES) {
+             for (let i = 0; i <= keys.length - MAX_HKL_CACHE_ENTRIES; i++) {
+                 delete hklIndexCache[keys[i]];
+             }
+         }
          hklIndexCache[cacheKey] = rawReflections;
     }
     //   End Cache Update
@@ -6583,6 +6898,15 @@ function calculateWilliamsonHall(params, hklList) {
             if (isFitting) {
                  console.warn("Fit already in progress.");
                  return;
+            }
+            // The Run bar is hidden while the Method is Simulation, so this is
+            // defensive rather than reachable through the UI -- but runFit()
+            // would otherwise post an algorithm string the worker has no case
+            // for, and a refinement that silently falls through to a default
+            // minimiser is exactly the kind of thing nobody notices.
+            if (window.SIM && SIM.isActive()) {
+                showToast('The Method is set to Simulation. Choose Levenberg-Marquardt or Parallel Tempering to refine.', 'error');
+                return;
             }
              if (!refinementWorker) {
                  showToast("Refinement worker is not available. Cannot start fit.", "error");
@@ -7005,8 +7329,15 @@ function debounce(func, wait) {
         }
 
         // Draw / refresh the theoretical stick pattern on the main chart.
+        // Exported for js/simulation.js, which calls it to hand the chart back
+        // when the Method is switched away from Simulation with no file open.
+        window.drawTheoreticalPreview = drawTheoreticalPreview;
         function drawTheoreticalPreview() {
             if (hasExperimentalData()) return;   // the data path owns the chart
+            // A stick pattern is what there is to show when the intensities
+            // are unknown. Under Simulation they are known, so the sticks are
+            // strictly less information than the curve already on screen.
+            if (window.SIM && SIM.isActive()) { SIM.render(); return; }
             if (!currentSG) return;
             if (!mainChart) initializeChart();   // empty-data init is fine
 
@@ -7207,7 +7538,16 @@ function debounce(func, wait) {
         pawleyButton.disabled = false;
         pawleyButton.title = "Run Pawley refinement with Parallel Tempering, converged with Levenberg-Marquardt.";
     } 
-    // 4. Disable for any other unknown state
+    // 4. Simulation is not a refinement. The run bar is hidden in that mode,
+    //    so this is only reachable in the instant between the selector
+    //    changing and simApplyMode() hiding the bar -- but "Select a valid
+    //    algorithm" would be wrong even for that instant: the selection is
+    //    perfectly valid, it just does not fit anything.
+    else if (selectedAlgorithm === 'sim') {
+        pawleyButton.disabled = true;
+        pawleyButton.title = "Simulation calculates a pattern from a structure; it does not fit one. Choose Levenberg-Marquardt or Parallel Tempering to refine.";
+    }
+    // 5. Disable for any other unknown state
     else {
         pawleyButton.disabled = true;
         pawleyButton.title = "Select a valid algorithm.";
@@ -7539,6 +7879,15 @@ function debounce(func, wait) {
         const handleFullHklRecalculation = () => {
             if (isFitting) return;
             invalidateHklCache();
+            // SIMULATION OWNS THE CHART WHEN IT IS ON.
+            //
+            // These two handlers are where every parameter edit in the left
+            // panel ends up -- the cell, the wavelengths, the zero point, the
+            // profile, the space group. Routing them here rather than wiring
+            // the simulation to each control separately is what makes the
+            // simulated pattern respond to a lattice change without
+            // simulation.js having to know which inputs exist.
+            if (window.SIM && SIM.isActive()) { SIM.render(); return; }
             if (!hasExperimentalData()) { drawTheoreticalPreview(); return; }
             if (!mainChart) return;
             generateMasterHklList();
@@ -7551,6 +7900,7 @@ function debounce(func, wait) {
         // Helper function for simple preview updates that DON'T require HKL recalculation.
         const handleSimplePreviewUpdate = () => {
             if (isFitting) return;
+            if (window.SIM && SIM.isActive()) { SIM.render(); return; }
             if (!hasExperimentalData()) { drawTheoreticalPreview(); return; }
             if (!mainChart) return;
             updatePreviewPattern();
@@ -8745,6 +9095,21 @@ async function printActiveTab() {
     const tab = el ? el.dataset.rptab : 'plot';
     const say = (m) => (typeof showToast === 'function') ? showToast(m, 'error') : alert(m);
 
+    // SIMULATION REPORTS NUMBERS, NOT A PICTURE.
+    //
+    // On the Plot tab while the Method is Simulation, this writes a pdCIF: the
+    // 2-theta axis, the calculated intensities, the reflection list and the
+    // asymmetric unit the pattern came from. A simulated pattern is a
+    // statement the program can make exactly, and the reason to produce one is
+    // almost always to compare it against something else or feed it to another
+    // program -- neither of which can be done with a PDF of a curve.
+    //
+    // Every other tab, and every other Method, still prints exactly what it
+    // printed before; the branch is deliberately narrow.
+    if (tab === 'plot' && window.SIM && SIM.isActive()) {
+        return SIM.exportPdCif();
+    }
+
     if (tab === 'lebail' || tab === 'pawley' || tab === 'cf' || tab === 'wyckoff') {
         if (!rpGetSelected(tab)) {
             const what = { lebail: 'Le Bail refinement', pawley: 'Pawley refinement',
@@ -9309,7 +9674,15 @@ function rpRenderCFRun() {
         // action bars belong to the fitting tabs and would be misleading here.
         const isSolutionTab = (tabName === 'charge-flipping' || tabName === 'wyckoff');
         document.querySelector('.bottom-actions').style.display = isSolutionTab ? 'none' : '';
-        document.getElementById('action-button-bar').style.display = isSolutionTab ? 'none' : '';
+        // Run Le Bail / Run Pawley. Hidden on the solution tabs because they
+        // have their own run controls, and hidden under Simulation because
+        // there is nothing to run. Without the second test this line would
+        // undo simApplyMode() every time the user touched a tab: the Atoms tab
+        // is not a solution tab, so the bar came back the moment it was
+        // opened -- on the one tab where a Run button makes least sense.
+        const simOn = !!(window.SIM && SIM.isActive());
+        document.getElementById('action-button-bar').style.display =
+            (isSolutionTab || simOn) ? 'none' : '';
     } 
 });
 
@@ -9593,6 +9966,12 @@ if (!currentSG && globalThis.SG_ENGINE) {
             controls.saveDataButton.disabled = false;
         }
 
+        // AFTER the default space group, the lattice UI and the chart exist.
+        // simInit() calls simApplyMode(), which draws immediately if the
+        // Method is already Simulation (a reloaded page, a restored selector),
+        // and that needs a chart to draw into and a group to expand with.
+        if (window.SIM) SIM.init();
+
         //   Wire the profile preset Load/Save buttons + probe for defaults.
         const _loadBtn = document.getElementById('profile-load-btn');
         const _saveBtn = document.getElementById('profile-save-btn');
@@ -9626,7 +10005,7 @@ if (!currentSG && globalThis.SG_ENGINE) {
            whole measured scan is often what is wanted. -->
       <div class="form-row" style="margin: 0 0 16px 0;">
         <label class="control-label" for="export-limit-range">Limit to the fitted 2&theta; range</label>
-        <input type="checkbox" id="export-limit-range" class="fit-checkbox" checked style="justify-self: start;">
+        <input type="checkbox" id="export-limit-range" class="fit-checkbox sim-keep" checked style="justify-self: start;">
       </div>
 
       <label class="control-label" for="export-filename" style="display:block; margin-bottom:6px;">File name</label>
@@ -9639,6 +10018,64 @@ if (!currentSG && globalThis.SG_ENGINE) {
     <div class="sg-modal-footer" style="display:flex; gap:8px; justify-content:flex-end; padding:14px 18px;">
       <button type="button" class="btn" id="export-cancel">Cancel</button>
       <button type="button" class="btn btn-primary" id="export-confirm">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ====================================================================
+     ATOM EDITOR (Method = Simulation)
+
+     Reuses the space-group modal's chrome (.sg-modal*, .sg-btn, .sg-list-*)
+     rather than defining its own. It is the same kind of object -- a picker
+     with a filtered list and an apply/cancel pair -- and a second set of modal
+     styles would be a second thing to keep in step with the theme.
+     ==================================================================== -->
+<div id="sim-atom-modal-overlay" class="sg-modal-overlay" role="dialog" aria-modal="true"
+     aria-labelledby="sim-atom-modal-title">
+  <div class="sg-modal" style="width: min(520px, 95vw);">
+    <div class="sg-modal-header" id="sim-atom-modal-title">Add atom</div>
+
+    <div class="sg-modal-body" style="display:block; padding:16px; overflow-y:auto;">
+
+      <label class="control-label" for="sim-el-search">Scatterer</label>
+      <input type="text" id="sim-el-search" class="control-input"
+             placeholder="Type to filter — e.g. T for Ti, Ti3+, Ti4+, Ta…"
+             autocomplete="off" spellcheck="false">
+      <div class="sim-el-list" id="sim-el-list"></div>
+
+      <div class="sim-modal-grid">
+        <div>
+          <label class="control-label" for="sim-f-x">x</label>
+          <input type="number" id="sim-f-x" class="control-input" step="0.001" value="0">
+        </div>
+        <div>
+          <label class="control-label" for="sim-f-y">y</label>
+          <input type="number" id="sim-f-y" class="control-input" step="0.001" value="0">
+        </div>
+        <div>
+          <label class="control-label" for="sim-f-z">z</label>
+          <input type="number" id="sim-f-z" class="control-input" step="0.001" value="0">
+        </div>
+        <div>
+          <label class="control-label" for="sim-f-occ">Occupancy</label>
+          <input type="number" id="sim-f-occ" class="control-input" step="0.01" min="0" max="1" value="1">
+        </div>
+        <div>
+          <label class="control-label" for="sim-f-biso">B<sub>iso</sub> (&Aring;&sup2;)</label>
+          <input type="number" id="sim-f-biso" class="control-input" step="0.01" min="0" value="0.5">
+        </div>
+      </div>
+
+      <!-- Live, and derived: the user sees what the symmetry will do to these
+           coordinates before committing them, rather than asserting a position
+           and meeting the mismatch later in the pattern. -->
+      <div id="sim-atom-wyck" class="sim-wyck-readout"></div>
+      <div id="sim-atom-error" class="sg-explain-warning" style="display:none; margin-top:10px;"></div>
+    </div>
+
+    <div class="sg-modal-footer">
+      <button type="button" class="sg-btn" id="sim-atom-cancel">Cancel</button>
+      <button type="button" class="sg-btn sg-btn-primary" id="sim-atom-ok">Add</button>
     </div>
   </div>
 </div>

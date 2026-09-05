@@ -396,6 +396,53 @@ function writePdCIF(b) {
         }
     }
 
+    // ---- the asymmetric unit ----------------------------------------------
+    //
+    // Present only for a simulation, which is the one mode in this program
+    // where the atoms are an INPUT rather than something inferred. A fit does
+    // not have them, and writing an empty loop would assert that the structure
+    // is known and vacant.
+    //
+    // These are standard core-CIF tags, not pdCIF ones, and that is correct:
+    // the structural model and the powder profile are different dictionaries
+    // describing the same block, which is exactly how a Rietveld pdCIF is
+    // written.
+    //
+    // B is written rather than U because B is what the panel holds and what
+    // the structure factor used. Converting to U here (U = B/8pi^2) would put
+    // a different number in the file from the one the pattern was computed
+    // with, distinguishable only by knowing which convention this writer
+    // chose. Both tags are legal; only one of them is what happened.
+    if (Array.isArray(b.atoms) && b.atoms.length) {
+        L.push('# The asymmetric unit the pattern was calculated from.',
+               '#   _atom_site_B_iso_or_equiv is B, not U:  B = 8 pi^2 U.',
+               '#   _atom_site_Wyckoff_symbol is DERIVED from the coordinates and the',
+               '#   space group, not asserted -- it is the multiplicity the structure',
+               '#   factor actually summed over.',
+               'loop_',
+               '    _atom_site_label',
+               '    _atom_site_type_symbol',
+               '    _atom_site_fract_x',
+               '    _atom_site_fract_y',
+               '    _atom_site_fract_z',
+               '    _atom_site_occupancy',
+               '    _atom_site_B_iso_or_equiv',
+               '    _atom_site_Wyckoff_symbol',
+               '    _atom_site_symmetry_multiplicity');
+        b.atoms.forEach((at, i) => {
+            const label = esc(at.siteLabel || `${String(at.label || 'X').replace(/[^A-Za-z]/g, '')}${i + 1}`);
+            L.push('  ' + [
+                label,
+                esc(at.label || '?'),
+                ioNum(at.x, 5), ioNum(at.y, 5), ioNum(at.z, 5),
+                ioNum(at.occ, 4), ioNum(at.biso, 4),
+                esc((at.wyckoff || '?').replace(/^\d+/, '') || '?'),
+                Number.isFinite(at.multiplicity) ? at.multiplicity : '?'
+            ].join('  '));
+        });
+        L.push('');
+    }
+
     // ---- the profile ------------------------------------------------------
     const haveCalc = !!(b.calc && b.calc.length === b.tth.length);
     const haveBkg = !!(b.bkg && b.bkg.length === b.tth.length);
@@ -424,12 +471,45 @@ function writePdCIF(b) {
                '_pd_meas_2theta_range_max       ' + ioNum(b.tth[b.tth.length - 1], 5));
         if (ax.uniform) L.push('_pd_meas_2theta_range_inc       ' + ioNum(ax.step, 6));
         L.push('_pd_meas_number_of_points       ' + b.tth.length, '');
+        // parsePdCifFile() reads the _pd_meas_2theta_range_* trio to rebuild an
+        // axis from a file whose loop has no angle column, so they are written
+        // for a simulation too even though nothing was measured. They describe
+        // the extent of the block, which is true either way.
     }
 
+    // A SIMULATION HAS NO MEASUREMENT, AND MUST NOT CLAIM ONE.
+    //
+    // _pd_meas_2theta_scan and _pd_meas_intensity_total are measured
+    // quantities. A pattern computed from a structure with no data file open
+    // has neither: the angles are calculated positions and there are no
+    // counts. Writing the axis under a _meas_ tag with a column of "?" beside
+    // it would state that a scan was performed and its intensities lost, which
+    // is a different thing from a scan that never happened -- and a reader
+    // computing a residual would be looking for observations that do not
+    // exist. The processed-angle tag is the honest one for a calculated axis.
+    const haveObs = !!(b.obs && b.obs.length === b.tth.length &&
+                       b.obs.some(v => Number.isFinite(v)));
+
+    // A SYNTHETIC OBSERVATION IS STILL LABELLED AS ONE.
+    //
+    // A simulated pattern with counting noise on it is written under the
+    // measured tags, because that is the only column a Rietveld program will
+    // fit and generating a test case is the whole reason for the noise. But
+    // the tags alone would then be indistinguishable from a real scan, and a
+    // file that quietly claims to be a measurement is the kind of thing that
+    // ends up in a paper. The comment costs nothing and is the first thing a
+    // human reads.
+    if (haveObs && b.syntheticObs) {
+        L.push('# WARNING: the intensities below are SIMULATED, not measured.',
+               '#   They were calculated from the structure in this block and then given',
+               '#   Poisson counting noise. _pd_calc_intensity_total is the same pattern',
+               '#   without the noise. Do not cite these as experimental data.',
+               '');
+    }
     L.push('loop_',
            '    _pd_proc_point_id',
-           '    _pd_meas_2theta_scan',
-           '    _pd_meas_intensity_total');
+           haveObs ? '    _pd_meas_2theta_scan' : '    _pd_proc_2theta_corrected');
+    if (haveObs) L.push('    _pd_meas_intensity_total');
     if (haveCalc) L.push('    _pd_calc_intensity_total');
     if (haveBkg)  L.push('    _pd_proc_intensity_bkg_calc');
     // A MISSING VALUE IS "?", NOT ZERO.
@@ -442,7 +522,8 @@ function writePdCIF(b) {
     // back as the difference. CIF has a null token; this uses it.
     const cifNum = (v, dp) => Number.isFinite(v) ? v.toFixed(dp) : '?';
     for (let i = 0; i < b.tth.length; i++) {
-        let row = `  ${i + 1}  ${ioNum(b.tth[i], 5)}  ${cifNum(b.obs[i], 3)}`;
+        let row = `  ${i + 1}  ${ioNum(b.tth[i], 5)}`;
+        if (haveObs) row += `  ${cifNum(b.obs[i], 3)}`;
         if (haveCalc) row += `  ${cifNum(b.calc[i], 3)}`;
         if (haveBkg)  row += `  ${cifNum(b.bkg[i], 3)}`;
         L.push(row);
@@ -990,10 +1071,26 @@ function parsePdCifFile(content) {
             tags.push(lines[i].trim().toLowerCase()); i++;
         }
         const iA  = tags.findIndex(t => ANGLE.includes(t));
-        const iI  = tags.findIndex(t => INTEN.includes(t));
+        const iM  = tags.findIndex(t => INTEN.includes(t));
         const iC  = tags.findIndex(t => CALC.includes(t));
         const iBk = tags.findIndex(t => BKG.includes(t));
+
+        // A PURELY CALCULATED PROFILE IS STILL A PROFILE.
+        //
+        // This used to require a MEASURED intensity column and skip any loop
+        // without one, which meant a simulated pattern -- written by this same
+        // program, with _pd_calc_intensity_total and no measurement because
+        // none exists -- was rejected as "no powder profile loop found". The
+        // writer and the reader disagreed about what a valid file is, and the
+        // program could not read back what it had just produced.
+        //
+        // The calculated column is used as the profile only when there is no
+        // measured one. Where both exist the measured column stays the
+        // profile and the calculated one stays the model, which is what every
+        // caller downstream assumes.
+        const iI = (iM >= 0) ? iM : iC;
         if (iI < 0) continue;      // not the profile loop; skip its body
+        const calcIsProfile = (iM < 0);
 
         while (i < lines.length) {
             const s = lines[i].trim();
@@ -1008,7 +1105,12 @@ function parsePdCifFile(content) {
                     // '?' (no value) parses to NaN through num(), which is
                     // right here too: a point the fit did not cover has no
                     // calculated intensity, not a calculated zero.
-                    calc.push(iC  >= 0 ? num(tok[iC])  : NaN);
+                    // When the calculated column IS the profile, do not also
+                    // report it as a separate calculated curve: that would
+                    // claim a fit exists whose calculated pattern happens to
+                    // match the data everywhere, and hasCalculatedData below
+                    // would send the file down the "restore a refinement" path.
+                    calc.push((iC >= 0 && !calcIsProfile) ? num(tok[iC]) : NaN);
                     bkg.push (iBk >= 0 ? num(tok[iBk]) : NaN);
                 }
             }
@@ -1019,7 +1121,8 @@ function parsePdCifFile(content) {
 
     if (!intensity.length) {
         throw new Error('No powder profile loop found. The file needs a loop_ containing ' +
-                        '_pd_meas_intensity_total (or _pd_proc_intensity_total).');
+                        '_pd_meas_intensity_total, _pd_proc_intensity_total or ' +
+                        '_pd_calc_intensity_total.');
     }
 
     // The range form: no angle column, the axis is implied.

@@ -237,6 +237,25 @@ function updateChart(netPeakPattern_sliced, background_sliced, hklList, params, 
 function updatePreviewPattern() {
     if (!mainChart || !workingData.isValid || isFitting) return;
 
+    // THE SIMULATION AND THE PREVIEW DRAW INTO THE SAME DATASET.
+    //
+    // Both write 'Simulation (Manual)', because both answer the same question
+    // -- what does this model predict? -- and a second curve with the same
+    // meaning could only ever contradict the first. They differ in where the
+    // reflection intensities come from: this function has none, so it fakes
+    // them from the local peak height in the data (see the FALLBACK_I block
+    // below), while the simulation computes them from the atoms.
+    //
+    // The guard is here rather than at each of this function's callers because
+    // there are six of them -- generateMasterHklList, updateBackgroundForPreview,
+    // redrawFitForNewRange, the spline editor, the profile presets -- and one
+    // that was missed would overwrite a real calculated pattern with a fitted
+    // guess at the moment the user changed a background point.
+    if (typeof window !== 'undefined' && window.SIM && window.SIM.isActive()) {
+        window.SIM.render();
+        return;
+    }
+
     const currentXMin = mainChart.scales.x.min;
     const currentXMax = mainChart.scales.x.max;
     const currentYMin = mainChart.scales.y.min;
@@ -724,6 +743,20 @@ function initCharting() {
 
         mainChart.options.scales.x.min = parseFloat(controls.tthMinSlider.value);
         mainChart.options.scales.x.max = parseFloat(controls.tthMaxSlider.value);
+
+        // A SIMULATION WITH NO DATA FILE HAS NO workingData, AND BOTH OF THE
+        // CALLS BELOW RETURN IMMEDIATELY WITHOUT IT.
+        //
+        // updatePlotRange() bails on workingData.tth.length === 0 and
+        // rescalePlot() on !workingData.isValid, so reset-view used to restore
+        // the x range from the sliders and then leave the y axis exactly where
+        // the zoom had left it -- the "unzoom does not unzoom" case. The
+        // simulation knows its own y extent, so it restores its own axes.
+        if (typeof window !== 'undefined' && window.SIM && window.SIM.isActive()
+            && !hasExperimentalData()) {
+            window.SIM.resetView();
+            return;
+        }
 
         updatePlotRange(true);
         rescalePlot(true);

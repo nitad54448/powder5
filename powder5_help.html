@@ -437,6 +437,17 @@ blockquote {
             <li><a href="#parameters-background" class="sub-link">Background (Spline)</a></li> <li><a href="#parameters-profile4" class="sub-link">Simple pVoigt</a></li>
             <li><a href="#parameters-profile3" class="sub-link">TCH (Anisotropic)</a></li>
             <li><a href="#parameters-profile-split" class="sub-link">Split pVoigt (Asymmetric)</a></li>
+            <li><a href="#simulation">Forward Simulation</a></li>
+            <li><a href="#sim-shared" class="sub-link">What it Shares with the Fit</a></li>
+            <li><a href="#sim-structure-factor" class="sub-link">The Structure Factor</a></li>
+            <li><a href="#sim-atoms-tab" class="sub-link">The Atoms Tab</a></li>
+            <li><a href="#sim-wyckoff" class="sub-link">Derived Wyckoff Positions</a></li>
+            <li><a href="#sim-load-cif" class="sub-link">Load CIF</a></li>
+            <li><a href="#sim-pattern-controls" class="sub-link">Step, Background &amp; Scale</a></li>
+            <li><a href="#sim-noise" class="sub-link">Counting Noise</a></li>
+            <li><a href="#sim-export" class="sub-link">Exporting a pdCIF</a></li>
+            <li><a href="#sim-scatterers" class="sub-link">Scattering Factors</a></li>
+            <li><a href="#sim-limitations" class="sub-link">Limitations</a></li>
             <li><a href="#space-group-test">Space-Group Determination</a></li>
             <li><a href="#charge-flipping">Charge Flipping</a></li>
             <li><a href="#cf-principle" class="sub-link">The Principle</a></li>
@@ -534,7 +545,7 @@ blockquote {
                     <tr><td><code>charge_flipping.wgsl</code></td><td>WebGPU kernels for the charge-flipping loop.</td></tr>
                     <tr><td><code>swarm_density.wgsl</code></td><td>Wyckoff swarm kernel scoring against a density map.</td></tr>
                     <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel scoring |F<sub>calc</sub>|&sup2; against the Pawley intensities. Used when no map is supplied.</td></tr>
-                    <tr><td><code>js/</code></td><td>All application modules - <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code>, <code>wyckoff_report.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
+                    <tr><td><code>js/</code></td><td>All application modules - <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code>, <code>wyckoff_report.js</code>, <code>simulation.js</code>, <code>scatterers.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
                     <tr><td><code>lib/</code></td><td>Vendor bundles: <code>chart.umd.min.js</code>, <code>three.min.js</code>, <code>jspdf.umd.min.js</code>, <code>html2canvas.min.js</code>.</td></tr>
                     <tr><td><code>sg/</code></td><td>Space-group database (all settings of the 230 groups).</td></tr>
                     <tr><td><code>scatters/</code></td><td>Tabulated atomic scattering factors, with <code>index.json</code> naming the available tables.</td></tr>
@@ -607,7 +618,10 @@ blockquote {
                     <tr><td><b>Right-click</b></td>
                         <td><b>Reset</b> the view to the range currently set by the
                             <strong>2&theta; Min/Max sliders</strong>, with the intensity axis
-                            returned to full scale.</td></tr>
+                            returned to full scale. Under
+                            <a href="#simulation">Simulation</a> with no data file open, the
+                            simulation restores its own vertical extent &mdash; the usual
+                            machinery needs a loaded pattern to work one out.</td></tr>
                     <tr><td><b>Ctrl + click</b></td>
                         <td>Add or remove a <b>background spline point</b> at the nearest
                             experimental point. Points cannot be added outside the current
@@ -779,6 +793,13 @@ Refinement: 64%</pre>
 
         <section id="algorithms">
             <h2>Minimization Algorithms</h2>
+            <div class="note">
+                The selector these live in is headed <strong>Method</strong>, and its last
+                entry is <a href="#simulation">Simulation</a> &mdash; which is not a
+                minimizer at all, but a forward calculation of a pattern from a structural
+                model. It shares this box because it answers the same question the box
+                exists for: what is the program doing with my model?
+            </div>
             <p>The goal of refinement is to minimize the sum-of-squares objective function, $\chi^2 = \sum w_i (y_{i,obs} - y_{i,calc})^2$, where $w_i$ is the statistical weight of each data point (typically $w_i = 1/y_{i,obs}$). This application provides several algorithms to navigate the complex parameter space and find the minimum of this function.</p>
 
             <h3 id="algorithms-lm">Levenberg-Marquardt (LM)</h3>
@@ -1410,6 +1431,518 @@ Refinement: 64%</pre>
         </section>
         <hr>
 
+
+        <section id="simulation">
+            <h2>Forward Simulation: Calculating a Pattern from a Structure</h2>
+            <p>
+                Every other mode in this program starts from a measured pattern and works
+                backwards. Le Bail and Pawley extract intensities from it; charge flipping and
+                the Wyckoff search turn those intensities into a structure. <strong>Simulation
+                runs the same physics forwards</strong> &mdash; atoms in, pattern out &mdash; and
+                needs no data file at all.
+            </p>
+            <p>
+                It is selected from the <strong>Method</strong> box on the control panel (the
+                block previously headed &ldquo;Refinement&rdquo;), where it sits last, after
+                Levenberg&ndash;Marquardt and Parallel Tempering. Those two are minimisers;
+                this one is not, and the controls that only make sense during a refinement hide
+                themselves when it is chosen.
+            </p>
+
+            <div class="note">
+                <strong>Nothing is lost when the fitting controls disappear.</strong> The
+                Background, Charge Flipping and Wyckoff tabs, the Run buttons, the iteration
+                count, the R-factor cards and every per-parameter <em>Fit</em> checkbox are
+                <em>hidden</em>, never disabled and never removed. Their inputs keep their
+                values, so switching into Simulation and back leaves your background anchors,
+                your charge-flipping settings, your Wyckoff composition and every refinement
+                flag exactly as they were. There is no separate store to save them into &mdash;
+                the DOM <em>is</em> the store.
+            </div>
+
+            <h3 id="sim-shared">What it shares with the fit</h3>
+            <p>
+                The simulation contains no profile function, no background, no
+                Lorentz&ndash;polarisation factor, no <em>hkl</em> generator and no peak-area
+                integral. Every one of those already exists in this program, is already used by
+                the refinement, and is called here unchanged:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Step</th><th>Function</th><th>Where it lives</th></tr></thead>
+                <tbody>
+                    <tr><td>Reflections and systematic absences</td><td><code>generateAndCacheHklIndices()</code></td><td><code>powder5.html</code></td></tr>
+                    <tr><td>2&theta; and <em>d</em> for each reflection</td><td><code>updateHklPositions()</code></td><td><code>js/crystal.js</code></td></tr>
+                    <tr><td>|F|<sup>2</sup> &rarr; peak height</td><td><code>reflectionHeightsFromFsq()</code></td><td><code>js/data_io.js</code></td></tr>
+                    <tr><td>Heights &rarr; profile</td><td><code>calculatePatternCPU()</code></td><td><code>js/profile.js</code></td></tr>
+                    <tr><td>Background</td><td><code>calculateTotalBackground()</code></td><td><code>js/profile.js</code></td></tr>
+                </tbody>
+            </table>
+            <p>
+                This is the whole point of the design. The header of <code>js/profile.js</code>
+                records what happened the last time this program had two implementations of the
+                pattern: the preview drew one and the fit minimised another, and every report
+                was self-consistent about the wrong answer. A simulation with its own profile
+                function would be a third such copy, and the failure would be worse than a
+                drifting fit &mdash; a simulated pattern that cannot be compared with a measured
+                one is not a simulation of anything. Because the two share the chain, a
+                simulated pattern and a Rietveld calculation of the same model are computed
+                through <em>identical</em> code.
+            </p>
+
+            <h3 id="sim-structure-factor">The only new physics</h3>
+            <p>
+                The one thing the fit did not already have is the structure factor. For each
+                reflection, summed over every atom in the unit cell:
+            </p>
+            <p>
+                $$F(hkl) = \sum_j n_j\, f_j(s)\, \exp\!\left(-B_j s^2/4\right)\,
+                          \exp\!\left(2\pi i\,(hx_j + ky_j + lz_j)\right)$$
+            </p>
+            <p>
+                with $n_j$ the site occupancy, $f_j$ the atomic scattering factor and $B_j$ the
+                isotropic displacement parameter. $|F|^2$ is then handed to
+                <code>reflectionHeightsFromFsq()</code>, which applies the multiplicity, the
+                Lorentz&ndash;polarisation factor and the K&alpha;<sub>2</sub> doublet exactly
+                as the Pawley extraction does in reverse.
+            </p>
+            <div class="note">
+                <strong>$s$ versus $s/2$.</strong> The Gaussian scattering coefficients are
+                tabulated against $\mathrm{stol} = \sin\theta/\lambda = s/2$, where $s = 1/d$.
+                The Debye&ndash;Waller factor uses the same argument, so
+                $\exp(-B\,\mathrm{stol}^2) = \exp(-B s^2/4)$. Getting this wrong leaves $f(0)$
+                untouched &mdash; so it survives a casual check &mdash; while making every atom
+                fall off at four times the correct rate.
+            </div>
+            <p>
+                Occupancy and the Debye&ndash;Waller factor both belong to the <em>site</em> and
+                depend on the reflection only through $s$, so they are folded into the site's
+                scattering factor once per reflection rather than once per atom. For a
+                high-symmetry structure that is the difference between 192 exponentials and one.
+            </p>
+
+            <h3 id="sim-atoms-tab">The Atoms tab</h3>
+            <p>
+                A new tab appears in the left panel while Simulation is active. It holds the
+                asymmetric unit &mdash; the only thing none of the other tabs already carry. The
+                cell, the space group, the wavelengths, the zero point and the peak shape all
+                come from the Sample and Profile tabs as usual.
+            </p>
+            <p>
+                Each atom is one collapsed line: its label, its Wyckoff position, and its
+                fractional coordinates. Clicking the line expands it into the editable fields;
+                clicking again folds it away. <strong>Expand all</strong> / <strong>Collapse
+                all</strong> appears once there is more than one atom. A newly added atom opens
+                automatically, since you are almost certainly about to adjust it; a structure
+                loaded from a CIF arrives collapsed, because expanding fifty sites at once
+                buries the thing you actually want to see.
+            </p>
+            <p>
+                The collapsed line keeps the coordinates visible because that is what gets
+                compared down a list. Occupancy and $B$ appear there <em>only when they differ
+                from 1.000 and 0.50</em>, so an unusual value stands out instead of being lost
+                in twenty identical repetitions.
+            </p>
+            <p>
+                Every field is live: x, y, z, occupancy, $B_{iso}$ and the element are edited in
+                place and the pattern follows through a short debounce. Watching an intensity
+                change as an atom moves is how a structure gets understood, and no dialog that
+                has to be opened and dismissed per edit can give you that.
+            </p>
+
+            <h4>Physical ranges</h4>
+            <table class="param-table">
+                <thead><tr><th>Field</th><th>Range</th><th>Why</th></tr></thead>
+                <tbody>
+                    <tr><td>Occupancy</td><td>0 to 1</td>
+                        <td>A fraction of a site. Outside that interval it is not a small error but a different quantity.</td></tr>
+                    <tr><td>$B_{iso}$</td><td>0 to 10 &Aring;<sup>2</sup></td>
+                        <td>Above roughly 10 the form factor has fallen so far by mid-angle that the atom stops contributing anything the pattern can show. Values above it are almost always a typo, or a $U$ entered into a $B$ box &mdash; note $B = 8\pi^2 U$, so a perfectly ordinary $U$ of 0.0063 becomes a $B$ of 0.50, while a $U$ mistaken for a $B$ gives 79.</td></tr>
+                </tbody>
+            </table>
+            <div class="note">
+                <strong>Out-of-range values are clamped for the calculation immediately, and the
+                box is corrected only on commit.</strong> Rewriting the field on every keystroke
+                fights the typist: clearing it to type &ldquo;0.75&rdquo; passes through the
+                empty string, and typing &ldquo;10&rdquo; into a field capped at 10 passes
+                through &ldquo;1&rdquo;. So the value the pattern uses is always inside the
+                physical range, while the text stays whatever you are typing until focus leaves
+                or you press Enter &mdash; at which point the box is rewritten to the value that
+                was actually used. The two can never disagree about the pattern at any moment,
+                and can never disagree about anything once you stop typing.
+            </div>
+
+            <h4 id="sim-add-atom">Adding an atom</h4>
+            <p>
+                <strong>Add atom</strong> opens a picker. Type into the search box to filter the
+                scattering table: <code>T</code> gives Ti, Ti<sup>2+</sup>, Ti<sup>3+</sup>,
+                Ti<sup>4+</sup>, Tc, Te, Tb, Tm, Ta, Tl, Tl<sup>1+</sup>, Th. Ions are listed
+                immediately after the neutral atom they came from rather than in a separate
+                block, because someone typing &ldquo;T&rdquo; is looking for an element and then
+                deciding its charge. Matching is on the <em>prefix</em>, not a substring, so
+                typing <code>O</code> gives O and O<sup>2&minus;</sup> and not Co, Mo, Ho and Po.
+                Typing a complete label selects it, so <code>Ti4+</code> followed by Enter adds
+                the atom without touching the mouse.
+            </p>
+            <p>
+                The dialog shows, live, which Wyckoff position the coordinates you are entering
+                will land on &mdash; you find out what the symmetry does to them <em>before</em>
+                committing, rather than asserting a position and meeting the mismatch later in
+                the pattern.
+            </p>
+
+            <h3 id="sim-wyckoff">The Wyckoff position is derived, never entered</h3>
+            <p>
+                The letter beside each atom's name is computed from its coordinates and the
+                current space group. It is not a label you assert. The pattern is calculated
+                from the coordinates either way, so a typed letter could only ever be an
+                assertion the coordinates might not support; showing the derived value instead
+                makes the constraint visible. Move an atom onto a mirror and watch the
+                multiplicity halve.
+            </p>
+            <p>
+                The multiplicity decides and the projection only breaks ties. The orbit of the
+                point under the full operator set <em>is</em> the multiplicity &mdash; it is the
+                number of atoms the structure factor will actually sum over &mdash; so the letter
+                is looked up among the positions of that multiplicity and nowhere else. Several
+                positions can share one multiplicity (<em>Pnma</em> has 4<em>a</em>, 4<em>b</em>
+                and 4<em>c</em>), and those are separated by projecting onto each candidate's
+                <code>special_op</code>. The test runs over <em>every symmetry image</em> of the
+                point, not just the coordinates as typed, because <code>special_op</code>
+                describes one representative: a point at $(0,0,\tfrac{1}{2})$ in $P112_1/a$ is on
+                2<em>c</em>, but its representative is $(\tfrac{1}{2},0,0)$ and only an image of
+                the point ever reaches it.
+            </p>
+            <div class="warning-note">
+                <strong>One tolerance, used twice.</strong> The atom orbit and the Wyckoff letter
+                are computed with the same distance tolerance, 0.02 &Aring;. They have to be: if
+                the orbit merged two images that the Wyckoff test called distinct, the panel
+                would report a multiplicity the pattern was not computed with. A site on a mirror
+                scatters half as strongly as one that is merely near it, so the disagreement
+                would be a factor of two in that atom's contribution with nothing on screen to
+                show for it. The practical consequence is that coordinates snap onto a special
+                position within 0.02 &Aring; &mdash; about 0.007 fractional in a 3 &Aring; cell
+                &mdash; so scanning an atom off a mirror has a discontinuity there.
+            </div>
+            <p>
+                Centring is handled by crossing the setting's <code>sym_ops</code> with its
+                <code>centring_translations</code> and deduplicating, which is correct whether or
+                not the database already folds centring into the operator list. Dropping the
+                centring would not be a subtle error: an F-centred cell has four times the atoms
+                of its primitive subgroup, so the pattern would come out with the right peak
+                <em>positions</em> and uniformly wrong intensities &mdash; the hardest kind of
+                error to see.
+            </p>
+
+            <h3 id="sim-load-cif">Load CIF</h3>
+            <p>
+                <strong>Load CIF</strong> reads an ordinary crystal-structure CIF and populates
+                the atom list. It is a structure reader, not a pattern reader &mdash;
+                <code>parsePdCifFile()</code> in <code>js/data_io.js</code> handles powder
+                profiles, this handles the <code>_atom_site_</code> loop and the cell.
+            </p>
+            <ul>
+                <li><b>Standard uncertainties are stripped</b>, both from tags and from inside
+                    loops: <code>0.30478(5)</code> is a value, not a syntax error.</li>
+                <li><b>Semicolon text fields are folded</b> before parsing, so a publication
+                    title containing the words <code>loop_</code> or <code>data_</code> cannot
+                    derail the reader.</li>
+                <li><b>Only the first data block is read.</b> Multi-block CIFs are common, and
+                    silently merging their atom lists would produce a structure that exists in
+                    none of them. The status line says how many blocks were found.</li>
+                <li><b>$U$ is converted to $B$</b> when the file carries
+                    <code>_atom_site_U_iso_or_equiv</code>, using $B = 8\pi^2 U$.</li>
+                <li><b>The scatterer is resolved from <code>_atom_site_type_symbol</code>
+                    first</b>, verbatim, since ionic spellings such as <code>Ti4+</code> already
+                    match the table. Failing that the charge is dropped, because a table without
+                    Ti<sup>4+</sup> still scatters perfectly well as Ti and a site contributing
+                    nothing is a worse answer than one with a slightly wrong form factor. The
+                    site <em>label</em> is a last resort &mdash; <code>Ca1</code> carries the
+                    element only by convention, and that convention breaks often enough
+                    (<code>M1</code>, <code>OW</code>) that guessing silently would be worse than
+                    reporting the site as unidentified. Two-letter readings are tried before
+                    one-letter ones, so <code>OW1</code> resolves to O.</li>
+            </ul>
+            <p>
+                <strong>The cell and the space group are applied with the atoms.</strong>
+                Fractional coordinates are fractions of a particular cell under a particular set
+                of operators and mean nothing apart from those two, so the whole triple loads
+                together. The space group goes first, because it decides which lattice boxes
+                exist &mdash; a cubic group leaves only <em>a</em>, and writing the angles before
+                the system is set would put them into inputs that are about to be destroyed.
+            </p>
+            <div class="note">
+                <strong>An IT number does not name a setting.</strong> Space group 14 has six of
+                them, with different operators and different absences from the same cell. The
+                Hermann&ndash;Mauguin string picks the setting and the number only narrows the
+                search; falling straight to the first listed setting would silently load
+                <em>P</em>2<sub>1</sub>/<em>c</em> for a file that said
+                <em>P</em>2<sub>1</sub>/<em>n</em> &mdash; a structure that still produces a
+                perfectly plausible pattern.
+            </div>
+            <p>
+                Loading a CIF <em>replaces</em> the atom list. A CIF is one whole structure, and
+                merging it into whatever was already there would build a phase that exists in
+                neither file.
+            </p>
+
+            <h3 id="sim-pattern-controls">Pattern controls</h3>
+            <table class="param-table">
+                <thead><tr><th>Control</th><th>Range</th><th>Meaning</th></tr></thead>
+                <tbody>
+                    <tr><td><b>Step</b></td><td>0.0001 to 0.1&deg;</td>
+                        <td>Step of the calculated 2&theta; axis. Used only when no data file is open.</td></tr>
+                    <tr><td><b>Background</b></td><td>0 to 100</td>
+                        <td>A flat background under the pattern, in the same units as Max intensity. Used only when no data file is open.</td></tr>
+                    <tr><td><b>Noise</b></td><td>0 to 10</td>
+                        <td>Counting statistics, in units of themselves. See below. Used only when no data file is open.</td></tr>
+                    <tr><td><b>Max intensity</b></td><td>&gt; 0</td>
+                        <td>The pattern is normalised so its tallest peak reaches this height above background.</td></tr>
+                    <tr><td><b>Match data</b></td><td>on / off</td>
+                        <td>With a pattern loaded, scale the simulation so its tallest peak sits on the tallest measured peak above background.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                The 2&theta; <em>range</em> is the one on the Sample tab. Those sliders are
+                normally disabled until a file is loaded, because outside Simulation they select
+                a slice <em>of</em> the data; here they are enabled with no file open, since the
+                range is the only thing that says how much pattern to compute. With data loaded
+                they are left completely alone, which is what makes the simulated pattern come
+                out on the same interval a fit would use.
+            </p>
+            <div class="note">
+                <strong>Why the background and the noise switch off when a file is open.</strong>
+                With a measurement on screen the background under the curve is the real one, from
+                the spline; adding a synthetic constant on top of it would be inventing counts.
+                And scattering a calculated curve that is being compared against data destroys
+                the comparison. Both are tools for generating a synthetic dataset, which is a
+                thing you do when there is no real one.
+            </div>
+            <div class="warning-note">
+                <strong>The step is capped at 20 000 points.</strong> 0.0001&deg; across
+                5&ndash;120&deg; is 1.15 million points, and the profile is the most expensive
+                part of a redraw &mdash; that request would freeze the tab for the best part of a
+                minute on every keystroke. The fine end of the range is meant for a narrow
+                window, where it fits under the cap comfortably (0.0001&deg; across 2&deg; is
+                exact). Ask for it across the whole pattern and you get the finest step that does
+                fit, and the status line tells you which.
+            </div>
+
+            <h3 id="sim-noise">Counting noise</h3>
+            <p>
+                The physics settles the design here. A diffractometer counts photons, and photon
+                counting is a Poisson process: <strong>the variance of a measured intensity is
+                the intensity</strong>, so the scatter goes as $\sqrt{I}$. That single fact is
+                what makes a simulated pattern behave like a real one &mdash; strong peaks noisy
+                in absolute terms and clean in relative terms, weak peaks the other way round,
+                and a background whose own scatter sets the detection limit.
+            </p>
+            <p>
+                Gaussian noise of one fixed width reproduces none of that. It would swamp the
+                weak reflections and be invisible on the strong ones, and any program weighting
+                by $1/\sigma^2$ &mdash; which is what a Rietveld refinement does &mdash; would be
+                handed a wrong weight at every point.
+            </p>
+            <p>
+                So the field is expressed <em>in units of the counting statistics themselves</em>:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Value</th><th>Meaning</th></tr></thead>
+                <tbody>
+                    <tr><td><code>0</code></td><td>A clean calculated curve. The default.</td></tr>
+                    <tr><td><code>1</code></td><td>Exactly the scatter a real detector would give for this many counts, $\sigma = \sqrt{I}$.</td></tr>
+                    <tr><td><code>&gt; 1</code></td><td>A noisier measurement at the same intensity scale &mdash; a shorter count, a worse instrument.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                Noise is applied to peaks <em>plus</em> background, because the detector counts
+                both: a background of 10 carries its own scatter of about 3, and that is what
+                sets how weak a peak can be and still be seen.
+            </p>
+            <div class="note">
+                <strong>The draw is deterministic, and that is deliberate twice over.</strong> On
+                screen, noise redrawn on every keystroke would make the whole curve shimmer while
+                you type an occupancy &mdash; burying the change you are looking for in the one
+                you are not. In the file, a synthetic dataset whose noise cannot be reproduced is
+                a poor test case: with a fixed seed, a disagreement between two programs reading
+                it is a disagreement about the programs and not about which random numbers each
+                run happened to draw.
+            </div>
+            <div class="note">
+                <strong>Gaussian approximation, not a true Poisson draw.</strong> A Poisson
+                variate has no free width &mdash; its scatter is fixed by the count &mdash; so the
+                only way to ask for &ldquo;twice the noise at this intensity&rdquo; is to widen a
+                Gaussian. The approximation is good above roughly 10 counts, which is where the
+                default background deliberately sits. Negative results are clipped to zero, since
+                counts cannot be negative and some readers reject them; at default settings that
+                fires on about 0.08&#37; of points and biases those slightly upward, which is the
+                honest trade against writing a physically impossible number.
+            </div>
+
+            <h3 id="sim-export">Exporting: the report button writes a pdCIF</h3>
+            <p>
+                On the <strong>Plot</strong> tab, while the Method is Simulation, the report
+                button produces a <strong>pdCIF</strong> instead of a PDF. Every other tab, and
+                every other Method, prints exactly what it printed before.
+            </p>
+            <p>
+                A PDF of a calculated curve is a picture of something the program can state
+                exactly, and the numbers are the point of a simulation &mdash; they are what gets
+                compared against a measurement, fed to another program, or checked by hand. The
+                file carries the 2&theta; axis, the intensities, the reflection list with
+                |F|<sup>2</sup>, the cell, the space group with its Hall symbol, and the
+                asymmetric unit.
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Situation</th><th>Angle tag</th><th>Intensity tags</th></tr></thead>
+                <tbody>
+                    <tr><td>Noise = 0, no data file</td>
+                        <td><code>_pd_proc_2theta_corrected</code></td>
+                        <td><code>_pd_calc_intensity_total</code></td></tr>
+                    <tr><td>Noise &gt; 0, no data file</td>
+                        <td><code>_pd_meas_2theta_scan</code></td>
+                        <td><code>_pd_meas_intensity_total</code> (noisy) and <code>_pd_calc_intensity_total</code> (clean)</td></tr>
+                    <tr><td>Data file loaded</td>
+                        <td><code>_pd_meas_2theta_scan</code></td>
+                        <td><code>_pd_meas_intensity_total</code> (your data) and <code>_pd_calc_intensity_total</code> (the simulation)</td></tr>
+                </tbody>
+            </table>
+            <p>
+                A simulation with no measurement must not claim one.
+                <code>_pd_meas_2theta_scan</code> and <code>_pd_meas_intensity_total</code> are
+                measured quantities; writing a calculated axis under a <code>_meas_</code> tag
+                with a column of <code>?</code> beside it would state that a scan was performed
+                and its intensities lost, which is a different thing from a scan that never
+                happened.
+            </p>
+            <p>
+                With noise switched on, though, the pattern <em>is</em> a synthetic observation
+                &mdash; that is what noise means &mdash; so it is written as the observed column
+                with the noise-free curve alongside as the calculated one. That is exactly the
+                pair another Rietveld program needs: fit the observation, and check that it
+                recovers the model that produced it. The block carries an explicit
+                <strong>&ldquo;these intensities are SIMULATED, not measured&rdquo;</strong>
+                comment, because tags alone would be indistinguishable from a real scan and a
+                file that quietly claims to be a measurement is the kind of thing that ends up in
+                a paper.
+            </p>
+            <p>
+                The atom-site loop uses standard core-CIF tags rather than pdCIF ones, which is
+                correct: the structural model and the powder profile are different dictionaries
+                describing the same block, exactly as in a Rietveld pdCIF. $B$ is written rather
+                than $U$, because $B$ is what the panel holds and what the structure factor used;
+                converting here would put a different number in the file from the one the pattern
+                was computed with, distinguishable only by knowing which convention the writer
+                chose. <code>_atom_site_Wyckoff_symbol</code> gets the letter and
+                <code>_atom_site_symmetry_multiplicity</code> gets the number, per the dictionary.
+            </p>
+            <div class="note">
+                <strong>The file this program writes is a file this program can read.</strong>
+                <code>parsePdCifFile()</code> previously required a <em>measured</em> intensity
+                column and would reject a noise-free simulation &mdash; the writer and the reader
+                disagreed about what a valid file is. The calculated column now serves as the
+                profile when there is no measured one, without being double-reported as a fit.
+            </div>
+
+            <h3 id="sim-scatterers">Scattering factors</h3>
+            <p>
+                Tables live in <code>scatters/</code>, with <code>index.json</code> naming what is
+                available and which is preferred. They are five-term Gaussian parameterisations,
+                $f(\mathrm{stol}) = c + \sum_i a_i \exp(-b_i\,\mathrm{stol}^2)$, loaded lazily on
+                first entry into Simulation so that a user who never opens it pays nothing.
+            </p>
+            <p>
+                The picker lists exactly what is tabulated, which is the quickest way to find out
+                whether a particular ion is present. Not every oxidation state is: the ion lists
+                in these tables are finite, and a highly charged cation such as
+                S<sup>6+</sup> is often absent. That is usually not a problem. A bare
+                S<sup>6+</sup> is a closed-shell Ne core, which describes a covalently bonded
+                sulfate sulfur poorly, and the difference between the ionic and neutral form
+                factors is confined to low $\sin\theta/\lambda$ &mdash; well below what a powder
+                pattern distinguishes. Neutral S is standard practice for sulfates. If an ion you
+                want is missing from the preferred table, the other table in
+                <code>scatters/</code> has a different ion list.
+            </p>
+            <div class="warning-note">
+                <strong>A missing scatterer contributes nothing, and says so.</strong> The status
+                line names any label that could not be found rather than silently substituting a
+                point atom. Point atoms are not a degraded pattern, they are a different one
+                &mdash; no angular fall-off means every high-angle reflection comes out several
+                times too strong &mdash; and a user comparing that against a measurement would
+                read the discrepancy as a wrong structure.
+            </div>
+            <p>
+                Only X-ray scattering is wired up. The neutron table loads but there is no
+                radiation selector, so neutron simulation is not yet available.
+            </p>
+
+            <h3 id="sim-display">Reading the plot</h3>
+            <p>
+                The simulation draws into the chart's existing <em>Simulation</em> dataset rather
+                than adding a tenth curve &mdash; that dataset already means &ldquo;a pattern
+                computed from the model rather than fitted to the data&rdquo;, and a second curve
+                with the same meaning could only ever disagree with the first.
+            </p>
+            <p>
+                With no atoms defined the plot falls back to a stick pattern of reflection
+                positions. That is the honest answer as well as a convenient one: with no atoms,
+                the positions <em>are</em> the whole of what the model predicts.
+            </p>
+            <p>
+                Above 2000 reflections the K&alpha; tick strip shows only the strongest, and the
+                status line says how many were omitted. <strong>The pattern always uses all of
+                them</strong> &mdash; the cap is on the tick marks only. Past that density the
+                ticks are a solid band that tells the eye nothing, while handing the renderer one
+                layout element per reflection is what turns a large cell over a wide range from
+                slow into unusable.
+            </p>
+            <p>
+                Right-click resets the view, as everywhere else. With no data file open the
+                simulation restores its own axes, since the usual machinery needs a loaded
+                pattern to work out the vertical extent.
+            </p>
+
+            <h3 id="sim-log">The session log</h3>
+            <p>
+                Entering and leaving Simulation is logged, along with the full model at the
+                moment of entry; so is every atom added, edited, removed or loaded from a CIF,
+                and every pdCIF written. Edits are logged on <em>commit</em> rather than per
+                keystroke &mdash; a line for every character typed into a coordinate box is not a
+                record of what you did, it is a record of you typing, and it would bury the
+                entries that matter.
+            </p>
+
+            <h3 id="sim-limitations">Limitations</h3>
+            <p>
+                The simulation is deliberately a simple one. It is a forward calculation of an
+                ideal powder from an ideal specimen, and the following are <em>not</em> modelled:
+            </p>
+            <table class="param-table">
+                <thead><tr><th>Not modelled</th><th>Consequence</th></tr></thead>
+                <tbody>
+                    <tr><td>Preferred orientation</td>
+                        <td>Intensities are those of a perfectly random powder. Plate-like or needle-like specimens will not match.</td></tr>
+                    <tr><td>Absorption and microabsorption</td>
+                        <td>No $\mu R$ correction; no allowance for contrast between phases.</td></tr>
+                    <tr><td>Anomalous dispersion ($f'$, $f''$)</td>
+                        <td>Form factors are the real, wavelength-independent tabulated values. Near an absorption edge this is wrong, and Friedel pairs are exactly equal regardless.</td></tr>
+                    <tr><td>Anisotropic displacement parameters</td>
+                        <td>One isotropic $B$ per site. A structure with strongly anisotropic motion will show intensity errors that grow with angle.</td></tr>
+                    <tr><td>Multiple phases</td>
+                        <td>One structure at a time. There is no phase-fraction machinery.</td></tr>
+                    <tr><td>Charge balance</td>
+                        <td>Occupancies are whatever you type. Nothing checks that the composition is electroneutral or that partial occupancies on shared sites sum sensibly.</td></tr>
+                    <tr><td>Neutron scattering</td>
+                        <td>X-ray only, as noted above.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                What it <em>is</em> good for: checking that a candidate structure produces the
+                pattern you measured, seeing which reflections a particular atom controls,
+                generating clean or noisy test data for other software, and building intuition
+                about how coordinates, occupancies and displacement parameters move intensity
+                around.
+            </p>
+        </section>
 
         <section id="space-group-test">
             <h2>Probabilistic Space-Group Determination</h2>
