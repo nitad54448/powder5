@@ -281,10 +281,8 @@ function refineCoordinatesAgainstPawley(o) {
     const rows = (o.obsRows || []).filter(r =>
         Number.isFinite(r.Fo2) && r.Fo2 >= 0 && Number.isFinite(r.d) && r.d > 0 &&
         !(r.h === 0 && r.k === 0 && r.l === 0));
-    if (rows.length < 3 * nSites) {
-        return { error: `Only ${rows.length} usable observations for ${nSites} sites; ` +
-                        `the refinement would be underdetermined.` };
-    }
+
+
 
     const groups = crGroupReflections(rows, opt.overlapTol, opt.fwhmAt, opt.overlapFwhmFrac);
     const B = Number.isFinite(o.overallB) ? o.overallB : 0;
@@ -341,38 +339,49 @@ function refineCoordinatesAgainstPawley(o) {
     };
     project(cur);
 
-    // WEIGHTS: 1/sigma^2 where the decomposition gave a sigma, 1/I otherwise.
-    //
-    // 1/I is counting statistics, and counting statistics are the wrong model
-    // for a Pawley intensity. The uncertainty on one of these numbers comes
-    // from the DECOMPOSITION, not from how many photons arrived, and for a
-    // heavily overlapped reflection it is far larger than sqrt(I). A measured
-    // 200 with an ESD of 500 gets weight 1/200 = 5e-3 under counting
-    // statistics and 1/500^2 = 4e-6 from its actual uncertainty -- three
-    // orders of magnitude of over-trust in a number consistent with anything
-    // from -300 to 700.
-    //
-    // This is the same rule swPackReflections applies in the search, so the
-    // two stages now agree about how much each observation is worth. They did
-    // not before: the search down-weighted a poorly determined reflection a
-    // hundredfold while the refinement still listened to it.
-    //
-    // The 1/I fallback keeps its floor, so a near-zero observation with no
-    // sigma cannot dominate by having an enormous weight on mostly noise.
-    const Imax = groups.reduce((m, g) => Math.max(m, g.Iobs), 0) || 1;
-    let nSigmaWeighted = 0;
-    const wt = groups.map(g => {
-        if (Number.isFinite(g.varObs) && g.varObs > 0) { nSigmaWeighted++; return 1 / g.varObs; }
-        return 1 / Math.max(g.Iobs, 1e-4 * Imax);
-    });
-    // Only the RATIOS of the weights matter to the least squares, and mixing
-    // 1/sigma^2 with 1/I puts two different scales in one array. Normalising
-    // to a mean of one keeps chi-square a readable number instead of one that
-    // depends on which fallback happened to dominate.
-    {
-        const meanW = wt.reduce((a, b) => a + b, 0) / Math.max(1, wt.length);
-        if (meanW > 0) for (let i = 0; i < wt.length; i++) wt[i] /= meanW;
+// WEIGHTS: use exactly the same mixed-ESD policy as swPackReflections.
+//
+// 1/I is counting statistics, and counting statistics are the wrong model
+// for a Pawley intensity. The uncertainty on one of these numbers comes
+// from the DECOMPOSITION, not from how many photons arrived, and for a
+// heavily overlapped reflection it is far larger than sqrt(I). A measured
+// 200 with an ESD of 500 gets weight 1/200 = 5e-3 under counting
+// statistics and 1/500^2 = 4e-6 from its actual uncertainty -- three
+// orders of magnitude of over-trust in a number consistent with anything
+// from -300 to 700.
+//
+// This is the same rule swPackReflections applies in the search, so the
+// two stages now agree about how much each observation is worth. They did
+// not before: the search down-weighted a poorly determined reflection a
+// hundredfold while the refinement still listened to it.
+//
+// If at least one complete group has an ESD, incomplete groups are not
+// promoted to a different statistical model: they receive zero weight in
+// both search and refinement. If none has an ESD, both stages are
+// unweighted. This keeps the two objectives on the same observations.
+const nSigmaWeighted = groups.reduce((n, g) =>
+    n + (Number.isFinite(g.varObs) && g.varObs > 0 ? 1 : 0), 0);
+
+const wt = groups.map(g => nSigmaWeighted > 0
+    ? (Number.isFinite(g.varObs) && g.varObs > 0 ? 1 / g.varObs : 0)
+    : 1);
+
+// Only weight ratios matter. Normalize the positive weights to mean one;
+// excluded groups remain exactly zero.
+{
+    const positive = wt.filter(w => w > 0);
+    const meanW = positive.reduce((a, b) => a + b, 0) /
+                  Math.max(1, positive.length);
+
+    if (meanW > 0) {
+        for (let i = 0; i < wt.length; i++) {
+            if (wt[i] > 0) wt[i] /= meanW;
+        }
     }
+}
+
+
+
 
     // THE JACOBIAN HAS TO LIVE IN THE CONSTRAINED SPACE.
     //
@@ -395,6 +404,31 @@ function refineCoordinatesAgainstPawley(o) {
         if (!s.w) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
         return wyckoffProjector(s.w).P;
     });
+
+    // The rank of each Wyckoff projector is the number of genuine
+// coordinate degrees of freedom for that site.
+const nFree = projMat.reduce(
+    (count, P) =>
+        count + Math.round(P[0] + P[4] + P[8]),
+    0
+);
+
+const nObsUsed = wt.reduce(
+    (count, weight) => count + (weight > 0 ? 1 : 0),
+    0
+);
+
+// Coordinates plus the analytically fitted intensity scale consume
+// nFree + 1 degrees of freedom. Require a residual degree of freedom.
+if (nObsUsed <= nFree + 1) {
+    return {
+        error:
+            `Only ${nObsUsed} independently weighted powder group(s) ` +
+            `survive for ${nFree} free coordinate parameter(s) plus ` +
+            `the intensity scale; the refinement is underdetermined.`
+    };
+}
+
     const applyPT = (g) => {
         for (let i = 0; i < nSites; i++) {
             const P = projMat[i], b = i * 3;
@@ -613,8 +647,6 @@ function refineCoordinatesAgainstPawley(o) {
     // diag(1,0,1) = 2, a general position gives 3, and a fully fixed site like
     // 4b at (0,0,1/2) gives 0. Taken from the matrix rather than a database
     // field, so it stays correct even where n_free is missing.
-    const nFree = projMat.reduce(
-        (acc, P) => acc + Math.round(P[0] + P[4] + P[8]), 0);
 
     return {
         sites: cur.map(s => ({ ...s })),
@@ -626,7 +658,7 @@ function refineCoordinatesAgainstPawley(o) {
         weighted: true,
         nSigmaWeighted, nGroupsTotal: groups.length,
         iterations: iter + 1, converged,
-        nObs: groups.length,
+        nObs: nObsUsed,
         nParams: nFree,        // free coordinates, after the Wyckoff constraints
         nAmbient: nP,          // 3N, the space the normal equations live in
         shifts

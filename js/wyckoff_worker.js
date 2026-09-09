@@ -728,7 +728,7 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
     // same float -- so a mismatch is invisible downstream and arrives as a
     // report claiming wR2 = 0.56% next to a refinement wR of 92%. The marker
     // is the only point at which the two versions can still be compared.
-    const KERNEL_FOM = 'wR2-scaled-v1';
+    const KERNEL_FOM = 'wR2-scaled-v2';
     if (!swarmShaderSrc.includes('KERNEL_FOM: ' + KERNEL_FOM)) {
         const got = (swarmShaderSrc.match(/KERNEL_FOM:\s*(\S+)/) || [])[1] || 'none';
         throw new Error(
@@ -1005,96 +1005,144 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
         //  silently dropped: if every candidate fails, that is a statement
         //  about the composition or the floor, and the user needs to see it.
         // ------------------------------------------------------------------
-        let cfWorstContact = null;
-        const floorOf = (typeof out.floors === 'function')
-            ? out.floors
-            : () => (Number.isFinite(job.minContact) ? job.minContact : 1.0);
+        
+        const floorOf =
+    typeof out.floors === 'function'
+        ? out.floors
+        : () => (
+            Number.isFinite(job.minContact)
+                ? job.minContact
+                : 1.0
+        );
 
-        const worstContact = (sites) => {
-            // Expand to the full cell, then take the shortest unlike-pair
-            // distance as a fraction of that pair's floor. < 1 means illegal.
-            //
-            // THE DEDUP IS PER SITE, NOT PER ELEMENT.
-            //
-            // Its job is to collapse the duplicate images a SPECIAL POSITION
-            // generates: a site of multiplicity 8 in a group of order 192 comes
-            // back from applyOp 192 times and is 8 distinct points. Scoping the
-            // test by element instead made it also collapse two INDEPENDENT
-            // atoms of the same element that had landed on the same point --
-            // and those are precisely a structure that should be rejected. Two
-            // oxygens sharing one position (reachable whenever Max reuse / pos
-            // is above 1) were merged into one atom, the 0 A contact between
-            // them vanished with the merge, and the candidate was passed as
-            // legal. Keying on the site index cannot make that mistake: an
-            // image is only ever compared with other images of its own site.
-            const exp = [];
-            (sites || []).forEach((st, si) => {
-                const orbit = [];
-                for (const op of symops) {
-                    // applyOp, NOT op.apply. The latter is the RECIPROCAL
-                    // transform used for hkl, which is the transpose of the
-                    // rotation and carries no translation -- correct for
-                    // indices, silently wrong for coordinates.
-                    const p = applyOp(op, [st.x, st.y, st.z])
-                        .map(v => ((v % 1) + 1) % 1);
-                    if (!orbit.some(q => fracDistance(G, q[0] - p[0], q[1] - p[1], q[2] - p[2]) < 1e-3)) {
-                        orbit.push(p);
-                    }
-                }
-                for (const p of orbit) exp.push({ el: st.element, p, site: si });
-            });
-            // fracDistance handles the minimum image itself, including the
-            // 27-point search an oblique cell needs. An earlier version did
-            // that search HERE, passing dx+1 into fracDistance -- which
-            // immediately rounded it back, making the whole loop a no-op and
-            // the test that 'verified' it meaningless, since both sides were
-            // wrapping.
-            let worst = Infinity, pair = null;
-            for (let i = 0; i < exp.length; i++) {
-                for (let j = i + 1; j < exp.length; j++) {
-                    let dx = exp[i].p[0] - exp[j].p[0];
-                    let dy = exp[i].p[1] - exp[j].p[1];
-                    let dz = exp[i].p[2] - exp[j].p[2];
-                    dx -= Math.round(dx); dy -= Math.round(dy); dz -= Math.round(dz);
-                    const d = fracDistance(G, dx, dy, dz);
-                    const fl = floorOf(exp[i].el, exp[j].el);
-                    if (!(fl > 0)) continue;
-                    const ratio = d / fl;
-                    if (ratio < worst) {
-                        worst = ratio;
-                        pair = { a: exp[i].el, b: exp[j].el, d, floor: fl };
-                    }
-                }
-            }
-            return { worst, pair };
-        };
+const orth = sharkoOrthMatrix(cell);
 
-        // Kept in scope: the refinement below has to be judged by the SAME
-        // test the candidates were, or the filter only guards the seed.
-        cfWorstContact = worstContact;
+// buildRestraintTables mirrors a bare A-B upper bound. Mirror it
+// here as well, so acceptance checks the same directed rules.
+const finalWindows = [];
 
-        let best = null;
-        const contactRejects = [];
-        for (const cand of out.candidates) {
-            const chk = worstContact(cand.sites);
-            if (chk.worst >= 1.0 || !chk.pair) { best = cand; break; }
-            contactRejects.push(
-                `${cand.assignment}: ${chk.pair.a}-${chk.pair.b} at ${chk.pair.d.toFixed(2)} A ` +
-                `against a floor of ${chk.pair.floor.toFixed(2)} A`);
+for (const window of job.distanceConstraints || []) {
+    finalWindows.push(window);
+
+    const hasCount =
+        Number.isFinite(window.count) &&
+        window.count >= 0;
+
+    if (
+        !hasCount &&
+        Number.isFinite(window.dmax) &&
+        window.bothWays !== false &&
+        String(window.a).toUpperCase() !==
+            String(window.b).toUpperCase()
+    ) {
+        finalWindows.push({
+            ...window,
+            a: window.b,
+            b: window.a,
+            bothWays: false
+        });
+    }
+}
+
+const validateCandidate = sites => {
+    const summary = contactSummary(
+        sites || [],
+        symops,
+        orth,
+        finalWindows,
+        { floor: floorOf }
+    );
+
+    const failures = [];
+
+    if (summary.impossible > 0) {
+        failures.push(
+            `${summary.impossible} minimum-contact violation(s)` +
+            (
+                summary.impossiblePair
+                    ? `; worst ${summary.impossiblePair}`
+                    : ''
+            )
+        );
+    }
+
+    for (const check of summary.checks || []) {
+        if (!(check.violations > 0)) continue;
+
+        const label = `${check.a}-${check.b}`;
+
+        if (check.floorBreaks > 0) {
+            failures.push(
+                `${label}: ${check.floorBreaks} distance(s) below dmin` +
+                (
+                    Number.isFinite(check.closest)
+                        ? ` (closest ${check.closest.toFixed(2)} A)`
+                        : ''
+                )
+            );
+        } else if (Number.isFinite(check.count)) {
+            const wanted =
+                check.countMode === 'atleast'
+                    ? `at least ${check.count}`
+                    : `${check.count}`;
+
+            failures.push(
+                `${label}: ${check.violations} centre(s) do not have ` +
+                `${wanted} partner(s) in the requested window`
+            );
+        } else {
+            failures.push(
+                `${label}: ${check.violations} centre(s) have no ` +
+                `partner within dmax`
+            );
         }
-        if (!best) {
-            return {
-                sites: [],
-                error: `Every candidate breaks a minimum-contact distance. ` +
-                       `Closest offenders: ${contactRejects.slice(0, 3).join('; ')}. ` +
-                       `Either the composition or Z is wrong for this cell, or the contact ` +
-                       `floor is set higher than the structure allows.`
-            };
-        }
-        if (contactRejects.length) {
-            console.warn(`[Wyckoff] ${contactRejects.length} higher-scoring candidate(s) ` +
-                         `rejected on contact distance: ${contactRejects.slice(0, 3).join('; ')}`);
-        }
+    }
+
+    return {
+        ok: failures.length === 0,
+        summary,
+        message: failures.join('; ')
+    };
+};
+
+let best = null;
+const contactRejects = [];
+
+for (const candidate of out.candidates) {
+    const check = validateCandidate(candidate.sites);
+
+    if (check.ok) {
+        best = candidate;
+        break;
+    }
+
+    contactRejects.push(
+        `${candidate.assignment}: ${check.message}`
+    );
+}
+
+if (!best) {
+    return {
+        sites: [],
+        error:
+            `Every candidate breaks a final distance or coordination ` +
+            `constraint. Closest offenders: ` +
+            `${contactRejects.slice(0, 3).join('; ')}. ` +
+            `Either the composition or Z is wrong for this cell, or a ` +
+            `constraint is tighter than the structure allows.`
+    };
+}
+
+if (contactRejects.length) {
+    console.warn(
+        `[Wyckoff] ${contactRejects.length} higher-scoring ` +
+        `candidate(s) rejected on final constraints: ` +
+        contactRejects.slice(0, 3).join('; ')
+    );
+}
+
+
+
 
         // ------------------------------------------------------------------
         // FINAL COORDINATE REFINEMENT.
@@ -1178,27 +1226,33 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
                     //  an R that belongs to neither position; the seed is at
                     //  least a structure the search actually scored.
                     // ------------------------------------------------------
-                    let contactBreak = null;
-                    if (r && r.sites && !r.error && cfWorstContact) {
-                        const chk = cfWorstContact(r.sites);
-                        if (chk.pair && chk.worst < 1.0) contactBreak = chk.pair;
-                    }
+                    
+                    
+let constraintBreak = null;
 
-                    if (contactBreak) {
-                        // Not a `return`: this runs inside the try block of
-                        // runWyckoffFromIntensities, and returning here would skip
-                        // the site formatting and hand back an empty result.
-                        console.warn(`[Wyckoff refine] Refinement rejected: it produced ` +
-                            `${contactBreak.a}-${contactBreak.b} at ${contactBreak.d.toFixed(2)} A ` +
-                            `against a floor of ${contactBreak.floor.toFixed(2)} A. ` +
-                            `Keeping the unrefined positions.`);
-                        refinement = {
-                            skipped: `the refined coordinates broke the ${contactBreak.a}-${contactBreak.b} ` +
-                                     `contact floor (${contactBreak.d.toFixed(2)} A against ` +
-                                     `${contactBreak.floor.toFixed(2)} A), so the search positions were kept`,
-                            rejectedR: r.R
-                        };
-                    } else if (!r.error) {
+if (r && r.sites && !r.error) {
+    const check = validateCandidate(r.sites);
+
+    if (!check.ok) {
+        constraintBreak = check.message;
+    }
+}
+
+if (constraintBreak) {
+    console.warn(
+        `[Wyckoff refine] Refinement rejected: ` +
+        `${constraintBreak}. Keeping the unrefined positions.`
+    );
+
+    refinement = {
+        skipped:
+            `the refined coordinates broke a final distance or ` +
+            `coordination constraint (${constraintBreak}), so the ` +
+            `search positions were kept`,
+        rejectedR: r.R
+    };
+} else if (!r.error) {
+
                         r.sites.forEach((rs, i) => {
                             best.sites[i].x = rs.x;
                             best.sites[i].y = rs.y;
@@ -1474,7 +1528,9 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
             numParticles: job.swarmParticles || 512,
             generations: job.swarmIterations || 1000,
             restarts: job.swarmRestarts || 4,
-            minContact: job.minContact || 1.0,
+            minContact: Number.isFinite(job.minContact)
+    ? job.minContact
+    : 1.0,
             onLog: m => wySay(m),
             onProgress: p => {
                 postBoth({ 

@@ -762,5 +762,7 @@ const CF_DEFAULTS = {
     randomStarts: 3,
     peakMerge: 0.9,
     symLambda: 0.5,
-    overlapTolTth: 0.05
+    overlapTolTth: 0.05,
+    weakFraction: 0.15,
+    weakGrouping: 'cluster'
 };

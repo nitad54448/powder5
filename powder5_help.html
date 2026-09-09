@@ -546,7 +546,7 @@ blockquote {
                     <tr><td><code>powder5.html</code></td><td>The application itself.</td></tr>
                     <tr><td><code>style.css</code></td><td>All styling.</td></tr>
                     <tr><td><code>charge_flipping.wgsl</code></td><td>WebGPU kernels for the charge-flipping loop.</td></tr>
-                    <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel. Scores a trial structure by |F<sub>calc</sub>|&sup2; against the Pawley intensities; this is the only objective the Wyckoff search has.</td></tr>
+                    <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel. Scores grouped |F<sub>calc</sub>|&sup2; against the Pawley intensities with the scale-only weighted wR2 objective and applies the ramped geometry penalties used during the global search.</td></tr>
                     <tr><td><code>js/</code></td><td>All application modules - <code>charting.js</code>, <code>constants.js</code>, <code>contacts.js</code>, <code>coord_refine.js</code>, <code>crystal.js</code>, <code>data_io.js</code>, <code>density3d.js</code>, <code>excluded.js</code>, <code>observations.js</code>, <code>parsers.js</code>, <code>pawley_linear.js</code>, <code>polarization.js</code>, <code>profile.js</code>, <code>profile_presets.js</code>, <code>refinement_controller.js</code>, <code>reporting.js</code>, <code>scatterers.js</code>, <code>sg_engine.js</code>, <code>simulation.js</code>, <code>spacegroup_ui.js</code>, <code>spline_background.js</code>, <code>state.js</code>, <code>status_bar.js</code>, <code>swarm_wyckoff.js</code>, <code>symmetry_utils.js</code>, <code>wyckoff_assign.js</code>, <code>wyckoff_report.js</code> and the three Web Workers <code>charge_flipping_worker.js</code>, <code>refinement_worker.js</code>, and <code>wyckoff_worker.js</code>.</td></tr>
                     <tr><td><code>lib/</code></td><td>Vendor bundles: <code>chart.umd.min.js</code>, <code>three.min.js</code>, <code>jspdf.umd.min.js</code>, <code>html2canvas.min.js</code>.</td></tr>
                     <tr><td><code>sg/</code></td><td>Space-group database (all settings of the 230 groups).</td></tr>
@@ -938,7 +938,7 @@ Refinement: 64%</pre>
                 calculation accounts for this automatically.
             </p>
             <p>
-                Operators are taken from the <code>symops</code> field of the space-group database
+                Operators are taken from the <code>sym_ops</code> field of the space-group database
                 (or the older <code>rotations</code> field, which serves equally well here - only
                 the rotation parts affect a reflection orbit). The closed group is checked against the
                 <code>order_p</code> recorded for the setting before it is used. If the database
@@ -2149,7 +2149,7 @@ Refinement: 64%</pre>
                 symmetry away and lets the algorithm rediscover it, which is a useful
                 safeguard when the space group is uncertain. Powder&nbsp;5 keeps that
                 mode available, but by default it uses the selected space group
-                <em>inside</em> the iteration. Four separate constraints come out of it,
+                <em>inside</em> the iteration. Five separate constraints come out of it,
                 and they are worth distinguishing because they behave very differently.
             </p>
 
@@ -2191,15 +2191,32 @@ Refinement: 64%</pre>
                 the information the space group provides.
             </div>
 
-            <h4>3. Systematic absences are held at zero</h4>
+            <h4>3. Systematic absences are excluded and held at zero</h4>
             <p>
                 Reflections forbidden by lattice centring, screw axes or glide planes are
-                forced to \(F = 0\) every cycle. They are found directly from the
+                removed before the charge-flipping orbits are built, and their reciprocal-grid
+                points are forced to \(F = 0\) every cycle. They are found directly from the
                 operators: \(h\) is extinct if some operator \((R,\mathbf{t})\) satisfies
                 \(hR = h\) with \(h \cdot \mathbf{t}\) non-integral. Leaving them free
                 lets the density break the lattice centring outright, and for an \(F\) or
                 \(I\) lattice that is most of the reciprocal grid.
             </p>
+            <p>
+                The raw, signed Pawley area and its ESD are retained long enough to test the
+                selected space group. A forbidden fitted HKL never becomes an ordinary CF
+                reflection. If it overlaps an allowed reflection, however, its corrected
+                intensity remains in the measured cluster total and is re-partitioned only
+                among the allowed orbits; this preserves what the powder peak measured without
+                assigning amplitude to a forbidden reciprocal point.
+            </p>
+            <div class="warning-note">
+                An <strong>isolated</strong> forbidden reflection with raw
+                \(I/\sigma \geq 3\) is inconsistent with strict symmetry. A
+                <strong>Strict</strong> run (\(\lambda = 1\)) is therefore refused and names an
+                example. None or Damped symmetry may still be run for diagnosis, and the
+                result records how many forbidden fitted HKLs were excluded, transferred from
+                overlapping clusters, and significant while isolated.
+            </div>
 
             <h4>4. Symmetrisation of the phases</h4>
             <p>
@@ -2228,23 +2245,39 @@ Refinement: 64%</pre>
                 consistent with the group will symmetrise well afterwards (high symmetry
                 correlation) without having been forced to.
             </div>
+            <div class="warning-note">
+                <strong>Full translations are required for in-loop phase symmetry.</strong>
+                If the space-group database does not supply complete <code>sym_ops</code>,
+                Powder&nbsp;5 may still use Laue rotations to expand equivalent amplitudes,
+                but it forces the <em>effective</em> \(\lambda\) to 0. Applying a non-zero
+                \(\lambda\) with zero translations would impose wrong phase relations in a
+                nonsymmorphic group. The result reports the value actually used.
+            </div>
 
             <h4>5. Weak reflections are freed, not forced</h4>
             <p>
-                The rules above impose \(|F_{\text{obs}}|\) on every reflection. The
-                <strong>Weak Fraction</strong> control exempts the weakest ones: for that
-                fraction of the reflections, the calculated modulus is kept and the phase is
-                advanced by a constant \(\Delta\varphi = \pi/2\) each cycle instead
+                The rules above impose \(|F_{\text{obs}}|\) on every ordinary reflection. The
+                <strong>Weak Fraction</strong> control exempts the selected weakest units: their
+                calculated moduli are kept and their phases are advanced by a constant
+                \(\Delta\varphi = \pi/2\) each cycle instead
                 (Oszl&aacute;nyi &amp; S&uuml;t&#337;, 2005). Their measured intensity is then
                 used only for the knowledge that they <em>are</em> weak.
             </p>
             <p>
-                This matters more on powder data than on single-crystal data. A weak
-                reflection sharing a peak with a strong one was assigned its intensity by the
-                Pawley fit on almost no evidence, so forcing the map to reproduce that number
-                is forcing it to reproduce a fitting artefact. The \(\pi/2\) rotation also
-                perturbs the iteration, which is what lets it escape the flat, featureless
-                maps the 2004 algorithm can settle into.
+                <strong>Weak classification</strong> chooses those units. The default,
+                <em>Unresolved clusters</em>, ranks each measured peak cluster by its total
+                observed intensity per reciprocal-grid member and assigns the same immutable
+                weak flag to every orbit in a selected cluster. This avoids classifying an
+                arbitrary, dynamically changing overlap partition as if it were an independent
+                measurement. <em>Individual reflections</em> instead ranks each orbit by its
+                own initial target intensity per orbit member. In both modes the classification
+                is made once before iteration and cannot change as overlaps are re-partitioned.
+            </p>
+            <p>
+                The \(\pi/2\) rotation perturbs the iteration and can help it escape the flat,
+                featureless maps the 2004 algorithm can settle into. The CPU and WebGPU paths
+                apply the same immutable classification and phase operation, including the
+                conjugate mate needed for a real density map.
             </p>
             <div class="note">
                 This is a different mechanism from the overlap handling in rule&nbsp;2, and the
@@ -2266,6 +2299,14 @@ Refinement: 64%</pre>
                 scan.
             </p>
             <p>
+                The signed fitted height is preserved during that conversion. In particular,
+                a negative Pawley estimate is not clipped before French&ndash;Wilson correction:
+                both the integrated value and its ESD are transformed by the same profile-area
+                factor, so weak and negative observations retain their statistical meaning.
+                If French&ndash;Wilson cannot be applied, only then are non-positive amplitudes
+                unavailable to the CF modulus constraint, and the result reports that fact.
+            </p>
+            <p>
                 The integrated intensity then carries
                 \(I \propto m \cdot LP \cdot |F|^2\). The multiplicity \(m\) is absorbed
                 by spreading the intensity across the \(m\) grid points of the orbit, but
@@ -2276,12 +2317,12 @@ Refinement: 64%</pre>
             </p>
             <div class="note">
                 All of this needs the full symmetry operators, i.e. the
-                <code>symops</code> field of the space-group database. If they are
+                <code>sym_ops</code> field of the space-group database. If they are
                 missing, Powder&nbsp;5 falls back to a Laue-class table with no
-                translations: orbit sizes are still correct, but screw and glide absences
-                cannot be detected and the symmetrisation degrades to a plain orbit
-                average. The solution summary says which was used, under
-                <em>Expansion symmetry</em>.
+                translations: equivalent amplitudes can still be expanded, but screw and
+                glide absences cannot be detected and in-loop phase symmetrisation is disabled
+                by forcing the effective \(\lambda\) to 0. The solution summary states the
+                expansion source and the symmetry strength actually used.
             </div>
 
             <h3 id="cf-workflow">Workflow &amp; Controls</h3>
@@ -2293,11 +2334,12 @@ Refinement: 64%</pre>
                     <tr><td><strong>Grid Size (N&sup3;)</strong></td><td>Edge of the density grid. Must be a power of two (the FFT is radix-2). 32&sup3; is fast and usually sufficient; 64&sup3; and 128&sup3; resolve finer detail at rapidly increasing cost.</td></tr>
                     <tr><td><strong>Threshold (&delta;/&sigma;)</strong></td><td>Flipping level in units of the map RMS. 0 flips every negative voxel and rarely converges; 0.8&ndash;1.2 is the working range.</td></tr>
                     <tr><td><strong>Max Iterations</strong></td><td>Cycles per random start. A few hundred to ~1000 is typical.</td></tr>
-                    <tr><td><strong>Random Starts</strong></td><td>The method begins from random phases and does not converge every time. Each start is an independent trial; the best (lowest R) map is kept.</td></tr>
+                    <tr><td><strong>Random Starts</strong></td><td>The method begins from random phases and does not converge every time. Each start is an independent trial; the map with the lowest measured-cluster amplitude R is kept.</td></tr>
                     <tr><td><strong>Peak Merge (&Aring;)</strong></td><td>Maxima closer than this are treated as one atom.</td></tr>
                     <tr><td><strong>Symmetry in loop</strong></td><td>How strongly the space group is imposed on the structure factors each cycle (\(\lambda\), see <a href="#cf-symmetry">Space-Group Constraints</a>). <em>None</em> is classical \(P1\) charge flipping; <em>Damped</em> (\(\lambda = 0.5\)) is the default; <em>Strict</em> (\(\lambda = 1\)) is fastest and fixes the origin, but assumes the space group is right.</td></tr>
+                    <tr><td><strong>Weak classification</strong></td><td><em>Unresolved clusters</em> (default) selects whole measured peak clusters as weak; <em>Individual reflections</em> selects separate symmetry orbits. Classification uses the initial observed targets and remains fixed throughout the run.</td></tr>
+                    <tr><td><strong>Weak Fraction</strong></td><td>The weakest this fraction of the selected classification units keep their <em>calculated</em> moduli and have their phases advanced by \(\pi/2\) each cycle instead of being forced onto \(|F_{\text{obs}}|\) (see <a href="#cf-symmetry">rule&nbsp;5</a>). Range 0&ndash;0.33, default 0.15. At <strong>0</strong> the readout says <em>off</em>, and the run is the original 2004 algorithm.</td></tr>
                     <tr><td><strong>Overlap (&deg;2&theta;)</strong></td><td>Reflections closer than this in \(2\theta\) are treated as one measured peak and share their intensity dynamically. Exact overlaps are always caught regardless of the setting. Symmetry equivalents are unaffected - they are constrained to equal \(|F|\).</td></tr>
-                    <tr><td><strong>Weak Fraction</strong></td><td>The weakest this fraction of reflections keep their <em>calculated</em> modulus and have their phase advanced by \(\pi/2\) each cycle instead of being forced onto \(|F_{\text{obs}}|\) (see <a href="#cf-symmetry">rule&nbsp;5</a>). Range 0&ndash;0.33, default 0.15. At <strong>0</strong> the readout says <em>off</em>, and the run is the original 2004 algorithm.</td></tr>
                 </tbody>
             </table>
             <div class="note">
@@ -2315,7 +2357,7 @@ Refinement: 64%</pre>
                 than exactly; a difference in the last digit of \(R\) between backends is
                 normal. The reported <em>Compute</em> field in the solution shows which
                 path was used. Every control affects both backends alike - including
-                <strong>Weak Fraction</strong>, which is implemented in the CPU loop as well,
+                <strong>Weak Fraction</strong> and <strong>Weak classification</strong>, which are implemented in the CPU loop as well,
                 so a machine without WebGPU does not quietly solve a different problem. The
                 threshold itself is computed identically on both. The GPU path requires the file
                 <code>charge_flipping.wgsl</code> to be served alongside
@@ -2454,17 +2496,20 @@ Refinement: 64%</pre>
                 difference is trial-to-trial scatter and not the parameter.
             </p>
             <p>
-                Two things argue for the lower end on powder data. The cut is a percentile of
-                the observed intensities, so a large resolution sphere sweeps genuinely strong
-                reflections into the "weak" set and over-perturbs the iteration. And the
-                intensities at the high-angle edge of a Pawley fit are often badly determined,
-                which puts them in the weak set for the wrong reason - trimming the
-                reflection range is the better fix there.
+                With the default cluster classification, the fraction is a fraction of
+                unresolved peak clusters, not a fraction of individual HKLs. Exactly
+                \(\lfloor fN\rfloor\) clusters are selected after ranking their total observed
+                intensity per reciprocal-grid member; every orbit in those clusters receives
+                the weak operation. Consequently the reported number of phase-shifted orbits
+                can exceed the number of selected clusters. Individual mode instead selects
+                exactly \(\lfloor fN\rfloor\) reflection orbits by initial target intensity per
+                orbit member. Neither membership changes during the run.
             </p>
             <div class="note">
                 A run at 0 and a run at 0.15 are the 2004 and 2005 algorithms and are not
-                trials of the same thing, so the setting is reported in the solution summary
-                rather than left to memory.
+                trials of the same thing. The result therefore records the fraction, the
+                classification mode, the selected-unit count and the number of affected
+                orbits rather than leaving them to memory.
             </div>
 
             <h3 id="cf-reading">Reading the Solution</h3>
@@ -2476,7 +2521,7 @@ Refinement: 64%</pre>
             <ul>
                 <li><strong>Best R.</strong> The amplitude agreement of the retained map, summed over measured peaks. Below ~0.15 is promising; above ~0.30 usually means the run has not converged - add random starts, adjust the threshold by &plusmn;0.1&sigma;, or see <a href="#cf-settings">Recommended Settings</a>.</li>
                 <li><strong>Electron-density peaks.</strong> Fractional coordinates. At \(\lambda = 0\) the map is in \(P1\) with an arbitrary origin and hand, so absolute positions are meaningless - compare interatomic <em>distances</em>. At \(\lambda &gt; 0\) the origin is pinned by the symmetrisation and the coordinates are directly comparable to the space group's Wyckoff positions. <strong>Read the <em>Charge</em> column, not <em>Height</em>, to tell a heavy atom from a light one</strong> - see <a href="#cf-peak-columns">the column descriptions</a> for why height gets this backwards.</li>
-                <li><strong>Symmetry diagnostics.</strong> The summary reports which symmetry was used (operators or Laue-table fallback), how many reflections were forced to zero as systematically absent, and how many ended up sharing a peak with another reflection. A large absence count is normal for a centred lattice; an <em>absent-but-observed</em> warning is not, and usually means the space group is wrong.</li>
+                <li><strong>Symmetry and absence diagnostics.</strong> The summary reports whether full operators or a Laue fallback expanded the data, the requested and effective in-loop symmetry, how many reciprocal points were forced to zero, how many forbidden fitted HKLs were excluded from the CF orbits, how many of those shared a cluster whose intensity was transferred to allowed orbits, and how many isolated ones had raw \(I/\sigma \geq 3\). A large systematic-zero count is normal for a centred lattice. A significant isolated forbidden observation is a direct inconsistency to investigate; a forbidden HKL inside an unresolved allowed peak may instead be an artefact of the Pawley partition.</li>
                 <li><strong>Density section.</strong> A slice through the map, with selectable axis and depth. The colour bar under the image is an <em>absolute</em> scale taken from the whole map, not from the slice on screen, so slices are directly comparable and an empty one looks empty. The caption gives the slice maximum in units of the map's \(\sigma\); anything under about 3&sigma; is ripple, not an atom. The <em>Stretch each slice to its own range</em> checkbox restores per-slice auto-contrast, which is occasionally useful for tracing weak features but makes noise look like structure - the caption says so whenever it is on.</li>
                 <li><strong>3D isosurface.</strong> The same map drawn as a surface of constant density, at a level you set in units of the map's \(\sigma\) — the same units as the section caption, so the two views can be read against each other. Drag to rotate, scroll to zoom. At 1&ndash;2&sigma; you will see mostly noise; real atoms usually appear as isolated closed blobs somewhere above 3&sigma;.
                     <ul>
@@ -2646,7 +2691,7 @@ Refinement: 64%</pre>
             </div>
             <div class="note">
                 The space-group database must include the full symmetry operators
-                (the <code>symops</code> field). If the status line under the Structure
+                (the <code>sym_ops</code> field). If the status line under the Structure
                 heading reports them missing, regenerate the JSON with the current
                 <code>cctbx_generate_sg_harker</code> script; an older database that
                 carries only rotations will index reflections but cannot build a
@@ -2675,14 +2720,18 @@ Refinement: 64%</pre>
                     <tr><td><strong>Reached at iteration</strong></td><td>Which cycle produced that best map. Powder&nbsp;5 retains the best iterate, not the last, because the algorithm oscillates once it has converged.</td></tr>
                     <tr><td><strong>Random starts</strong></td><td>How many independent random-phase trials were run; the best across all of them is shown.</td></tr>
                     <tr><td><strong>Grid / spacing</strong></td><td>The density-grid edge and the corresponding real-space voxel size in &Aring;ngstr&ouml;m.</td></tr>
-                    <tr><td><strong>Unique reflections used</strong></td><td>How many Pawley intensities entered the calculation, after dropping zero or negative values and any reflection whose orbit does not fit the grid.</td></tr>
+                    <tr><td><strong>Unique reflections used</strong></td><td>How many allowed Pawley reflections entered the CF orbits after intensity preparation and grid-range checks. Negative fitted values are retained through integrated-area conversion and French&ndash;Wilson correction rather than being clipped prematurely.</td></tr>
                     <tr><td><strong>Grid points filled</strong></td><td>Total reciprocal-grid points carrying an observed amplitude, i.e. the sum of all orbit sizes. Much larger than the number of unique reflections in a high-symmetry group.</td></tr>
                     <tr><td><strong>Space group</strong></td><td>The group whose operators were used. This is the group the Pawley fit ran in, not necessarily the current selection.</td></tr>
-                    <tr><td><strong>Expansion symmetry</strong></td><td>How the orbits were generated: the number of real symmetry operators and the Laue class, or - if the database lacks the <code>symops</code> field - a note that only the Laue-class fallback was available. In the fallback case screw and glide absences are <em>not</em> applied.</td></tr>
-                    <tr><td><strong>Symmetry in loop</strong></td><td>The \(\lambda\) actually used. <em>none</em> means the map was solved in \(P1\) and its origin is arbitrary.</td></tr>
+                    <tr><td><strong>Expansion symmetry</strong></td><td>How the orbits were generated: the number of full space-group operators and the Laue class, or - if the database lacks <code>sym_ops</code> - a note that only the Laue-class fallback was available. In the fallback case screw and glide absences cannot be derived.</td></tr>
+                    <tr><td><strong>Symmetry in loop</strong></td><td>The effective \(\lambda\) actually used. <em>none</em> means the map was solved in \(P1\) and its origin is arbitrary. If a non-zero value was requested but full translations were unavailable, the effective value is reported as zero because in-loop phase symmetry was safely disabled.</td></tr>
                     <tr><td><strong>Lorentz-polarisation</strong></td><td>The $Lp$ model the worker actually divided by, reported back by the worker itself rather than restated from the control panel - so a mismatch between the two would be visible here instead of silent. Where the counts differ, it also says how many reflections took the value computed by the refinement and how many the worker had to recompute. See <a href="#parameters-lp">Lorentz&ndash;Polarisation Factor</a>.</td></tr>
-                    <tr><td><strong>Absences forced to zero</strong></td><td>How many grid points were held at \(F = 0\) as systematically absent. Expect roughly half the grid for an \(I\) lattice and three quarters for \(F\); zero for a primitive group with no screws or glides.</td></tr>
+                    <tr><td><strong>Systematic zeros</strong></td><td>How many reciprocal-grid points were held at \(F = 0\) as systematically absent. Expect roughly half the grid for an \(I\) lattice and three quarters for \(F\); zero for a primitive group with no screws or glides.</td></tr>
+                    <tr><td><strong>Forbidden fitted HKLs</strong></td><td>How many Pawley HKLs carried positive raw fitted intensity but were excluded from CF because the selected space group forbids them.</td></tr>
+                    <tr><td><strong>Transferred overlaps</strong></td><td>How many forbidden HKLs shared a measured cluster with an allowed reflection. Their corrected intensity remains in the cluster total but is assigned only to allowed orbits.</td></tr>
+                    <tr><td><strong>Significant isolated</strong></td><td>How many isolated forbidden HKLs had raw \(I/\sigma \geq 3\). Strict symmetry refuses such a run; softer symmetry modes retain this prominent diagnostic.</td></tr>
                     <tr><td><strong>Overlapping reflections</strong></td><td>How many of the reflection orbits share a measured peak with at least one other, and how many distinct peaks they occupy. If this approaches the total, either the sample really is heavily overlapped or the overlap tolerance is set too wide.</td></tr>
+                    <tr><td><strong>Weak classification / selection</strong></td><td>Whether weak units were unresolved clusters or individual reflections, followed by the requested fraction, selected units out of the total, and the number of orbits receiving the \(\pi/2\) phase shift. Results made before this selector existed correspond to individual-reflection classification.</td></tr>
                     <tr><td><strong>Symmetry correlation</strong></td><td>(From the automatic structure build.) The correlation between the map and its symmetrised copy in the chosen space group. This is the primary quality indicator: near 1 means the density genuinely obeys the symmetry; a low value means either non-convergence or a wrong space group.</td></tr>
                     <tr><td><strong>Origin shift / hand</strong></td><td>(From the automatic structure build.) The translation applied to bring the map onto the space-group origin, and whether the inverted solution was chosen. At \(\lambda = 0\) both are arbitrary and are resolved here against the symmetry. At \(\lambda = 1\) the shift should already be close to zero - a large shift then means the in-loop symmetrisation and the origin search disagree, which is worth investigating. <strong>Hand is only shown for a chiral setting.</strong> A centrosymmetric group contains inversion, so a map and its mirror image are the same structure and reporting &ldquo;inverted&rdquo; would invite the reader to wonder what went wrong when nothing did.</td></tr>
                     <tr><td><strong>Lp model / French-Wilson</strong></td><td>How the intensities handed to the solver were prepared, reported as its own lines rather than buried in a single sentence. French-Wilson replaces every weak reflection with a Bayesian posterior mean using the correct centric or acentric distribution, and needs at least eight reflections carrying a usable \(\sigma\); when it does not apply, the report says <strong>NOT APPLIED</strong> with the reason. A map solved from corrected amplitudes and one solved from raw amplitudes are different results, and which one you have should not depend on a console line.</td></tr>
@@ -2785,11 +2834,12 @@ Refinement: 64%</pre>
                 A WebGPU swarm (replica-exchange MCMC) places atoms on trial Wyckoff assignments
                 that satisfy the stoichiometry exactly. Each candidate is scored by
                 $$f = (1 - wR2) - \text{pen}$$
-                where <strong>wR2</strong> is derived from the <strong>centered Pearson correlation</strong> 
-                between \(|F_{\text{calc}}|^2\) and the observed intensities, taken over groups of
-                reflections the powder pattern cannot separate. Because it is centered, the score 
-                is naturally invariant to both overall scale and constant background shifts 
-                (which frequently leak from Pawley extractions). The observed intensity of a
+                where <strong>wR2</strong> is the scale-only weighted residual between
+                \(|F_{\text{calc}}|^2\) and the observed intensities, taken over groups of
+                reflections the powder pattern cannot separate. An optimal multiplicative scale
+                is eliminated analytically; no additive intensity intercept is fitted, because
+                a constant shift in extracted reflection intensities is not a physical structure
+                factor. The observed intensity of a
                 group is \(\sum m |F_o|^2\) and the calculated one is accumulated
                 the same way, so the comparison is made where the measurement actually exists.
                 See <a href="#wyckoff-score">the scoring section</a> for the formula.
@@ -2809,15 +2859,16 @@ Refinement: 64%</pre>
                 Clash, bond-window and coordination penalties are <em>soft</em> and ramped during
                 the search, which is correct while the swarm still needs to move through crowded
                 configurations. They are <em>not</em> how the answer is decided. A candidate whose
-                contacts break the floors is <strong>rejected outright</strong>, and candidates are
+                final geometry breaks <strong>any</strong> stated floor, upper bound, exact-count
+                or at-least-count rule is <strong>rejected outright</strong>, and candidates are
                 walked in score order until one passes; if every candidate fails, that is reported
                 rather than swallowed, because it is a statement about the composition, \(Z\), or
-                the floor.
+                the constraints.
             </p>
             <p>
                 The same test is applied <em>after</em> the coordinate refinement. The refinement
-                moves every free coordinate with no contact term at all, so guarding only its
-                input guards nothing: a refinement that breaks a floor is discarded and the search
+                moves every free coordinate with no geometry term at all, so guarding only its
+                input guards nothing: a refinement that breaks any rule is discarded and the search
                 positions are kept, with the reason recorded.
             </p>
 
@@ -2844,11 +2895,11 @@ Refinement: 64%</pre>
                     <tr><td><strong>Max reuse / pos</strong></td><td>Most independent atoms sharing one Wyckoff position, as a whole number of 1 or more; blank means Auto.</td></tr>
                     <tr><td><strong>Density min / max (g/cm&sup3;)</strong></td><td>The window \(Z\) = Auto scans, in whole g/cm&sup3;, from 1 to 22, default <strong>2 to 10</strong>. The minimum is held strictly below the maximum. Ignored when \(Z\) is typed. Narrowing it is the cheapest way to shorten a scan: it is the only part of the calculation that knows what kind of material you have.</td></tr>
                     <tr><td><strong>Max Z searched</strong></td><td>How many values of \(Z\) one scan may search (1&ndash;12, default 3). Each is a full swarm run, so this is what bounds the total time. The candidates dropped are the least plausible on volume per atom, and the log names them.</td></tr>
-                    <tr><td><strong>Chains</strong></td><td>Independent trial structures. Capped automatically against the device's storage-buffer and dispatch limits and snapped to a multiple of 64.</td></tr>
+                    <tr><td><strong>Chains</strong></td><td>Independent trial structures. Capped automatically against the device's storage-buffer and dispatch limits; the UI offers multiples of 64 for convenient sizing. In the kernel, one chain is one workgroup, so the dispatch limit is applied directly and is not multiplied by the workgroup width.</td></tr>
                     <tr><td><strong>Iterations</strong></td><td>Steps per chain (100&ndash;10000, default 2000).</td></tr>
                     <tr><td><strong>Restarts</strong></td><td>Independent restarts (1&ndash;20, default 4).</td></tr>
-                    <tr><td><strong>Min contact (&Aring;)</strong></td><td>Floor applied to every unlike pair, default 1.0&nbsp;&Aring;.</td></tr>
-                    <tr><td><strong>Distance constraints</strong></td><td><code>ElemA ElemB N dmin/dmax</code>, one per line, e.g. <code>S O 4 1.40/1.80</code>. Sets both the bond-window penalty during the search and the floor used to reject a candidate afterwards. The grammar, what each form costs and the common mistakes are in <a href="#wy-constraints">Distance constraints</a> below.</td></tr>
+                    <tr><td><strong>Min contact (&Aring;)</strong></td><td>Floor applied to every unlike pair, default 1.0&nbsp;&Aring;. A literal value of <strong>0</strong> disables the global floor; it is not replaced by the default.</td></tr>
+                    <tr><td><strong>Distance constraints</strong></td><td><code>ElemA ElemB N dmin/dmax</code>, one per line, e.g. <code>S O 4 1.40/1.80</code>. They provide soft search guidance and hard final validation of every stated floor, upper bound and coordination count. The grammar, costs and common mistakes are in <a href="#wy-constraints">Distance constraints</a> below.</td></tr>
                 </tbody>
             </table>
 
@@ -2924,6 +2975,13 @@ Refinement: 64%</pre>
                 everything describing the <em>machine</em> or your patience: chains, iterations,
                 restarts and <strong>Max Z searched</strong> were set once for this computer and
                 are still true of it afterwards.
+            </div>
+            <div class="note">
+                <strong>Packed Miller-index range.</strong> The Wyckoff GPU format stores each
+                Miller index from &minus;511 to +511. Input outside that range is rejected with
+                an explicit error before dispatch. It is never skipped after group metadata has
+                been written, so an out-of-range row cannot make a powder group point into the
+                next group or into nonexistent reflection data.
             </div>
             <div class="note">
                 <strong>Stopping returns the best structure found so far.</strong> The swarm
@@ -3048,10 +3106,12 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 clash, bond-window and coordination penalties are ramped in as the search
                 proceeds, so early generations can pass through geometry the constraints forbid;
                 that is deliberate, and it is what lets a chain cross a barrier instead of being
-                trapped behind it. The floors are then applied again as a filter when candidates
-                are ranked, so a structure that ends up violating one is rejected rather than
-                reported. If a candidate you expected is missing, an over-tight floor is the
-                first thing to check.
+                trapped behind it. Every floor, bare nearest-neighbour upper bound, exact
+                coordination count and at-least count is then applied as a hard filter when
+                candidates are ranked and again after coordinate refinement. Mirrored bare upper
+                bounds are checked in both directions. A structure violating any rule is rejected
+                rather than reported. If an expected candidate is missing, inspect all of the
+                rules, not only the contact floor.
             </div>
 
             <h3 id="wy-z">\(Z\), the density window, and the scan</h3>
@@ -3060,7 +3120,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 this search that is neither measured nor refined. Get it wrong and everything
                 downstream is wrong in a way no figure of merit will name: the stoichiometry is
                 enforced by construction, so the swarm will dutifully fit the wrong number of
-                atoms and report a correlation for it.
+                atoms and report a residual for it.
             </p>
             <p>
                 Leaving the box blank selects <strong>Auto</strong>, which does not estimate
@@ -3249,17 +3309,24 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 against however many reflections your pattern resolves. A structure that clears
                 the capacity check by a wide margin can still be out of reach of the data, and
                 nothing in the search will tell you which of the two happened. If the reflection
-                count is not comfortably larger than the parameter count, treat a good wR2 with suspicion and check the \(wR(F^2)\) from the refinement instead.
+                independently weighted powder-group count is not comfortably larger than the
+                true Wyckoff free-coordinate count plus the fitted scale, treat a good wR2 with
+                suspicion. Final coordinate refinement is refused unless it retains at least one
+                residual degree of freedom.
             </div>
 
             <h3 id="wy-refinement">Final coordinate refinement</h3>
             <p>
                 The search finishes with a least-squares refinement of the free Wyckoff
-                coordinates against \(|F_{\text{obs}}|^2\), weighted by \(1/\sigma^2\) and
-                re-projecting each atom onto its symmetry element every step. It uses the same
-                scattering factors and the same \(B\) as the search - if those two ever
-                disagree they are not fitting the same model, and no arrangement of atoms can
-                satisfy both.
+                coordinates against \(|F_{\text{obs}}|^2\), with an overall intensity scale
+                eliminated analytically and each atom re-projected onto its symmetry element
+                every step. It uses the same reflection groups, scattering factors, \(B\) value
+                and weighting policy as the search. If at least one complete powder group has a
+                usable ESD, complete groups receive \(1/\sigma^2\) and incomplete groups receive
+                zero weight; if none has a usable ESD, all groups receive unit weight. Positive
+                weights are normalised internally without changing their ratios. If the search
+                and refinement ever disagree on the scattering or weighting model, they are not
+                fitting the same problem and their figures cannot be compared.
             </p>
             <p>
                 Both answers are reported: the <strong>search positions</strong> and the
@@ -3277,6 +3344,15 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 reporting \(3N\) would understate the constraint that does the work. The count
                 is taken as the rank of each site's projection matrix, which for an idempotent
                 projector is its trace.
+            </div>
+            <div class="note">
+                <strong>Underdetermination is tested on independent quantities.</strong> Let
+                \(N_{obs}\) be the number of powder groups with positive weight and \(N_{free}\)
+                the sum of the ranks of the true Wyckoff projection matrices. The fitted scale
+                consumes one additional degree of freedom, so refinement requires
+                \(N_{obs} &gt; N_{free}+1\). Raw HKL rows and \(3\times\)site counts are not used
+                for this decision. If the test fails, the search positions remain available and
+                the refinement reports why it did not run.
             </div>
             <div class="note">
                 <strong>The <em>Charge</em> column is empty on a Wyckoff structure</strong>, and
@@ -3435,25 +3511,33 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
            
            
            <p>
-                <strong>wR2</strong> is derived from the <em>weighted centered Pearson correlation
-                coefficient</em> (\(r\)) over the observed group intensities. This centering makes 
-                the objective invariant to arbitrary baseline shifts:
+                <strong>wR2</strong> is the scale-only weighted residual over the observed
+                group intensities. Eliminating the optimal multiplicative scale gives
             </p>
             <p style="text-align:center;">
-                \( r = \dfrac{\sum w (I_o - \bar{I}_o)(I_c - \bar{I}_c)}{\sqrt{\sum w (I_o - \bar{I}_o)^2 \sum w (I_c - \bar{I}_c)^2}}, \qquad
-                   wR2 = \sqrt{1 - r^2} \)
+                \( wR2 = \sqrt{1-
+                   \dfrac{\left(\sum_i w_i I_{c,i}I_{o,i}\right)^2}
+                   {\left(\sum_i w_i I_{c,i}^2\right)
+                    \left(\sum_i w_i I_{o,i}^2\right)}} \)
+            </p>
+            <p>
+                This is invariant to overall intensity scale but deliberately <em>not</em> to an
+                additive shift. Centering the intensities would silently fit a constant
+                structure-factor intercept, which has no physical place in this model. The CPU
+                check, WebGPU kernel and coordinate refinement use the same scale-only form.
             </p>
             <p>
                 Reflections the powder pattern cannot separate are summed into one group
                 first, so the comparison is made where the measurement exists. Each group is
-                weighted by \( 1/\sigma^2 \) on its total, from the Pawley decomposition:
-                a group whose extracted intensity has an ESD larger than itself contributes
-                almost nothing.
+                weighted by \( 1/\sigma^2 \) on its total when usable Pawley ESDs exist. If at
+                least one complete group has an ESD, incomplete groups receive zero weight rather
+                than unit or \(1/I\) weight. Only when no group has a usable ESD is the whole
+                problem unweighted. The same policy is used in final coordinate refinement.
             </p>
 
             <p>
                 <strong>pen</strong> is the <em>geometry penalty</em>, summed over every atom in
-                the trial cell. It is what stops the correlation buying a chemically impossible
+                the trial cell. It is what stops the diffraction score buying a chemically impossible
                 structure. It has exactly three components:
             </p>
             <table>
@@ -3492,18 +3576,18 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 against a rival on a different scale.
             </p>
             <div class="note">
-                <strong>A contact floor is a constraint, not a preference.</strong> Because the
-                clash term is soft during the search, a winning candidate can still contain an
-                illegal contact. The result stage therefore re-checks contacts against the same
-                floors and rejects on them outright, which is why a run can report
-                &ldquo;search positions kept&rdquo; after a refinement pulled a bond below its
-                floor.
+                <strong>A stated geometry rule is a constraint, not a preference.</strong>
+                Because every geometry term is soft during the search, a winning candidate can
+                still be illegal. The result stage therefore re-checks floors, bare upper bounds
+                and exact or at-least coordination counts and rejects violations outright. It
+                repeats the same validation after refinement, which is why a run can report
+                &ldquo;search positions kept&rdquo; after refinement broke a rule.
             </div>
 
             <h3 id="wyckoff-ranking">When the ranking is withheld</h3>
             <p>
                 A high fitness is not by itself evidence that a structure is right, and the search
-                now says so when it cannot be. Two properties of the correlation make this
+                now says so when it cannot be. Two properties of the weighted residual make this
                 necessary.
             </p>
             <p>
@@ -3516,8 +3600,8 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             </p>
             <p>
                 Second, <strong>the number of reflections is not the number of observations.</strong>
-                Because the correlation is weighted, a group counts for its share of the
-                weighted variance, \( w_i (I_i - \bar{I})^2 \), not for being in the list.
+                Because the residual is weighted, a group counts for its share of the
+                observed denominator, \( w_i I_i^2 \), not merely for being in the list.
                 Those shares are very uneven: \(1/\sigma^2\) rewards sharp low-angle
                 reflections, whose ESDs are small, and all but erases high-angle overlaps a
                 Pawley fit could not partition, whose ESDs can exceed their own values. The
@@ -3525,7 +3609,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             </p>
             <p style="text-align:center;">
                 \( N_{\text{eff}} = 1 / \sum_i p_i^2, \qquad
-                   p_i = w_i (I_i-\bar{I})^2 / \sum_j w_j (I_j-\bar{I})^2 \)
+                   p_i = w_i I_i^2 / \sum_j w_j I_j^2 \)
             </p>
             <p>
                 which equals \(N\) when all shares are equal and 1 when a single group is
@@ -3550,7 +3634,8 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 and the ordering between them is noise. The candidates are still returned and
                 still worth testing &mdash; the coordinates are real &mdash; but the result panel
                 says <em>one candidate, not a solution</em>, and no best is claimed. The
-                threshold is <code>SW_DEFAULTS.minObsPerParam</code>. It is a test of
+                threshold is <code>SW_DEFAULTS.minObsPerParam</code>. This ranking diagnostic is
+                separate from the final refinement's strict residual-degree-of-freedom test. It is a test of
                 <em>meaningfulness</em>, not of quality: above it a low score is still a real
                 answer, and below it a high one is not.
             </div>
@@ -3670,6 +3755,14 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                     difference in how much a number consistent with anything from &minus;300 to
                     700 is allowed to say.</li>
             </ul>
+            <p>
+                Mixed ESD availability has one rule in both Wyckoff stages. If at least one
+                complete unresolved group has a usable ESD, only complete groups are weighted:
+                they receive \(1/\sigma^2\), while incomplete groups receive zero weight. If no
+                group has a usable ESD, all groups receive unit weight. Missing uncertainties are
+                never replaced by \(1/I\), and positive weights are normalised only for numerical
+                conditioning, without changing their relative influence.
+            </p>
             <p>
                 The residual reported for a structure is therefore \(wR(F^2)\), the
                 <em>weighted</em> residual actually minimised. An unweighted figure printed next

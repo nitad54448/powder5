@@ -1623,9 +1623,42 @@ function generateChargeFlippingReport(cfResult) {
         `Cell Volume            : ${num(cfResult.volume, 2)} Å³`,
         `Unique reflections     : ${ref.unique || '–'}`,
         `Grid points filled     : ${ref.gridPoints || '–'}`,
-        `Expansion symmetry     : ${ref.symmetrySource === 'symops' ? (ref.nSymops + ' operator(s), Laue ' + (ref.laueClass || '?')) : ('Laue ' + (ref.laueClass || 'P1'))}`,
-        `Symmetry in loop       : ${!cfResult.symLambda ? 'none (solved in P1)' : ('lambda = ' + cfResult.symLambda.toFixed(2))}`,
+
+`Expansion symmetry     : ${ref.symmetrySource === 'symops' ? (ref.nSymops + ' operator(s), Laue ' + (ref.laueClass || '?')) : ('Laue ' + (ref.laueClass || 'P1'))}`,
+`Symmetry in loop       : ${!cfResult.symLambda ? 'none (solved in P1)' : ('lambda = ' + cfResult.symLambda.toFixed(2))}`,
+`Systematic zeros       : ${Number.isFinite(ref.absencesZeroed)
+      ? ref.absencesZeroed + ' reciprocal-grid point(s)'
+      : 'not recorded'}`,
+`Forbidden fitted HKLs  : ${ref.absentButObserved > 0
+      ? ref.absentButObserved + ' excluded from the CF orbits'
+      : 'none'}`,
+
+
+        ...(ref.absentButObserved > 0
+            ? [`Transferred overlaps   : ${ref.absentTransferred || 0} forbidden HKL(s) shared a cluster`,
+               '                         with allowed reflection(s); cluster totals were retained.',
+               `Significant isolated   : ${ref.significantAbsent || 0} with raw Pawley I/sigma >= 3`,
+               ...(ref.absentExample
+                    ? [`Example                  : ${ref.absentExample}`]
+                    : [])]
+            : []),
+
+        `Weak classification    : ${cfResult.weakGrouping === 'cluster'
+              ? 'unresolved peak clusters'
+              : 'individual reflections'}`,
+
+        `Weak selection         : ${cfResult.weakFraction > 0
+              ? `${(cfResult.weakFraction * 100).toFixed(0)}%; ` +
+                `${cfResult.weakUnits || 0} of ${cfResult.weakUnitTotal || 0} ` +
+                `${cfResult.weakGrouping === 'cluster'
+                    ? 'cluster(s)'
+                    : 'reflection(s)'}, ` +
+                `${cfResult.weakOrbits || 0} orbit(s) phase-shifted by pi/2`
+              : 'off; |Fobs| imposed on every reflection'}`,
+
         // Three sources, in order of reliability: the result object itself, the
+
+
         // run-history options, then the live global. The history lookup is by
         // object identity and CAN miss, and when it did this line rendered as
         // a dash -- which reads as "nothing was done to the intensities" when

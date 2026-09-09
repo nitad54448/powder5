@@ -676,22 +676,37 @@
                         <label class="control-label" title="Two maxima closer than this are treated as one peak.">Peak Merge (Å)</label>
                         <input type="number" id="cf-min-sep" step="0.1" min="0.1" class="control-input">
 
-                        <label class="control-label" title="How strongly the space group is imposed on the structure factors each cycle, via F(hR) = F(h)·exp(-2πi h·t). 'None' is classical P1 charge flipping and leaves the origin arbitrary. 'Strict' fixes the origin and converges faster, but will not recover if the space group is wrong.">Symmetry in loop</label>
-                        <select id="cf-sym-lambda" class="control-select">
-                            <option value="0">None — solve in P1</option>
-                            <option value="0.5">Damped (λ = 0.5)</option>
-                            <option value="1">Strict (λ = 1)</option>
-                        </select>
+
+<label class="control-label" for="cf-sym-lambda"
+       title="How strongly the space group is imposed on the structure factors each cycle, via F(hR) = F(h)·exp(-2πi h·t). 'None' is classical P1 charge flipping and leaves the origin arbitrary. 'Strict' fixes the origin and converges faster, but will not recover if the space group is wrong.">Symmetry in loop</label>
+<select id="cf-sym-lambda" class="control-select">
+    <option value="0">None — solve in P1</option>
+    <option value="0.5">Damped (λ = 0.5)</option>
+    <option value="1">Strict (λ = 1)</option>
+</select>
+
+<label class="control-label" for="cf-weak-grouping"
+       title="Choose whether the weakest fraction is ranked from individual Pawley reflections or from measured unresolved peak clusters. Cluster mode avoids treating an arbitrary overlap partition as an independent measurement.">Weak classification</label>
+<select id="cf-weak-grouping" class="control-select">
+    <option value="cluster" selected>Unresolved clusters</option>
+    <option value="individual">Individual reflections</option>
+</select>
+
+<label class="control-label" for="cf-weak-fraction"
+       title="The weakest selected fraction of reflections or unresolved peak clusters keep their CALCULATED amplitude and have their phase advanced by 90° each cycle, instead of being forced onto |Fobs| (Oszlányi &amp; Sütő 2005). 0 disables the branch and reproduces the 2004 algorithm.">Weak Fraction</label>
+<div class="slider-value-track">
+    <input type="range" id="cf-weak-fraction" class="custom-slider" min="0" max="0.33" step="0.01" value="0.15">
+    <span id="cf-weak-fraction-value" class="slider-value-display">0.15</span>
+</div>
+
+<label class="control-label" for="cf-overlap-tol"
+       title="Reflections closer together than this in 2θ are treated as one measured peak, and their intensities are re-partitioned each cycle in proportion to the calculated values. Symmetry equivalents are NOT affected — they are constrained to equal |F|.">Overlap (°2θ)</label>
+<input type="number" id="cf-overlap-tol" step="0.01" min="0" class="control-input">
 
 
-                        <label class="control-label" title="Reflections closer together than this in 2θ are treated as one measured peak, and their intensities are re-partitioned each cycle in proportion to the calculated values. Symmetry equivalents are NOT affected — they are constrained to equal |F|.">Overlap (°2θ)</label>
-                        <input type="number" id="cf-overlap-tol" step="0.01" min="0" class="control-input">
 
-                        <label class="control-label" for="cf-weak-fraction" title="The weakest this fraction of reflections keep their CALCULATED amplitude and have their phase advanced by 90° each cycle, instead of being forced onto |Fobs| (Oszlányi &amp; Sütő 2005). Their measured intensity is then used only for the knowledge that they are weak — which on powder data is the honest reading, because a weak reflection's share of an overlapped peak is close to a guess. 0 disables it and reproduces the 2004 algorithm. The published range is broad, so scan it rather than tuning it: if 0.15 and 0.20 differ much, that difference is trial-to-trial noise.">Weak Fraction</label>
-                        <div class="slider-value-track">
-                            <input type="range" id="cf-weak-fraction" class="custom-slider" min="0" max="0.33" step="0.01" value="0.15">
-                            <span id="cf-weak-fraction-value" class="slider-value-display">0.15</span>
-                        </div>
+
+
                     </div>
 
                     <div id="cf-sym-status" class="cf-hint" style="margin-top: 8px;"></div>
@@ -1379,7 +1394,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 174, O9 sept 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 175, 1O sept 2026";
 
 // ===========================================================================
 //  LAST-RESORT ERROR REPORTING
@@ -1458,8 +1473,13 @@
         // ?? rather than a bare read: CF_DEFAULTS lives in constants.js and may
         // predate this control, and an undefined here would put the slider at
         // its minimum (0) and silently turn the feature off.
-        document.getElementById('cf-weak-fraction').value =
-            (CF_DEFAULTS.weakFraction ?? 0.15);
+
+document.getElementById('cf-weak-fraction').value =
+    (CF_DEFAULTS.weakFraction ?? 0.15);
+
+document.getElementById('cf-weak-grouping').value =
+    (CF_DEFAULTS.weakGrouping ?? 'cluster');
+
     }
 
     try {
@@ -1858,8 +1878,11 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
             dest.appendChild(group);
         }
     })();
-    ['cf-grid-size', 'cf-iterations', 'cf-trials', 'cf-sym-lambda', 'cf-overlap-tol',
-     'cf-weak-fraction'].forEach(id =>
+
+['cf-grid-size', 'cf-iterations', 'cf-trials', 'cf-sym-lambda', 'cf-overlap-tol',
+ 'cf-weak-fraction', 'cf-weak-grouping'].forEach(id =>
+
+
         document.getElementById(id).addEventListener('input', updateChargeFlipEstimate));
 
     // The two charge-flipping sliders show their own value.
@@ -1913,56 +1936,55 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
 // hkl.intensity directly, i.e. heights, which underweights high-angle
 // reflections by the full Caglioti broadening (the FWHM roughly doubles across
 // a typical scan, so the error is a factor of two across the pattern).
-function integratedPeakArea(hkl, params, scaleFactor) {
-    if (!hkl || !params) return 0;
-    const height = hkl.intensity || 0;
-    // Number.isFinite, not truthiness: tth === 0 is falsy but is a position.
-    if (!(height > 0) || !Number.isFinite(hkl.tth)) return 0;
 
-    let area;
-    // ------------------------------------------------------------------
-    //  THE UNTRUNCATED AREA, because this function returns an INTEGRATED
-    //  INTENSITY and that is a property of the reflection, not of the window
-    //  the profile happened to be drawn in.
-    //
-    //  It used to return `height * shapeArea`, the integral of the profile AS
-    //  DRAWN -- truncated at 8 to 25 FWHM and pedestal-subtracted. That is the
-    //  right number for checking the plotted curve against itself, and the
-    //  wrong one for every caller this function actually has: structure
-    //  factors in data_io.js, the area column and ESD scaling in reporting.js,
-    //  the covariance conversion, and the intensities handed to charge
-    //  flipping and the Wyckoff search.
-    //
-    //  The error is small but it is NOT A CONSTANT SCALE, which is what makes
-    //  it worth removing. The fraction lost is the Lorentzian tail beyond the
-    //  window, so it grows with eta -- and eta grows with 2-theta. Losing
-    //  progressively more intensity toward high angle is indistinguishable
-    //  from thermal motion, so it lands in the Wilson B: about 0.008 A^2 on a
-    //  realistic eta(2-theta), against a typical B of 0.5 to 2. Measurable,
-    //  never dominant, and free to fix, since the extraction has been
-    //  computing the analytic area all along and nothing was reading it.
-    //
-    //  shapeArea is kept as the fallback for any reflection whose extraction
-    //  predates this field.
-    // ------------------------------------------------------------------
+function integratedPeakAreaFactor(hkl, params) {
+    if (!hkl || !params || !Number.isFinite(hkl.tth)) return 0;
+
+    let areaFactor;
     if (typeof hkl.shapeAreaAnalytic === 'number' && hkl.shapeAreaAnalytic > 0) {
-        area = height * hkl.shapeAreaAnalytic;
+        areaFactor = hkl.shapeAreaAnalytic;
     } else if (typeof hkl.shapeArea === 'number' && hkl.shapeArea > 0) {
-        area = height * hkl.shapeArea;
+        areaFactor = hkl.shapeArea;
     } else {
-        area = height * getPseudoVoigtArea(hkl.tth, hkl, params);
-        const lambda1 = params.lambda, lambda2 = params.lambda2, ratio21 = params.ratio;
-        if (ratio21 > 1e-6 && lambda2 > 1e-6 && Math.abs(lambda1 - lambda2) > 1e-6) {
+        areaFactor = getPseudoVoigtArea(hkl.tth, hkl, params);
+
+        const lambda1 = params.lambda;
+        const lambda2 = params.lambda2;
+        const ratio21 = params.ratio;
+
+        if (ratio21 > 1e-6 && lambda2 > 1e-6 &&
+            Math.abs(lambda1 - lambda2) > 1e-6) {
             const deg2rad = Math.PI / 180;
-            const sinTheta2 = Math.sin(hkl.tth * deg2rad / 2.0) * (lambda2 / lambda1);
+            const sinTheta2 =
+                Math.sin(hkl.tth * deg2rad / 2.0) * (lambda2 / lambda1);
+
             if (Math.abs(sinTheta2) < 1) {
                 const tth2 = 2 * Math.asin(sinTheta2) / deg2rad;
-                area += height * ratio21 * getPseudoVoigtArea(tth2, hkl, params);
+                areaFactor +=
+                    ratio21 * getPseudoVoigtArea(tth2, hkl, params);
             }
         }
     }
-    const s = (typeof scaleFactor === 'number' && isFinite(scaleFactor)) ? scaleFactor : 1;
-    return isFinite(area) ? area * s : 0;
+
+    return Number.isFinite(areaFactor) && areaFactor > 0
+        ? areaFactor
+        : 0;
+}
+
+function integratedPeakArea(hkl, params, scaleFactor) {
+    if (!hkl || !params) return 0;
+
+    const height = Number(hkl.intensity);
+    if (!Number.isFinite(height)) return 0;
+
+    const areaFactor = integratedPeakAreaFactor(hkl, params);
+    const scale =
+        typeof scaleFactor === 'number' && Number.isFinite(scaleFactor)
+            ? scaleFactor
+            : 1;
+
+    const area = height * areaFactor * scale;
+    return Number.isFinite(area) ? area : 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -3834,8 +3856,9 @@ function cfPrepareIntensities() {
         .filter(r => r && Number.isFinite(r.intensity))
         .map(r => {
             const area = integratedPeakArea(r, p, 1);
-            const height = r.intensity || 0;
-            const widthFactor = Math.abs(height) > 1e-9 ? area / height : 0;
+
+            // This factor remains defined for zero and negative fitted heights.
+            const widthFactor = integratedPeakAreaFactor(r, p);
             // ------------------------------------------------------------
             //  THE UNCERTAINTY ON `area`, ON THE SAME BASIS AS `area`.
             //
@@ -3880,10 +3903,13 @@ function cfPrepareIntensities() {
                 const s = cfSigmaMap.get(r.hkl_list[0]);
                 if (typeof s === 'number' && isFinite(s) && s > 0) sigma = s;
             }
-            return {
-                h: r.h_orig, k: r.k_orig, l: r.l_orig,
-                area, sigma,
-                multiplicity: r.multiplicity,
+           
+           
+           return {
+    h: r.h_orig, k: r.k_orig, l: r.l_orig,
+    area, rawArea: area, sigma,
+    multiplicity: r.multiplicity,
+
                 tth: Number.isFinite(r.tth) ? r.tth : null,
                 d: Number.isFinite(r.d) ? r.d : null,
                 // Lp evaluated once, here, with the user's polarisation model.
@@ -3915,8 +3941,12 @@ function cfPrepareIntensities() {
         let I = r.area;
         if (!(I > 0)) { I = 0; clampedToZero++; }
         return { h_orig: r.h, k_orig: r.k, l_orig: r.l,
-                 intensity: I, multiplicity: r.multiplicity,
-                 // sigma was computed a few lines above and then dropped here,
+         intensity: I, multiplicity: r.multiplicity,
+         // Preserve the pre-French-Wilson Pawley result for deciding
+         // whether intensity on a forbidden reflection is significant.
+         rawIntensity: r.rawArea,
+         // sigma was computed a few lines above and then dropped here,
+
                  // so nothing downstream could tell an intensity of 200 +- 20
                  // from one of 200 +- 500. Both reached the search weighted
                  // exactly the same, which over-trusts a measurement that is
@@ -3981,10 +4011,19 @@ const gridSize   = parseInt(document.getElementById('cf-grid-size').value, 10);
     // Clamped to the slider's own range, because a value can also arrive from a
     // restored session or a hand-edited attribute. A fraction outside [0, 1]
     // would index past the end of the sorted intensity array in both backends.
-    const weakFraction = Math.min(0.33, Math.max(0,
-        parseFloat(document.getElementById('cf-weak-fraction').value) || 0));
 
-    const p = fitResults.params;
+
+const weakFraction = Math.min(0.33, Math.max(0,
+    parseFloat(document.getElementById('cf-weak-fraction').value) || 0));
+
+const weakGrouping =
+    document.getElementById('cf-weak-grouping').value === 'individual'
+        ? 'individual'
+        : 'cluster';
+
+const p = fitResults.params;
+
+
     const sgForCF = sgUsedForFit || currentSG || null;
 
 
@@ -4042,8 +4081,12 @@ const gridSize   = parseInt(document.getElementById('cf-grid-size').value, 10);
     if (sgForCF) {
         const got = getSymopsForSetting(sgForCF);
         if (got.error) {
+
             cfSymNote = got.error + ' Falling back to the Laue class ' +
-                        (sgForCF.laue_class || '?') + '; screw and glide absences will not be applied.';
+            (sgForCF.laue_class || '?') +
+            '; in-loop phase symmetry will be disabled, and ' +
+            'screw/glide absences cannot be applied.';
+
         } else {
             cfSymops = got.symops;
         }
@@ -4112,7 +4155,8 @@ seed: (Date.now() + trialIndex * 7919) >>> 0,
             // Read by BOTH backends. runChargeFlippingGPU and
             // runChargeFlippingCPU implement the same branch off this field, so
             // a machine without WebGPU produces the same structure as one with.
-            weakFraction
+            weakFraction,
+            weakGrouping
         });
     };
 
@@ -4270,9 +4314,20 @@ function renderChargeFlipResults(res, opts) {
         // Stated in the summary because it changes the algorithm, not just its
         // speed: a run at 0 and a run at 0.15 are the 2004 and 2005 methods and
         // are not comparable as trials of one thing.
-        ['Weak fraction', Number.isFinite(res.weakFraction) && res.weakFraction > 0
-            ? `${(res.weakFraction * 100).toFixed(0)}% of reflections (π/2 phase shift)`
-            : 'off — |Fobs| imposed on every reflection']
+        ['Weak classification',
+    res.weakGrouping === 'cluster'
+        ? 'unresolved peak clusters'
+        : 'individual reflections'],
+
+['Weak fraction',
+    Number.isFinite(res.weakFraction) && res.weakFraction > 0
+        ? `${(res.weakFraction * 100).toFixed(0)}%: ` +
+          `${res.weakUnits || 0} of ${res.weakUnitTotal || 0} ` +
+          `${res.weakGrouping === 'cluster'
+              ? 'cluster(s)'
+              : 'reflection(s)'}, ` +
+          `${res.weakOrbits || 0} orbit(s) phase-shifted by π/2`
+        : 'off — |Fobs| imposed on every reflection']
     ];
     document.getElementById('cf-summary').innerHTML =
         rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -4284,12 +4339,34 @@ function renderChargeFlipResults(res, opts) {
     }
 
     if (ref.symmetrySource !== 'symops') {
-        warn += 'The space-group JSON has no "sym_ops" field, so the orbits came from a Laue-class table with no translations: screw-axis and glide-plane absences were not applied and the in-loop symmetrisation reduces to a plain orbit average. Regenerate the JSON with cctbx_Harko_v1.py for the full constraint. ';
-    }
+    warn += 'The space-group JSON has no "sym_ops" field, so the orbits came from a Laue-class table with no translations. In-loop phase symmetry was disabled rather than imposing incorrect nonsymmorphic phase relations; screw-axis and glide-plane absences were not applied. Regenerate the JSON with cctbx_Harko_v1.py for the full constraint. ';
+}
 
-    if (ref.absentButObserved > 0) {
-        warn += `${ref.absentButObserved} refined intensity sits on a systematically absent reflection. That normally means the space group is wrong, or the fit has leaked intensity into a forbidden peak. `;
-    }
+
+
+if (ref.absentButObserved > 0) {
+    warn +=
+        `${ref.absentButObserved} systematically absent reflection(s) ` +
+        `carried fitted intensity and were excluded from the CF orbits` +
+        (
+            ref.absentTransferred > 0
+                ? `; ${ref.absentTransferred} overlapped an allowed ` +
+                  `reflection, so their cluster intensity was retained ` +
+                  `for the allowed orbit(s)`
+                : ''
+        ) +
+        `. ${ref.significantAbsent || 0} were isolated raw Pawley ` +
+        `observations at or above 3 sigma` +
+        (
+            ref.absentExample
+                ? ` (for example ${ref.absentExample})`
+                : ''
+        ) +
+        `. This normally indicates profile leakage, an impurity, ` +
+        `or an incorrect space group. `;
+}
+
+
     if (ref.droppedDuplicate > 0) {
         warn += `${ref.droppedDuplicate} grid point was claimed by more than one reflection, so the input list is redundant for this symmetry. `;
     }

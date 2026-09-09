@@ -1,5 +1,5 @@
 // charge_flipping.wgsl
-// version 157, 16 august 2026
+// CF_KERNEL_ABI: orbit-weak-v1
 //
 // WebGPU kernels for dual-space charge flipping on powder data, with the
 // space group applied DIRECTLY inside the iteration loop.
@@ -110,6 +110,7 @@ struct Params {
 struct Orbit {
     start    : u32,
     count    : u32,
+    weak     : u32,
 };
 
 // A set of orbits that overlap in 2-theta and were measured as one peak.
@@ -472,10 +473,36 @@ fn repartition(@builtin(global_invocation_id) gid3 : vec3<u32>) {
 fn constrain(@builtin(global_invocation_id) gid3 : vec3<u32>) {
     let g = gid3.x;
     if (g >= P.n_orbits) { return; }
-    let orb = orbits[g];
-    if (orb.count == 0u) { return; }
+    
+let orb = orbits[g];
+if (orb.count == 0u) { return; }
 
-    let tgt = max(0.0, orbitTarget[g]);
+// Weak reflection: retain the calculated modulus and rotate the phase
+// by pi/2. A stored Friedel mate is conjugated, so its stored rotation
+// has the opposite sign.
+if (orb.weak != 0u) {
+    for (var i = 0u; i < orb.count; i = i + 1u) {
+        let p = orb.start + i;
+        let word = orbitIdx[p];
+        let idx = word & IDX_MASK;
+
+        let a = src[2u * idx];
+        let b = src[2u * idx + 1u];
+
+        if ((word & CONJ_BIT) != 0u) {
+            src[2u * idx] = b;
+            src[2u * idx + 1u] = -a;
+        } else {
+            src[2u * idx] = -b;
+            src[2u * idx + 1u] = a;
+        }
+    }
+
+    return;
+}
+
+let tgt = max(0.0, orbitTarget[g]);
+
     let amp = sqrt(tgt / f32(orb.count));
 
     for (var i = 0u; i < orb.count; i = i + 1u) {

@@ -529,6 +529,8 @@ function describePolarization(pol) {
  * @returns {string} A message naming the cause that actually applied.
  */
 function cfEmptyModelMessage(model, N) {
+    if (model && model.errorMessage) return model.errorMessage;
+
     const zero  = model.droppedZero  | 0;
     const range = model.droppedRange | 0;
     const grid  = `${N}x${N}x${N}`;
@@ -561,11 +563,20 @@ function buildReflectionModel(job, N) {
     const N2 = N * N, N3 = N2 * N;
     const wrap = v => ((v % N) + N) % N;
 
-    const symops = normalizeSymops(job.symops);
-    const built = buildHklOps(symops, job.laueClass, job.system);
-    const hklOps = built.ops;
 
-    const applyLP = job.applyLP !== false;
+const symops = normalizeSymops(job.symops);
+const built = buildHklOps(symops, job.laueClass, job.system);
+const hklOps = built.ops;
+
+// Compute the hard-zero set before constructing observed orbits. An
+// observed forbidden reflection must never claim its grid point first.
+const abs = findSystematicAbsences(N, symops, job.centering);
+const absentSet = new Set(abs.absent);
+
+const applyLP = job.applyLP !== false;
+
+
+
     // The host may send a full polarisation descriptor; `monochromatorTth`
     // stays supported so an older caller keeps working unchanged.
     const polModel = (job.polarization !== undefined && job.polarization !== null)
@@ -654,10 +665,21 @@ function buildReflectionModel(job, N) {
             if (2 * m >= N) { outOfRange = true; continue; }
             members.push(p);
         }
-        if (outOfRange) droppedRange++;
-        if (members.length === 0) continue;
 
-        // Prefer the Lp the host already computed for this reflection. It was
+
+       if (outOfRange) droppedRange++;
+if (members.length === 0) continue;
+
+const systematicallyAbsent = members.some(p => {
+    const gi =
+        wrap(p.h) +
+        wrap(p.k) * N +
+        wrap(p.l) * N2;
+
+    return absentSet.has(gi);
+});
+
+// Prefer the Lp the host already computed for this reflection.
         // evaluated at the corrected 2-theta with the user's chosen model and
         // is the same number that appears in the refinement report, so taking
         // it verbatim is the only way the map, the report and the
@@ -672,12 +694,21 @@ function buildReflectionModel(job, N) {
         // the whole of it over the survivors and inflated their amplitudes.
         const targetI = (I / lp) * (members.length / mTrue);
 
-        refs.push({
-            h0, k0, l0,
-            tth: Number.isFinite(peak.tth) ? peak.tth : null,
-            d: Number.isFinite(peak.d) ? peak.d : null,
-            members, mTrue, targetI
-        });
+       refs.push({
+    h0, k0, l0,
+    tth: Number.isFinite(peak.tth) ? peak.tth : null,
+    d: Number.isFinite(peak.d) ? peak.d : null,
+    members,
+    mTrue,
+    targetI,
+    systematicallyAbsent,
+    rawI: Number.isFinite(peak.rawIntensity)
+        ? Number(peak.rawIntensity)
+        : I,
+    sigma: Number.isFinite(peak.sigma) && peak.sigma > 0
+        ? Number(peak.sigma)
+        : null
+});
     }
 
     if (refs.length === 0) {
@@ -702,10 +733,79 @@ function buildReflectionModel(job, N) {
         }
         if (!same) nClusters++;
         clusterOf[i] = nClusters;
-    }
-    nClusters++;
 
-    // --- pass 3: flatten ----------------------------------------------------
+        }
+nClusters++;
+
+// Diagnose forbidden observations using their raw Pawley values.
+// A French-Wilson posterior is positive by construction and is not
+// evidence that a forbidden reflection was significantly observed.
+const clusterHasAllowed = new Array(nClusters).fill(false);
+
+for (let i = 0; i < refs.length; i++) {
+    if (!refs[i].systematicallyAbsent) {
+        clusterHasAllowed[clusterOf[i]] = true;
+    }
+}
+
+let absentButObserved = 0;
+let absentTransferred = 0;
+let significantAbsent = 0;
+let absentExample = '';
+
+for (let i = 0; i < refs.length; i++) {
+    const r = refs[i];
+
+    if (!r.systematicallyAbsent) continue;
+
+    if (r.rawI > 0) {
+        absentButObserved++;
+    }
+
+    if (clusterHasAllowed[clusterOf[i]]) {
+        absentTransferred++;
+    }
+
+    const z = r.sigma > 0
+        ? r.rawI / r.sigma
+        : NaN;
+
+    if (!clusterHasAllowed[clusterOf[i]] && z >= 3) {
+        significantAbsent++;
+
+        if (!absentExample) {
+            absentExample =
+                `(${r.h0},${r.k0},${r.l0}) ` +
+                `I/sigma=${z.toFixed(1)}`;
+        }
+    }
+}
+
+const requestedLambda =
+    Math.min(1, Math.max(0, Number(job.symLambda) || 0));
+
+if (symops && requestedLambda >= 0.999 && significantAbsent > 0) {
+    return {
+        error: 'significant-systematic-absence',
+        errorMessage:
+            `${significantAbsent} isolated systematically absent ` +
+            `reflection(s) have raw Pawley I/sigma >= 3` +
+            (
+                absentExample
+                    ? `; for example ${absentExample}`
+                    : ''
+            ) +
+            `. Strict symmetry is inconsistent with these data. ` +
+            `Check the space group, impurity peaks and profile fit, ` +
+            `or rerun with symmetry in the loop below Strict.`,
+        maxIndexSeen,
+        minGridForAll: 2 * maxIndexSeen + 2,
+        droppedZero,
+        droppedRange
+    };
+}
+
+// --- pass 3: flatten ----------------------------------------------------
     const orbitStart = [], orbitCount = [], orbitTargetI = [];
     const idxFlat = [], phaseFlat = [];
     const clusterOrbitStart = [], clusterNOrbits = [], clusterObsI = [];
@@ -716,14 +816,27 @@ function buildReflectionModel(job, N) {
 
     for (let i = 0; i < refs.length; i++) {
         const r = refs[i];
-        if (clusterOf[i] !== curCluster) {
-            curCluster = clusterOf[i];
-            clusterOrbitStart.push(orbitStart.length);
-            clusterNOrbits.push(0);
-            clusterObsI.push(0);
-        }
 
-        const start = cursor;
+if (clusterOf[i] !== curCluster) {
+    curCluster = clusterOf[i];
+    clusterOrbitStart.push(orbitStart.length);
+    clusterNOrbits.push(0);
+    clusterObsI.push(0);
+}
+
+const c = clusterOrbitStart.length - 1;
+
+if (r.systematicallyAbsent) {
+    // If this powder cluster also contains an allowed reflection, keep
+    // its complete measured intensity but give the forbidden component
+    // no orbit. An isolated forbidden cluster is removed below because
+    // it contains no allowed orbits.
+    clusterObsI[c] += r.targetI;
+    continue;
+}
+
+const start = cursor;
+
         let count = 0;
         for (const p of r.members) {
             const gi = wrap(p.h) + wrap(p.k) * N + wrap(p.l) * N2;
@@ -745,17 +858,33 @@ function buildReflectionModel(job, N) {
         orbitCount.push(count);
         orbitTargetI.push(scaled);
 
-        const c = clusterOrbitStart.length - 1;
-        clusterNOrbits[c]++;
-        clusterObsI[c] += scaled;
+
+
+
+     clusterNOrbits[c]++;
+clusterObsI[c] += scaled;
+
+
         usedUnique++;
     }
 
     const nOrbits = orbitStart.length;
-    if (nOrbits === 0) {
-        return { error: 'no-reflections', maxIndexSeen, minGridForAll: 2 * maxIndexSeen + 2,
-                 droppedZero, droppedRange };
-    }
+
+if (nOrbits === 0) {
+    return {
+        error: 'no-reflections',
+        errorMessage: absentButObserved > 0
+            ? `Every usable fitted reflection is systematically absent in ` +
+              `the selected space group. Check the space group, indexing ` +
+              `and fitted peak list.`
+            : null,
+        maxIndexSeen,
+        minGridForAll: 2 * maxIndexSeen + 2,
+        droppedZero,
+        droppedRange
+    };
+}
+
 
     // Drop clusters that ended up empty (every orbit lost to collisions).
     const cOrbitStart = [], cNOrbits = [], cObsI = [];
@@ -767,15 +896,10 @@ function buildReflectionModel(job, N) {
         }
     }
 
-    // --- pass 4: systematic absences ---------------------------------------
-    const abs = findSystematicAbsences(N, symops, job.centering);
-    const absentList = [];
-    let absentButObserved = 0;
-    for (let i = 0; i < abs.absent.length; i++) {
-        const gi = abs.absent[i];
-        if (claimed.has(gi)) { absentButObserved++; continue; }
-        absentList.push(gi);
-    }
+  // --- pass 4: systematic absences ---------------------------------------
+// Forbidden reflections were excluded before orbit construction, so none
+// can mask a hard-zero point by claiming it first.
+const absentList = Array.from(abs.absent);
 
     // orbitIdx carries the absent list as a tail block, so the shader gets it
     // without a ninth storage binding.
@@ -796,10 +920,15 @@ function buildReflectionModel(job, N) {
         clusterOrbitStart: Uint32Array.from(cOrbitStart),
         clusterNOrbits: Uint32Array.from(cNOrbits),
         clusterObsI: Float32Array.from(cObsI),
-        absentStart: nMembers,
-        absentCount: absentList.length,
-        absentButObserved,
-        symmetrySource: built.source,
+
+absentStart: nMembers,
+absentCount: absentList.length,
+absentButObserved,
+absentTransferred,
+significantAbsent,
+absentExample,
+symmetrySource: built.source,
+
         laueClass: built.laue,
         nSymops: symops ? symops.length : hklOps.length,
         haveTranslations: !!symops,
@@ -1039,9 +1168,14 @@ function modelReport(model) {
         orbits: model.nOrbits,
         clusters: model.nClusters,
         overlapped: model.nOrbits - model.nClusters,
-        absencesZeroed: model.absentCount,
-        absentButObserved: model.absentButObserved,
-        symmetrySource: model.symmetrySource,
+
+absencesZeroed: model.absentCount,
+absentButObserved: model.absentButObserved,
+absentTransferred: model.absentTransferred,
+significantAbsent: model.significantAbsent,
+absentExample: model.absentExample,
+symmetrySource: model.symmetrySource,
+
         laueClass: model.laueClass,
         nSymops: model.nSymops,
         droppedOutOfRange: model.droppedRange,
@@ -1057,13 +1191,113 @@ function modelReport(model) {
         // operators disagree, i.e. the observed intensities are being divided
         // by the wrong m. Surfaced rather than swallowed: it makes every |F|
         // in the map wrong by a factor the user would otherwise never see.
+
         multiplicityMismatch: model.multiplicityMismatch,
         multiplicityExample: model.multiplicityExample
     };
 }
 
+/**
+ * Build one immutable weak/not-weak flag per symmetry orbit.
+ *
+ * Intensities are normalized by the number of reciprocal-grid members,
+ * so orbit multiplicity and cluster size do not determine which
+ * observations are classified as weak.
+ */
+function classifyWeakOrbits(model, fraction, grouping) {
+    const mode =
+        grouping === 'individual'
+            ? 'individual'
+            : 'cluster';
+
+    const f = Math.min(
+        1,
+        Math.max(0, Number(fraction) || 0)
+    );
+
+    const flags = new Uint8Array(model.nOrbits);
+    const units = [];
+
+    if (mode === 'individual') {
+        for (let g = 0; g < model.nOrbits; g++) {
+            const count = model.orbitCount[g];
+
+            units.push({
+                index: g,
+                score: count > 0
+                    ? model.orbitTargetI[g] / count
+                    : Infinity
+            });
+        }
+    } else {
+        for (let c = 0; c < model.nClusters; c++) {
+            const start = model.clusterOrbitStart[c];
+            const n = model.clusterNOrbits[c];
+
+            let members = 0;
+
+            for (let j = 0; j < n; j++) {
+                members += model.orbitCount[start + j];
+            }
+
+            units.push({
+                index: c,
+                score: members > 0
+                    ? model.clusterObsI[c] / members
+                    : Infinity
+            });
+        }
+    }
+
+    units.sort(
+        (a, b) =>
+            (a.score - b.score) ||
+            (a.index - b.index)
+    );
+
+    const nWeak = Math.min(
+        units.length,
+        Math.floor(f * units.length)
+    );
+
+    let weakOrbits = 0;
+
+    for (let i = 0; i < nWeak; i++) {
+        const unit = units[i];
+
+        if (mode === 'individual') {
+            flags[unit.index] = 1;
+            weakOrbits++;
+        } else {
+            const start =
+                model.clusterOrbitStart[unit.index];
+
+            const n =
+                model.clusterNOrbits[unit.index];
+
+            for (let j = 0; j < n; j++) {
+                flags[start + j] = 1;
+                weakOrbits++;
+            }
+        }
+    }
+
+    return {
+        flags,
+        mode,
+        cutoff:
+            nWeak > 0
+                ? units[nWeak - 1].score
+                : 0,
+        weakUnits: nWeak,
+        totalUnits: units.length,
+        weakOrbits
+    };
+}
+
 // ===========================================================================
 //  CPU PATH
+
 //
 //  Mirrors the GPU kernels one for one and in the same order, so a run with
 //  backend: 'cpu' can be compared against the GPU result directly. It is the
@@ -1074,17 +1308,25 @@ function runChargeFlippingCPU(job) {
     const N3 = N * N * N;
     const maxIter = job.maxIterations;
     const deltaSigma = job.thresholdSigma;
-    const cell = job.cell;
-    const lambda = Math.min(1, Math.max(0, Number(job.symLambda) || 0));
 
-    if (!Number.isInteger(N) || N < 8 || (N & (N - 1)) !== 0) {
-        return { error: `Grid size must be a power of two (the FFT is radix-2); got ${N}.` };
-    }
+const cell = job.cell;
+const requestedLambda =
+    Math.min(1, Math.max(0, Number(job.symLambda) || 0));
 
-    const model = buildReflectionModel(job, N);
-    if (model.error) {
-        return { error: cfEmptyModelMessage(model, N) };
-    }
+if (!Number.isInteger(N) || N < 8 || (N & (N - 1)) !== 0) {
+    return { error: `Grid size must be a power of two (the FFT is radix-2); got ${N}.` };
+}
+
+const model = buildReflectionModel(job, N);
+if (model.error) {
+    return { error: cfEmptyModelMessage(model, N) };
+}
+
+// Laue rotations determine equivalent amplitudes, but without the
+// translations they cannot determine space-group phase relations.
+const lambda = model.haveTranslations ? requestedLambda : 0;
+
+
 
     // WEAK-REFLECTION PHASE FLIP (Oszlanyi & Suto 2005), same as the GPU path.
     //
@@ -1093,18 +1335,18 @@ function runChargeFlippingCPU(job) {
     // different structures depending on whether the machine has a usable GPU,
     // and nothing on screen would say which one you got.
     //
-    // The cut is a percentile of the observed orbit intensities rather than a
-    // fixed number, so it means the same thing on any dataset, and it is taken
-    // from the INITIAL targets - repartition rewrites `target` every cycle, so
-    // a threshold recomputed from it would drift with the solution.
-    const weakFraction = Number.isFinite(job.weakFraction) ? job.weakFraction : 0;
-    let weakI = 0;
-    if (weakFraction > 0 && model.nOrbits > 1) {
-        const sortedI = Float64Array.from(model.orbitTargetI).sort();
-        const kW = Math.min(sortedI.length - 1,
-                            Math.max(0, Math.floor(weakFraction * sortedI.length)));
-        weakI = sortedI[kW];
-    }
+const weakFraction =
+    Number.isFinite(job.weakFraction)
+        ? job.weakFraction
+        : 0;
+
+const weak = classifyWeakOrbits(
+    model,
+    weakFraction,
+    job.weakGrouping
+);
+
+const weakI = weak.cutoff;
 
     const rand = mulberry32(job.seed ^ 0x9e3779b9);
     const init = modelInitialGrid(model, N, job.seed);
@@ -1225,7 +1467,7 @@ function runChargeFlippingCPU(job) {
             if (count === 0) continue;
             const tgt = Math.max(0, target[g]);
 
-            if (weakI > 0 && tgt < weakI) {
+            if (weak.flags[g]) {
                 // Weak: keep |Fcalc| and advance the phase by +pi/2 instead of
                 // imposing |Fobs|. A member holding the Friedel mate stores
                 // conj(F), and conj(i*F) is -i*conj(F), so the rotation has the
@@ -1298,8 +1540,14 @@ function runChargeFlippingCPU(job) {
         map: bestRho, gridSize: N, peaks, rHistory, bestR, bestIter,
         finalR: rHistory[maxIter - 1], seed: job.seed, cell,
         volume: cellVolume(cell), backend: 'cpu', symLambda: lambda,
-        weakFraction, weakI,
-        reflections: modelReport(model)
+symLambdaRequested: requestedLambda,
+weakFraction,
+weakI,
+weakGrouping: weak.mode,
+weakUnits: weak.weakUnits,
+weakUnitTotal: weak.totalUnits,
+weakOrbits: weak.weakOrbits,
+reflections: modelReport(model)
     };
 }
 
@@ -1465,14 +1713,39 @@ async function cfMapGuarded(device, buf, what, offset, size) {
 }
 
 let _cfShaderSrc = null;
+
 async function cfLoadShader() {
     if (_cfShaderSrc) return _cfShaderSrc;
-    const resp = await fetch('../charge_flipping.wgsl');
-    if (!resp.ok) throw new Error('charge_flipping.wgsl failed to load (HTTP ' + resp.status + ')');
-    _cfShaderSrc = await resp.text();
+
+    const resp = await fetch('../charge_flipping.wgsl', {
+        cache: 'reload'
+    });
+
+    if (!resp.ok) {
+        throw new Error(
+            'charge_flipping.wgsl failed to load (HTTP ' +
+            resp.status + ')'
+        );
+    }
+
+    const source = await resp.text();
+    const requiredAbi = 'CF_KERNEL_ABI: orbit-weak-v1';
+
+    if (!source.includes(requiredAbi)) {
+        const got =
+            (source.match(/CF_KERNEL_ABI:\s*(\S+)/) || [])[1] ||
+            'none';
+
+        throw new Error(
+            `charge_flipping.wgsl is incompatible with this worker: ` +
+            `expected "${requiredAbi}", but the shader reports "${got}". ` +
+            `Replace the worker and shader together and clear the site cache.`
+        );
+    }
+
+    _cfShaderSrc = source;
     return _cfShaderSrc;
 }
-
 // Two bind-group layouts. Splitting them keeps every pipeline inside the
 // default limit of 8 storage buffers per shader stage: the FFT pipelines see
 // three, the symmetry pipelines see eight.
@@ -1677,21 +1950,29 @@ function cfEncodeFFT(enc, pl, res, N, inverse) {
 async function runChargeFlippingGPU(job) {
     const N = job.gridSize;
     const N3 = N * N * N;
-    const maxIter = job.maxIterations;
-    const cell = job.cell;
-    const lambda = Math.min(1, Math.max(0, Number(job.symLambda) || 0));
 
-    if (!Number.isInteger(N) || N < 8 || (N & (N - 1)) !== 0) {
-        return { error: `Grid size must be a power of two; got ${N}.` };
-    }
 
-    const device = await cfAcquireGPU();
-    if (!device) return { __noGPU: true };
 
-    const model = buildReflectionModel(job, N);
-    if (model.error) {
-        return { error: cfEmptyModelMessage(model, N) };
-    }
+const maxIter = job.maxIterations;
+const cell = job.cell;
+const requestedLambda =
+    Math.min(1, Math.max(0, Number(job.symLambda) || 0));
+
+if (!Number.isInteger(N) || N < 8 || (N & (N - 1)) !== 0) {
+    return { error: `Grid size must be a power of two; got ${N}.` };
+}
+
+const device = await cfAcquireGPU();
+if (!device) return { __noGPU: true };
+
+const model = buildReflectionModel(job, N);
+if (model.error) {
+    return { error: cfEmptyModelMessage(model, N) };
+}
+
+// Do not turn a Laue-only fallback into a false symmorphic phase model.
+const lambda = model.haveTranslations ? requestedLambda : 0;
+
 
     // ----------------------------------------------------------------------
     //  WEAK-REFLECTION PHASE FLIP (Oszlanyi & Suto 2005).
@@ -1715,18 +1996,21 @@ async function runChargeFlippingGPU(job) {
     //  runChargeFlippingCPU implements the SAME branch off the SAME field, so
     //  the two backends do not disagree about what the setting does.
     // ----------------------------------------------------------------------
-    const weakFraction = Number.isFinite(job.weakFraction) ? job.weakFraction : 0;
-    let weakI = 0;
-    if (weakFraction > 0 && model.nOrbits > 1) {
-        // Float64Array, matching runChargeFlippingCPU exactly. Sorting the same
-        // values at f32 instead moved the cut by one orbit in about one case in
-        // four hundred -- negligible physically, and precisely the kind of
-        // backend-dependent difference this field exists to avoid.
-        const sorted = Float64Array.from(model.orbitTargetI).sort();
-        const k = Math.min(sorted.length - 1,
-                           Math.max(0, Math.floor(weakFraction * sorted.length)));
-        weakI = sorted[k];
-    }
+
+
+const weakFraction =
+    Number.isFinite(job.weakFraction)
+        ? job.weakFraction
+        : 0;
+
+const weak = classifyWeakOrbits(
+    model,
+    weakFraction,
+    job.weakGrouping
+);
+
+const weakI = weak.cutoff;
+
 
     const pl = await cfGetPipelines(device);
 
@@ -1799,18 +2083,40 @@ async function runChargeFlippingGPU(job) {
         size: CF_R_BATCH_MAX * 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
     });
 
-    // Orbit is now TWO u32 (stride 8): the third field, target_i, was written
-    // here and read by no kernel. repartition fills orbitTarget[] from the
-    // calculated intensities and constrain reads only that, so the copy in the
-    // struct was a second source of truth for the same number -- the kind that
-    // stays right until someone changes one of them.
-    // Cluster is still three 4-byte scalars, stride 12.
-    const orbitsData = new ArrayBuffer(Math.max(1, model.nOrbits) * 8);
-    const ov = new DataView(orbitsData);
-    for (let g = 0; g < model.nOrbits; g++) {
-        ov.setUint32(g * 8 + 0, model.orbitStart[g], true);
-        ov.setUint32(g * 8 + 4, model.orbitCount[g], true);
-    }
+
+
+
+// Three u32 values per orbit:
+// start, count, and an immutable weak-reflection flag.
+const orbitsData =
+    new ArrayBuffer(Math.max(1, model.nOrbits) * 12);
+
+const ov = new DataView(orbitsData);
+
+for (let g = 0; g < model.nOrbits; g++) {
+
+
+    ov.setUint32(
+        g * 12 + 0,
+        model.orbitStart[g],
+        true
+    );
+
+
+    ov.setUint32(
+        g * 12 + 4,
+        model.orbitCount[g],
+        true
+    );
+
+    ov.setUint32(
+    g * 12 + 8,
+    weak.flags[g],
+    true
+);
+}
+
+
     const clustersData = new ArrayBuffer(Math.max(1, model.nClusters) * 12);
     const cv = new DataView(clustersData);
     for (let c = 0; c < model.nClusters; c++) {
@@ -2126,10 +2432,19 @@ async function runChargeFlippingGPU(job) {
     return {
         map: bestRho, gridSize: N, peaks, rHistory, bestR, bestIter,
         finalR: rHistory[maxIter - 1], seed: job.seed, cell,
+        
+
         volume: cellVolume(cell), backend: 'gpu', symLambda: lambda,
+        symLambdaRequested: requestedLambda,
+
         syncBatch: rBatch, msPerIteration: lastBatchMs > 0 ? lastBatchMs / Math.max(1, rBatch) : null,
-        weakFraction, weakI,
-        reflections: modelReport(model)
+        weakFraction,
+weakI,
+weakGrouping: weak.mode,
+weakUnits: weak.weakUnits,
+weakUnitTotal: weak.totalUnits,
+weakOrbits: weak.weakOrbits,
+reflections: modelReport(model)
     };
 
     } finally {

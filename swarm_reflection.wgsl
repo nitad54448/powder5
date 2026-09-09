@@ -101,7 +101,7 @@ const MIN_IMAGE_SHELL: i32 = 0;  //__MIN_IMAGE_SHELL__
 // Injected by the host exactly like MAX_GEN_ATOMS, so the weighted and
 // unweighted packers can share this kernel. It is a compile-time constant, so
 // the `weight` branch below folds away entirely when it is 3.
-// KERNEL_FOM: wR2-scaled-v1
+// KERNEL_FOM: wR2-scaled-v2
 //
 // A CONTRACT MARKER, checked by the host before this kernel is compiled. The
 // shader is fetched over HTTP at run time while the JS that reads its output
@@ -790,21 +790,30 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
         workgroupBarrier();
     }
 
+
+
 if (lid == 0u) {
         var cc: f32 = 0.0;
-        let sum_w = rSw[0];
-        
-        // Centered Pearson Correlation Coefficient
-        let d_ic = rScc[0] - (rSic[0] * rSic[0]) / sum_w;
-        let d_io = rSoo[0] - (rSio[0] * rSio[0]) / sum_w;
-        let cov  = rSco[0] - (rSic[0] * rSio[0]) / sum_w;
-        
-        let denom = d_ic * d_io;
-        if (denom > 1e-20 && cov > 0.0) {
-            let r2   = clamp((cov * cov) / denom, 0.0, 1.0);
-            let wR2  = sqrt(max(0.0, 1.0 - r2));
+
+        // Scale-only weighted wR2:
+        // wR2^2 = 1 - sco^2 / (scc * soo)
+        //
+        // Weighted-mean subtraction would introduce an unphysical
+        // additive intensity offset.
+        let denom = rScc[0] * rSoo[0];
+
+        if (denom > 1e-20 && rSco[0] > 0.0) {
+            let explained = clamp(
+                (rSco[0] * rSco[0]) / denom,
+                0.0,
+                1.0
+            );
+
+            let wR2 = sqrt(max(0.0, 1.0 - explained));
             cc = clamp(1.0 - wR2, 0.0, 1.0);
         }
+
+
         let pen = rPen[0];
         let f_new = cc - pen;
         

@@ -424,10 +424,15 @@ function swPackReflections(rows, options = {}) {
         groupMeta[gi * GROUP_STRIDE] = w;
         groupMeta[gi * GROUP_STRIDE + 1] = g.members.length;
         for (const r of g.members) {
-            if (Math.abs(r.h) > 511 || Math.abs(r.k) > 511 || Math.abs(r.l) > 511) {
-                problems.push(`Reflection ${r.h} ${r.k} ${r.l} exceeds the +/-511 packing range.`);
-                continue;
-            }
+
+if (Math.abs(r.h) > 511 || Math.abs(r.k) > 511 || Math.abs(r.l) > 511) {
+    throw new Error(
+        `Reflection ${r.h} ${r.k} ${r.l} exceeds the +/-511 Wyckoff ` +
+        `packing range. Exclude it before swPackReflections(), or widen ` +
+        `the packed reflection format.`);
+}
+
+
             reflPack[w * 2] = ((r.h + 512) & 0x3FF) | (((r.k + 512) & 0x3FF) << 10)
                             | (((r.l + 512) & 0x3FF) << 20);
             reflPack[w * 2 + 1] = r.mult;
@@ -656,55 +661,80 @@ function swFitnessOnCpu(args) {
         sio += wgt * iObs;
     }
     
-    const d_ic = scc - (sic * sic) / sw;
-    const d_io = soo - (sio * sio) / sw;
-    const cov  = sco - (sic * sio) / sw;
-    
-    const den = d_ic * d_io;
-    if (!(den > 1e-20) || !(cov > 0)) return 0;
-    const r2 = Math.min(1, Math.max(0, (cov * cov) / den));
-    return Math.min(1, Math.max(0, 1 - Math.sqrt(Math.max(0, 1 - r2))));
+const den = scc * soo;
+
+if (!(den > 1e-20) || !(sco > 0)) return 0;
+
+const explained = Math.min(
+    1,
+    Math.max(0, (sco * sco) / den)
+);
+
+return Math.min(
+    1,
+    Math.max(0, 1 - Math.sqrt(Math.max(0, 1 - explained)))
+);
+
 }
 
 function swCorrelationLeverage(groupMeta, groups, stride, nGroups) {
-    let sw = 0, so = 0;
-    for (let g = 0; g < nGroups; g++) {
-        const w = groupMeta[g * stride + 3];
-        if (!(w > 0)) continue;
-        sw += w; so += w * groupMeta[g * stride + 2];
-    }
-    if (!(sw > 0)) return { nEff: 0, nGroups, top: [], share: 0 };
-    const mo = so / sw;
-
+    // Contribution to the denominator of the actual scale-only
+    // residual, rather than centered variance.
     const contrib = new Float64Array(nGroups);
-    let varO = 0;
+    let total = 0;
+
     for (let g = 0; g < nGroups; g++) {
-        const w = groupMeta[g * stride + 3];
-        if (!(w > 0)) continue;
-        const dv = groupMeta[g * stride + 2] - mo;
-        contrib[g] = w * dv * dv;
-        varO += contrib[g];
+        const weight = groupMeta[g * stride + 3];
+        if (!(weight > 0)) continue;
+
+        const iObs = groupMeta[g * stride + 2];
+        contrib[g] = weight * iObs * iObs;
+        total += contrib[g];
     }
-    if (!(varO > 0)) return { nEff: 0, nGroups, top: [], share: 0 };
+
+    if (!(total > 0)) {
+        return {
+            nEff: 0,
+            nGroups,
+            top: [],
+            share: 0
+        };
+    }
 
     let sumSq = 0;
-    for (let g = 0; g < nGroups; g++) { const p = contrib[g] / varO; sumSq += p * p; }
+    for (let g = 0; g < nGroups; g++) {
+        const p = contrib[g] / total;
+        sumSq += p * p;
+    }
+
     const nEff = sumSq > 0 ? 1 / sumSq : 0;
 
-    const order = Array.from({ length: nGroups }, (_, g) => g)
-                       .sort((x, y) => contrib[y] - contrib[x]);
-    const top = order.slice(0, 5).filter(g => contrib[g] > 0).map(g => {
-        const m = groups[g] && groups[g].members && groups[g].members[0];
-        return {
-            hkl: m ? `${m.h} ${m.k} ${m.l}` : '?',
+    const order = Array.from(
+        { length: nGroups },
+        (_, g) => g
+    ).sort((a, b) => contrib[b] - contrib[a]);
+
+    const top = order
+        .filter(g => contrib[g] > 0)
+        .slice(0, 10)
+        .map(g => ({
+            group: g,
             d: groups[g] ? groups[g].d : NaN,
             iObs: groupMeta[g * stride + 2],
             weight: groupMeta[g * stride + 3],
-            share: contrib[g] / varO
-        };
-    });
-    const share = top.slice(0, 3).reduce((a, t) => a + t.share, 0);
-    return { nEff, nGroups, top, share };
+            share: contrib[g] / total
+        }));
+
+    const share = top
+        .slice(0, 3)
+        .reduce((sum, item) => sum + item.share, 0);
+
+    return {
+        nEff,
+        nGroups,
+        top,
+        share
+    };
 }
 
 /**
@@ -875,8 +905,9 @@ async function runWyckoffSearch(o) {
     const POS_COPIES = 2;           // bufPos holds current + best-ever
     const bytesPerParticle = WY_MAX_SITES * FLOATS_PER_SITE * POS_COPIES * 4;
     const limitMem = Math.floor(o.device.limits.maxStorageBufferBindingSize / bytesPerParticle);
-    const limitCompute = o.device.limits.maxComputeWorkgroupsPerDimension * SW_WG;
-    
+    // One particle is one dispatched workgroup.
+    const limitCompute =
+    o.device.limits.maxComputeWorkgroupsPerDimension;
     const safeMax = Math.floor(Math.min(limitMem, limitCompute) * 0.95); // 5% safety margin
     
     // o.numParticles, NOT o.swarmParticles.
@@ -895,8 +926,8 @@ async function runWyckoffSearch(o) {
             `to stay inside this device's storage-buffer and dispatch limits.`);
         want = safeMax;
     }
-    // Snap to a multiple of the workgroup size to prevent trailing-thread errors.
-    o.numParticles = Math.max(SW_WG, Math.floor(want / SW_WG) * SW_WG);
+    // numParticles is a workgroup count, not an invocation count.
+    o.numParticles = Math.max(1, Math.floor(want));
 
     /* ---- 1. Composition ---- */
     const comp = parseFormula(o.formula, o.Z);
