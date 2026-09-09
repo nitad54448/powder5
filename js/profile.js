@@ -440,6 +440,30 @@ function getPeakFWHM(gamma_G, gamma_L) {
 }
 
 /**
+ * Reads a pseudo-Voigt mixing fraction, clamped to [0, 1].
+ *
+ * ONE FUNCTION, FOUR CALLERS, ON PURPOSE. prepareVoigt builds the peak SHAPE
+ * from eta and getPseudoVoigtArea computes the AREA that shape is normalised
+ * by. If the two ever read eta by different rules the normalisation stops
+ * matching the thing it normalises, and the intensities come out wrong by a
+ * factor that varies with eta -- silently, since both halves still look
+ * reasonable on their own. Both flanks of the split profile have the same
+ * requirement. Reading it in one place is what stops that.
+ *
+ * `??`-style, NOT `||`. eta = 0 is a legitimate value -- it is a pure
+ * Gaussian -- and `|| 0.5` turned it into a 50/50 mix without saying so:
+ * a peak shape nobody asked for, and a step discontinuity in the objective
+ * function at exactly the value a refinement is most likely to walk into.
+ * NaN and a missing field still fall back to 0.5.
+ *
+ * @param {number|undefined} value The raw eta or eta_split from params.
+ * @returns {number} The mixing fraction in [0, 1]; 0.5 if not a finite number.
+ */
+function readEta(value) {
+    return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0.5));
+}
+
+/**
  * Precomputes everything evalVoigt needs for one peak. Called once per peak
  * per pattern evaluation; evalVoigt is then called once per data point in the
  * peak's window, so anything that can be hoisted belongs here.
@@ -473,7 +497,7 @@ function prepareVoigt(tth_peak, x0, hkl, params) {
     if (profileType === "simple_pvoigt") {
         const { gamma_G, gamma_L } = calculateProfileWidths(tth_peak, hkl, params, 'center');
         const H_G = Math.max(1e-9, gamma_G), H_L = Math.max(1e-9, gamma_L);
-        const eta = Math.max(0, Math.min(1, params.eta || 0.5));
+        const eta = readEta(params.eta);
         fwhm_total = getPeakFWHM(H_G, H_L);
         // eta is the AREA mixing fraction; pvMixCoeffs converts it to weights
         // for the unit-height components evalVoigt actually evaluates.
@@ -489,7 +513,7 @@ prep = { type: 1, x0, asym_param, H_G, H_L, inv_H_G: 1/H_G, inv_H_L: 1/H_L, eta,
         const wR = calculateProfileWidths(tth_peak, hkl, params, 'right');
         const H_G_L = Math.max(1e-9, wL.gamma_G), H_L_L = Math.max(1e-9, wL.gamma_L);
         const H_G_R = Math.max(1e-9, wR.gamma_G), H_L_R = Math.max(1e-9, wR.gamma_L);
-        const eta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+        const eta = readEta(params.eta_split);
         fwhm_total = Math.max(getPeakFWHM(H_G_L, H_L_L), getPeakFWHM(H_G_R, H_L_R));
         // Each flank gets its own mixing weights (the widths differ), and each
         // is renormalised to 1 at delta = 0, so the profile stays continuous
@@ -640,7 +664,7 @@ function getPseudoVoigtArea(tth_peak, hkl, params) {
             const gL = Math.max(1e-9, gamma_L);
             const area_G = gG * GAUSS_AREA_CONST;
             const area_L = gL * LORENTZ_AREA_CONST;
-            const currentEta = Math.max(0, Math.min(1, params.eta || 0.5));
+            const currentEta = readEta(params.eta);
             const totalArea = currentEta * area_L + (1 - currentEta) * area_G;
             return isFinite(totalArea) && totalArea > 0 ? totalArea : 1.0;
         }
@@ -651,7 +675,7 @@ function getPseudoVoigtArea(tth_peak, hkl, params) {
             const { gamma_G: gG_L, gamma_L: gL_L } = calculateProfileWidths(tth_peak, hkl, params, 'left');
             const { gamma_G: gG_R, gamma_L: gL_R } = calculateProfileWidths(tth_peak, hkl, params, 'right');
             
-            const currentEta = Math.max(0, Math.min(1, params.eta_split || 0.5));
+            const currentEta = readEta(params.eta_split);
             
             const area_G_L = Math.max(1e-9, gG_L) * GAUSS_AREA_CONST;
             const area_L_L = Math.max(1e-9, gL_L) * LORENTZ_AREA_CONST;

@@ -359,6 +359,72 @@ function reportCovariance(results) {
     return results.__cov;
 }
 
+/**
+ * The excluded-region section, in the form every report uses.
+ *
+ * ONE FUNCTION, FOUR REPORTS. An excluded region changes which observations
+ * produced every number above it -- the R factors, the ESDs, the degrees of
+ * freedom, the correlation. A report that omits it is not merely incomplete;
+ * it presents statistics as if they came from the whole pattern, and there is
+ * nothing in the numbers themselves for a reader to notice the difference by.
+ * The four reports must therefore agree, and the way to make them agree is for
+ * there to be one place that decides what the section says.
+ *
+ * PROVENANCE OVER FRESHNESS. `snap` is the record frozen when the run was
+ * launched. When it is missing -- a result produced before this existed, or a
+ * report generated from something that never carried one -- the section says
+ * the live list is being shown and that it may not be what the run used,
+ * rather than presenting the current regions as though they were historical
+ * fact. An unlabelled guess in the provenance section is the one kind of error
+ * a reader cannot catch.
+ *
+ * The section is emitted even when NOTHING is excluded. "No regions excluded"
+ * is a positive statement about the run; silence is not, and cannot be
+ * distinguished from a report written before the feature existed.
+ *
+ * @param {Object|null} snap A snapshot from EXCLUDED.snapshot(), or null.
+ * @returns {string[]} Lines, ready to concatenate into a report.
+ */
+function reportExcludedSection(snap) {
+    const live = (!snap && typeof EXCLUDED !== 'undefined') ? EXCLUDED.snapshot() : null;
+    const src = snap || live;
+    const lines = ['--- Excluded Regions ---'];
+
+    if (!src) {
+        lines.push('Not recorded for this run.', '');
+        return lines;
+    }
+    if (live) {
+        lines.push('(Not recorded with this run; showing the CURRENT list, which',
+                   ' may differ from what the run actually used.)');
+    }
+    if (!src.regions || src.regions.length === 0) {
+        lines.push('None. The fit used the whole 2-theta range.', '');
+        return lines;
+    }
+    if (!src.enabled) {
+        lines.push(`${src.regions.length} region(s) defined but SWITCHED OFF; the fit used`,
+                   'the whole 2-theta range.');
+    } else {
+        lines.push(`${src.regions.length} region(s) removed from the fit` +
+                   (src.axisPoints
+                       ? `, excluding ${src.removed} of ${src.axisPoints} measured points.`
+                       : '.'));
+        lines.push('These points contributed to no residual, no R factor and no',
+                   'degree of freedom.');
+    }
+    lines.push('');
+    lines.push('     From (deg)      To (deg)     Width (deg)');
+    lines.push('    ' + '-'.repeat(43));
+    for (const r of src.regions) {
+        lines.push('    ' + r.min.toFixed(3).padStart(10) +
+                             r.max.toFixed(3).padStart(14) +
+                             (r.max - r.min).toFixed(3).padStart(16));
+    }
+    lines.push('');
+    return lines;
+}
+
 function generateReportContent(format = 'summary', resultsArg = null) {
     // resultsArg lets the per-run history export a specific snapshot;
     // callers that pass nothing keep using the live global fitResults.
@@ -1067,7 +1133,26 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                                      ? total_calc_area / (mult * lpVal * doubletSum) : NaN);
                 if (Number.isFinite(fsq) && fsq > 0) fo_str = Math.sqrt(fsq).toFixed(3);
 
-                if (Math.abs(i_obs) > 0.01 || total_calc_area > 0.01) {
+                // ABS ON BOTH SIDES. This used to read `total_calc_area > 0.01`,
+                // which is false for every NEGATIVE extracted intensity, so a
+                // reflection the decomposition drove below zero was dropped from
+                // the table unless its re-integrated I_obs happened to be large
+                // enough to rescue it. On PbSO4 that silently deleted 79 of 377
+                // rows -- and deleted them selectively, because a negative
+                // intensity is what an exactly overlapped pair produces when the
+                // refinement splits their combined area. (3,4,4) and (7,2,3)
+                // coincide at d = 0.998; the positive half printed as 1170 and
+                // the negative half vanished, leaving a reader to think one
+                // reflection carried intensity the pair does not have.
+                //
+                // A negative intensity is a RESULT, not an absence: it is the
+                // extraction reporting less than nothing there, which is
+                // information about the overlap. Printed with its sign. |Fo| is
+                // left blank for it -- the guard on fsq > 0 above already does
+                // that -- because the square root is undefined, and printing a
+                // small positive number in that column would be worse than
+                // printing nothing.
+                if (Math.abs(i_obs) > 0.01 || Math.abs(total_calc_area) > 0.01) {
                     const row = [
                         hkl.hkl_list[0],
                         tthCorr.toFixed(4),
@@ -1217,6 +1302,11 @@ function generateReportContent(format = 'summary', resultsArg = null) {
     return [
         ...header,
         ...statsSection,
+        // Directly under the R factors, because it is the caveat on them: the
+        // excluded points are not in any of the sums above.
+        ...reportExcludedSection(fitResults.excluded ||
+            (typeof workerWorkingData !== 'undefined' && workerWorkingData
+                ? workerWorkingData.excluded : null)),
         ...lpSection,
         ...whAnalysisSection,
         ...paramLines,
@@ -1264,6 +1354,9 @@ function generateWyckoffReport(st) {
         `Assignment             : ${wy.assignment || '-'}`,
         `Formula units Z        : ${wy.z || '-'}`,
         '',
+        ...reportExcludedSection(st.excluded || wy.excluded ||
+            (typeof workerWorkingData !== 'undefined' && workerWorkingData
+                ? workerWorkingData.excluded : null)),
         '--- Unit Cell ---',
         `a = ${num(c.a, 4)} A    b = ${num(c.b, 4)} A    c = ${num(c.c, 4)} A`,
         `alpha = ${num(c.alpha, 3)}    beta = ${num(c.beta, 3)}    gamma = ${num(c.gamma, 3)}`,
@@ -1277,7 +1370,7 @@ function generateWyckoffReport(st) {
     // actually did the work.
     if (Number.isFinite(wy.searchCC)) {
         lines.push(
-            `Search CC (full res.)  : ${wy.searchCC.toFixed(4)}`,
+            `Search wR2 (full res.) : ${((1 - wy.searchCC) * 100).toFixed(2)}%`,
             `   The figure shown while a search runs is computed on a`,
             `   resolution-ramped SUBSET of the reflections, so it reads`,
             `   higher than this and is not comparable with wR.`);
@@ -1291,6 +1384,57 @@ function generateWyckoffReport(st) {
             `Free coordinates       : ${ref.nParams ?? '-'} (after the Wyckoff constraints)`,
             `Converged              : ${ref.converged === false ? 'NO' : 'yes'}`,
             `Lp removed             : ${ref.lpApplied ? 'yes' : 'no'}`);
+
+        // N_eff, PRINTED NEXT TO THE RAW COUNT AND NOT INSTEAD OF IT.
+        //
+        // The line above counts reflections. The search's ranking guard runs on
+        // the EFFECTIVE count, which is usually far smaller, and printing only
+        // the raw number left the reader unable to see the quantity that
+        // actually decided whether the ordering was allowed to stand. The two
+        // side by side are the point: "203 observations, 5.3 effective" says
+        // something that neither number says alone.
+        const lev = wy.leverage;
+        if (lev && Number.isFinite(lev.nEff) && lev.nEff > 0) {
+            const denom = ref.nParams || wy.nFreeParams;
+            const ratio = denom ? (lev.nEff + (wy.nRestraints || 0)) / denom : null;
+            lines.push(
+                `Effective observations : ${lev.nEff.toFixed(1)} of ${lev.nGroups ?? '-'} group(s)` +
+                (wy.nRestraints ? `, plus ${wy.nRestraints} from distance constraints` : ''),
+                `  ` +
+                (Number.isFinite(ratio)
+                    ? `${ratio.toFixed(2)} per free coordinate` +
+                      (!wy.ranked
+                          ? ` -- BELOW ${wy.minObsPerParam ?? 1}: the model reproduces every`
+                          : (wy.thin
+                              ? ` -- thin (under ${wy.cautionObsPerParam ?? 3}); the ranking is`
+                              : ` -- the ranking is well supported`))
+                    : ''));
+            if (!wy.ranked) {
+                lines.push(`  observation exactly whatever the structure, so the ordering between`,
+                           `  candidates is noise and a good figure of merit is not evidence.`);
+            } else if (wy.thin) {
+                lines.push(`  kept, but the gap between the leading candidates carries little`,
+                           `  weight. Check the chemistry and wR before accepting one.`);
+            }
+            if (lev.top && lev.top.length) {
+                // Named, because "5.3 effective" invites the question which
+                // ones, and the answer is usually three reflections a reader
+                // can go and look at.
+                lines.push(`  Dominated by ${lev.top.slice(0, 3).map(t =>
+                    `(${t.hkl}) ${(100 * t.share).toFixed(0)}%`).join(', ')}` +
+                    ` -- ${(100 * (lev.share || 0)).toFixed(0)}% of the weighted variance.`);
+            }
+        }
+        if (wy.cpuCheck && Number.isFinite(wy.cpuCheck.delta)) {
+            // Provenance for the search figure printed above: it was
+            // reproduced from the same arrays by a second, independent route.
+            lines.push(wy.cpuCheck.delta > 1e-3
+                ? `Fitness cross-check    : FAILED -- kernel ${wy.cpuCheck.gpu.toFixed(4)}, ` +
+                  `CPU ${wy.cpuCheck.cpu.toFixed(4)}. The search figure above is not the ` +
+                  `residual of this structure.`
+                : `Fitness cross-check    : OK (kernel and CPU agree to ` +
+                  `${wy.cpuCheck.delta.toExponential(1)})`);
+        }
     } else {
         lines.push(`wR(F^2)               : not available` +
                    (ref.skipped ? ` -- ${ref.skipped}` : ''));
@@ -1329,8 +1473,16 @@ function generateWyckoffReport(st) {
     // one produced without it. describeDistanceConstraint lives in powder5.html
     // and is the same formatter the Results panel uses, so the report and the
     // screen cannot describe the same rule two different ways.
-    const cons = Array.isArray(st.distanceConstraints) ? st.distanceConstraints : [];
+    // Three states, not two: applied, none applied, and NOT RECORDED. The last
+    // used to be printed as "None", which is an assertion about the run rather
+    // than an admission about the report, and it is the one a reader cannot
+    // check.
+    const consKnown = Array.isArray(st.distanceConstraints);
+    const cons = consKnown ? st.distanceConstraints : [];
     lines.push('', '--- Distance Constraints ---');
+    if (!consKnown) {
+        lines.push('  Not recorded for this run. The search log lists any that were applied.');
+    } else
     if (cons.length && typeof describeDistanceConstraint === 'function') {
         cons.forEach(w => lines.push('  ' + describeDistanceConstraint(w)));
         lines.push('',
@@ -1602,6 +1754,12 @@ function generateChargeFlippingReport(cfResult) {
     return [
         ...header,
         ...summarySection,
+        // Charge flipping phases the Pawley intensities, so an excluded region
+        // is missing from the extraction those intensities came from. It
+        // belongs on this report for the same reason it belongs on the fit's.
+        ...reportExcludedSection(cfResult.excluded || cfOpts.excluded ||
+            (typeof workerWorkingData !== 'undefined' && workerWorkingData
+                ? workerWorkingData.excluded : null)),
         ...cellSection,
         ...structureSection,
         ...sitesSection,

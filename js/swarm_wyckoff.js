@@ -50,6 +50,23 @@ const SW_STATE_STRIDE = 48;
    overridable per run through the options object; this is only where the
    fallback lives.
    ------------------------------------------------------------------ */
+// TWO THRESHOLDS, because one was doing two jobs badly.
+//
+// Below WITHHOLD, the model has fewer effective observations than free
+// parameters: it reproduces them exactly whatever the structure, the score is
+// 1 by construction and the ordering between candidates is arithmetic noise.
+// That is a statement about algebra, not about data quality, and it is the
+// only case where refusing to rank is certainly right.
+//
+// Between WITHHOLD and CAUTION the data is thin but can still be informative.
+// A single threshold of 3 was withholding the ranking on a correct ab initio
+// PbSO4 solution at 1.83 -- Pb and S within 0.001 of the published
+// coordinates, S-O at 1.514 A, every bond valence plausible, wR(F^2) 27%. A
+// guard that suppresses that answer costs more than the false confidence it
+// prevents, so this band now warns and ranks instead of withholding.
+const WY_WITHHOLD_OBS_PER_PARAM = 1.0;
+const WY_MIN_OBS_PER_PARAM = 3;
+
 const SW_DEFAULTS = Object.freeze({
     // --- Observations ---
     overlapTol: 0.002,      // fractional d spacing within which powder lines are one observation
@@ -67,8 +84,17 @@ const SW_DEFAULTS = Object.freeze({
     rampStart: 0.25,        // fraction of the groups active at generation 0
     rampFull: 0.6,          // fraction of the run by which all groups are active
 
-    // --- Penalties, in CC units ---
+    // --- Penalties, in fitness units ---
     penClash: 0.05,         // per clashing pair
+
+    // Effective observations per free parameter below which the RANKING IS
+    // WITHHELD. Three, not one: at one the model reproduces the observations
+    // exactly and the correlation is 1 by construction, and the ordering is
+    // already meaningless somewhat before that, because a near-fit saturates a
+    // measure that is invariant under Icalc -> a*Icalc + b. This is a
+    // threshold on MEANINGFULNESS, not on quality -- above it a low score is
+    // still a real answer, below it a high one is not.
+    minObsPerParam: 3,
     // Per Angstrom of unmet distance constraint. Raised from 0.02, which was
     // set when the only upper-bound rule was a loose "some O within 1.65 A"
     // nearest-neighbour test. As the restoring force of a coordination
@@ -91,13 +117,13 @@ const SW_DEFAULTS = Object.freeze({
     // onto whichever basin was found first and the restarts exist to undo it.
     // On PbSO4 that showed as a run-to-run coin flip between structures with
     // Pb-O at 1.01 A and the true one - the correct answer scores BEST on both
-    // CC and R when it is found, so the objective was never the problem and
+    // a good fitness and a good R when it is found, so the objective was never
     // the sampling was. Independent chains cannot collapse: each one keeps its
     // own state and its own step size, and nothing shares a direction.
     // Replica-exchange ladder, in correlation units. Temperatures are FIXED,
     // not annealed: a single cooling chain that anneals into a wrong basin has
     // no way back out, which is exactly what the PbSO4 logs showed - converged,
-    // at the bottom of its basin, 0.016 in CC below a structure known to exist.
+    // at the bottom of its basin, 0.016 in fitness below a structure known to exist.
     // A ladder keeps hot replicas roaming for the whole run and swaps their
     // discoveries downward.
     tempHot: 0.05,          // top rung: moves freely, refines nothing
@@ -135,7 +161,7 @@ const SW_DEFAULTS = Object.freeze({
 /**
  * Largest symmetry-expanded atom count the device's workgroup memory allows.
  *
- * The CC kernel keeps five arrays per generated atom (x, y, z, type, and the
+ * The reflection kernel keeps five arrays per generated atom (x, y, z, type, and the
  * reduction scratch) rather than the six of the vector-sum kernel, so 20 bytes
  * per atom is the honest figure. The 0.85 factor leaves room for the compiler's
  * own workgroup allocations, which are not visible from here.
@@ -303,15 +329,75 @@ function swBuffer(device, data, usage) {
  */
 function swPackReflections(rows, options = {}) {
     const tol = options.overlapTol ?? SW_DEFAULTS.overlapTol;
+    // --------------------------------------------------------------------
+    //  WHAT COUNTS AS ONE OBSERVATION: THE PROFILE WIDTH, NOT A FIXED
+    //  FRACTION OF d.
+    //
+    //  A flat 0.2% in d is a statement about the LATTICE. Whether two lines
+    //  are separable is a statement about the PATTERN: it depends on the peak
+    //  width at that angle, which is the instrument and the sample, not the
+    //  cell. The two disagree badly. On a real LaCoO3 Pnma dataset this rule
+    //  produced 42 independent observations while the Pawley covariance
+    //  analysis -- the one the report prints, using the real profile widths
+    //  and the off-diagonal terms -- found ONE cluster spanning the whole
+    //  pattern with 36 of 64 reflections carrying a sigma larger than their
+    //  own intensity.
+    //
+    //  The report then says, in as many words, "use I_cluster, not the
+    //  individual intensities, for anything downstream" -- and the search was
+    //  the downstream consumer that ignored it. It was fitting 42 numbers of
+    //  which the extraction could determine a handful.
+    //
+    //  `fwhmAt(tth)` is supplied by the caller when the profile is known.
+    //  Without it the fractional rule stands, because a wrong width is worse
+    //  than a crude one: too large merges genuinely separate lines and throws
+    //  away real information.
+    // --------------------------------------------------------------------
+    const fwhmAt = (typeof options.fwhmAt === 'function') ? options.fwhmAt : null;
+    // Fraction of a FWHM below which two lines are treated as inseparable.
+    // Rayleigh-like: peaks closer than about half a width have no resolved
+    // minimum between them and their intensities trade off almost freely.
+    const sepFrac = options.overlapFwhmFrac ?? 0.5;
+
     const sorted = [...rows].sort((a, b) => b.d - a.d);   // d descending = d* ascending
 
     const groups = [];
     let cur = null;
+    let widthMisses = 0;
     for (const r of sorted) {
-        if (cur && Math.abs(r.d - cur.d) / cur.d < tol) {
-            cur.members.push(r);
+        // normaliseObservations calls it twoTheta; other callers use tth.
+        // Reading only one of the two is how this rule silently fell back.
+        const rt = Number.isFinite(r.tth) ? r.tth : r.twoTheta;
+        let same;
+        if (cur && fwhmAt && Number.isFinite(rt) && Number.isFinite(cur.lastTth)) {
+            // Compared in 2-theta, where the width is defined. Against the
+            // group's LAST member rather than its first, so a chain of lines
+            // each within half a width of the previous one becomes a single
+            // cluster -- which is exactly the transitive linking the covariance
+            // analysis finds, and the reason it can return one cluster for a
+            // whole pattern.
+            const w = fwhmAt(rt);
+            if (Number.isFinite(w) && w > 0) {
+                same = Math.abs(rt - cur.lastTth) < sepFrac * w;
+            } else {
+                // NO WIDTH FOR THIS ANGLE -> FALL BACK, never "not merged".
+                // A NaN width is not evidence that two lines are resolved. If
+                // this returned false the reflection became its own group, and
+                // a profile function that failed for every angle would split
+                // the pattern into one group per line -- the maximum possible
+                // observation count, from the maximum possible ignorance. That
+                // is the opposite of what a missing measurement should buy.
+                same = Math.abs(r.d - cur.d) / cur.d < tol;
+                widthMisses++;
+            }
         } else {
-            cur = { members: [r], d: r.d };
+            same = cur && Math.abs(r.d - cur.d) / cur.d < tol;
+        }
+        if (same) {
+            cur.members.push(r);
+            if (Number.isFinite(rt)) cur.lastTth = rt;
+        } else {
+            cur = { members: [r], d: r.d, tth: rt, lastTth: rt };
             groups.push(cur);
         }
     }
@@ -362,12 +448,33 @@ function swPackReflections(rows, options = {}) {
         }
         groupMeta[gi * GROUP_STRIDE + 2] = io;
 
-        // No sigma anywhere in the group means unit weight: an unweighted fit
-        // is a defensible default, a fabricated weight is not.
+        // A GROUP WITHOUT A USABLE SIGMA IS NOT AN UNWEIGHTED OBSERVATION,
+        // IT IS NOT AN OBSERVATION.
+        //
+        // The unit-weight fallback below is right when NO reflection in the
+        // dataset carries a sigma -- an unweighted fit is a defensible default
+        // and a fabricated weight is not. Applying it per GROUP is a different
+        // thing entirely: it hands a group the decomposition could not
+        // determine the same influence as one it measured well.
+        //
+        // A sigma of exactly zero out of a Pawley refinement means the
+        // parameter was fixed or the normal matrix was singular there, which
+        // is the extraction saying it learned nothing about that intensity.
+        // Such reflections cluster at high angle where they are also densely
+        // overlapped, and their I comes back as 0.0; giving them full weight
+        // charges the model the whole of a calculated intensity against an
+        // observation that was never made. On PbSO4 that is dozens of
+        // reflections, and it is why the search residual and the refinement
+        // residual disagreed threefold on identical coordinates.
+        //
+        // They are dropped instead. The kernel already skips any group with
+        // weight <= 0, and swCorrelationLeverage does not count them, so a
+        // dropped group is absent from N_eff as well -- which is the honest
+        // accounting: it was never information.
         if (haveSigma && varSum > 0) {
             groupMeta[gi * GROUP_STRIDE + 3] = 1 / varSum;
         } else {
-            groupMeta[gi * GROUP_STRIDE + 3] = 0;   // filled in below
+            groupMeta[gi * GROUP_STRIDE + 3] = 0;
             nUnweighted++;
         }
         groupD[gi] = 1 / g.d;
@@ -383,22 +490,265 @@ function swPackReflections(rows, options = {}) {
         if (v > 0) { wSum += v; wN++; }
     }
     if (wN > 0) {
+        // LEFT AT ZERO, not promoted to 1.0. Some groups having sigmas and
+        // others not is not an unweighted dataset; it is a weighted one with
+        // holes, and a hole is not an observation of zero.
         const mean = wSum / wN;
         for (let g = 0; g < nGroups; g++) {
             const v = groupMeta[g * GROUP_STRIDE + 3];
-            groupMeta[g * GROUP_STRIDE + 3] = (v > 0) ? v / mean : 1.0;
+            groupMeta[g * GROUP_STRIDE + 3] = (v > 0) ? v / mean : 0.0;
         }
     } else {
+        // Nothing in the dataset carries a sigma. THIS is the unweighted case,
+        // and unit weight throughout is the defensible default for it.
         for (let g = 0; g < nGroups; g++) groupMeta[g * GROUP_STRIDE + 3] = 1.0;
     }
     if (nUnweighted && wN > 0) {
-        problems.push(`${nUnweighted} of ${nGroups} groups carry no standard uncertainty ` +
-                      `and were given unit weight.`);
+        problems.push(`${nUnweighted} of ${nGroups} group(s) carry no usable standard ` +
+                      `uncertainty and were DROPPED, not given unit weight: a sigma of zero ` +
+                      `from the decomposition means that intensity was never determined, and ` +
+                      `charging the model against it inflates the residual. They are absent ` +
+                      `from the effective-observation count as well.`);
     }
 
     return { reflPack, groupMeta, groupD, nRefl: w, nGroups, overlapTol: tol, groupStride: GROUP_STRIDE,
              weighted: wN > 0,
+             leverage: swCorrelationLeverage(groupMeta, groups, GROUP_STRIDE, nGroups),
+             // Which rule actually ran. Reported rather than assumed: the
+             // profile-width rule needs a width from the caller, and a silent
+             // fallback to the d rule is precisely the failure that let a
+             // search treat unresolvable lines as independent observations.
+             groupedBy: (fwhmAt && widthMisses === 0) ? 'profile-width'
+                      : (fwhmAt ? 'profile-width-partial' : 'd-tolerance'),
+             widthMisses,
              overlapped: groups.filter(g => g.members.length > 1).length, problems };
+}
+
+/**
+ * How many observations the FITNESS actually rests on.
+ *
+ * A count of reflections is the wrong number. wR2 is WEIGHTED, so a group's
+ * influence is its share of the weighted variance, w_i * (I_i - Ibar)^2, not
+ * its presence in the list. Those shares are wildly uneven: 1/sigma^2 rewards
+ * the sharp low-angle reflections, whose sigma is small, and all but erases
+ * the high-angle overlaps a Pawley fit could not partition, whose sigma can
+ * exceed their own value. A list of 35 groups can be three groups wearing a
+ * disguise.
+ *
+ * The number returned is the inverse participation ratio, 1 / sum(p_i^2) with
+ * p_i each group's share: N for N equal shares, 1 when one share is
+ * everything.
+ *
+ * A model with more free parameters than effective observations fits them
+ * exactly whatever the structure, and every candidate then scores alike. The
+ * search cannot detect that from the inside -- a good score looks like success
+ * -- so it is measured here, before the search is asked a question its data
+ * cannot answer.
+ *
+ * @param {Float32Array} groupMeta packed [start, count, Iobs, weight] per group
+ * @param {Array}  groups   the group records, for reporting which ones dominate
+ * @param {number} stride   GROUP_STRIDE
+ * @param {number} nGroups
+ * @returns {{nEff:number, nGroups:number, top:Array, share:number}}
+ */
+/**
+ * Recomputes the kernel's fitness on the CPU, from the same packed arrays.
+ *
+ * The kernel returns a single float and the host cannot tell from it which
+ * quantity produced it -- two different figures of merit are the same bits.
+ * A stale shader, a changed reduction or a mis-read state slot would all be
+ * silent. This is the check that makes them loud.
+ *
+ * The check is only worth anything if it is INDEPENDENT of the kernel and
+ * IDENTICAL in inputs. So it replays the very arrays that were uploaded --
+ * genPack for the orbit expansion, the packed symmetry operators, the same
+ * scattering table, the same group metadata -- rather than rebuilding any of
+ * them from the model. Anything it rebuilt could be rebuilt wrongly in the
+ * same way twice and agree for the wrong reason.
+ *
+ * Run once, for the winner only: it is O(atoms * reflections) in scalar JS,
+ * which is the kernel's whole inner loop without the parallelism.
+ *
+ * @param {Object} args
+ * @param {Float32Array} args.coords    the winner's asymmetric-unit x,y,z
+ * @param {Uint32Array}  args.genPack   site | op<<8 | type<<20, per generated atom
+ * @param {Float32Array} args.symPacked 12 floats per operator: r[9] then t[3]
+ * @param {Float32Array} args.groupMeta [start, count, Iobs, weight] per group
+ * @param {Uint32Array}  args.reflPack  packed hkl, then multiplicity
+ * @param {Float32Array} args.fTab      nRefl * nElem scattering factors
+ * @param {number} args.nElem
+ * @param {number} args.nGroups
+ * @param {number} args.stride
+ * @returns {number} fitness in [0,1], i.e. 1 - wR2
+ */
+function swFitnessOnCpu(args) {
+    const { coords, genPack, symPacked, groupMeta, reflPack, fTab,
+            nElem, nGroups, stride, siteProj, projBase, nSites } = args;
+    const nTot = genPack.length;
+
+    // --- PROJECT ONTO THE WYCKOFF SUBSPACE FIRST.
+    //
+    // The kernel does this before it expands anything (project_onto_wyckoff),
+    // and it is not a refinement -- it is what turns a free 3-vector into a
+    // point that actually lies on the site. A 4c coordinate only has x and z;
+    // its y is pinned to 1/4 by the projector, not by the search. Expanding the
+    // raw vector instead builds a DIFFERENT STRUCTURE, and the residual
+    // computed for it is a true residual of the wrong thing -- which is worse
+    // than a wrong number, because it looks like a disagreement with the
+    // kernel rather than a bug here.
+    const proj = new Float64Array(nSites * 3);
+    for (let sIdx = 0; sIdx < nSites; sIdx++) {
+        const b12 = projBase + sIdx * 12;
+        const x = coords[sIdx * 3], y = coords[sIdx * 3 + 1], z = coords[sIdx * 3 + 2];
+        let ox = siteProj[b12 + 0] * x + siteProj[b12 + 1] * y + siteProj[b12 + 2] * z + siteProj[b12 + 9];
+        let oy = siteProj[b12 + 3] * x + siteProj[b12 + 4] * y + siteProj[b12 + 5] * z + siteProj[b12 + 10];
+        let oz = siteProj[b12 + 6] * x + siteProj[b12 + 7] * y + siteProj[b12 + 8] * z + siteProj[b12 + 11];
+        proj[sIdx * 3]     = ox - Math.floor(ox);
+        proj[sIdx * 3 + 1] = oy - Math.floor(oy);
+        proj[sIdx * 3 + 2] = oz - Math.floor(oz);
+    }
+
+    // --- expand the orbit exactly as the kernel's generation loop does
+    const gx = new Float64Array(nTot), gy = new Float64Array(nTot),
+          gz = new Float64Array(nTot), gT = new Int32Array(nTot);
+    for (let i = 0; i < nTot; i++) {
+        const pk = genPack[i];
+        const site = pk & 0xFF, op = (pk >>> 8) & 0xFFF, ty = (pk >>> 20) & 0xF;
+        const px = proj[site * 3], py = proj[site * 3 + 1], pz = proj[site * 3 + 2];
+        const b = op * 12;
+        let nx = px * symPacked[b + 0] + py * symPacked[b + 1] + pz * symPacked[b + 2] + symPacked[b + 9];
+        let ny = px * symPacked[b + 3] + py * symPacked[b + 4] + pz * symPacked[b + 5] + symPacked[b + 10];
+        let nz = px * symPacked[b + 6] + py * symPacked[b + 7] + pz * symPacked[b + 8] + symPacked[b + 11];
+        gx[i] = nx - Math.floor(nx); gy[i] = ny - Math.floor(ny); gz[i] = nz - Math.floor(nz);
+        gT[i] = Math.min(ty, Math.max(nElem, 1) - 1);
+    }
+
+    // --- the same three sums the kernel reduces
+    let scc = 0, soo = 0, sco = 0;
+    for (let g = 0; g < nGroups; g++) {
+        const gb = g * stride;
+        const start = groupMeta[gb] | 0, count = groupMeta[gb + 1] | 0;
+        const iObs = groupMeta[gb + 2];
+        const wgt = stride >= 4 ? groupMeta[gb + 3] : 1;
+        if (!(wgt > 0)) continue;
+        let iCalc = 0;
+        for (let m = 0; m < count; m++) {
+            const r = start + m;
+            const pk = reflPack[r * 2];
+            const h = (pk & 0x3FF) - 512, k = ((pk >>> 10) & 0x3FF) - 512,
+                  l = ((pk >>> 20) & 0x3FF) - 512;
+            const mult = reflPack[r * 2 + 1];
+            const fBase = r * nElem;
+            let fr = 0, fi = 0;
+            for (let a = 0; a < nTot; a++) {
+                const q = h * gx[a] + k * gy[a] + l * gz[a];
+                const ph = 2 * Math.PI * (q - Math.floor(q));
+                const f = fTab[fBase + gT[a]];
+                fr += f * Math.cos(ph); fi += f * Math.sin(ph);
+            }
+            iCalc += mult * (fr * fr + fi * fi);
+        }
+        scc += wgt * iCalc * iCalc;
+        soo += wgt * iObs * iObs;
+        sco += wgt * iCalc * iObs;
+    }
+    const den = scc * soo;
+    if (!(den > 1e-20) || !(sco > 0)) return 0;
+    const r2 = Math.min(1, Math.max(0, (sco * sco) / den));
+    return Math.min(1, Math.max(0, 1 - Math.sqrt(Math.max(0, 1 - r2))));
+}
+
+function swCorrelationLeverage(groupMeta, groups, stride, nGroups) {
+    let sw = 0, so = 0;
+    for (let g = 0; g < nGroups; g++) {
+        const w = groupMeta[g * stride + 3];
+        if (!(w > 0)) continue;
+        sw += w; so += w * groupMeta[g * stride + 2];
+    }
+    if (!(sw > 0)) return { nEff: 0, nGroups, top: [], share: 0 };
+    const mo = so / sw;
+
+    const contrib = new Float64Array(nGroups);
+    let varO = 0;
+    for (let g = 0; g < nGroups; g++) {
+        const w = groupMeta[g * stride + 3];
+        if (!(w > 0)) continue;
+        const dv = groupMeta[g * stride + 2] - mo;
+        contrib[g] = w * dv * dv;
+        varO += contrib[g];
+    }
+    if (!(varO > 0)) return { nEff: 0, nGroups, top: [], share: 0 };
+
+    let sumSq = 0;
+    for (let g = 0; g < nGroups; g++) { const p = contrib[g] / varO; sumSq += p * p; }
+    const nEff = sumSq > 0 ? 1 / sumSq : 0;
+
+    const order = Array.from({ length: nGroups }, (_, g) => g)
+                       .sort((x, y) => contrib[y] - contrib[x]);
+    const top = order.slice(0, 5).filter(g => contrib[g] > 0).map(g => {
+        const m = groups[g] && groups[g].members && groups[g].members[0];
+        return {
+            hkl: m ? `${m.h} ${m.k} ${m.l}` : '?',
+            d: groups[g] ? groups[g].d : NaN,
+            iObs: groupMeta[g * stride + 2],
+            weight: groupMeta[g * stride + 3],
+            share: contrib[g] / varO
+        };
+    });
+    const share = top.slice(0, 3).reduce((a, t) => a + t.share, 0);
+    return { nEff, nGroups, top, share };
+}
+
+/**
+ * Restraints counted as PSEUDO-OBSERVATIONS.
+ *
+ * A distance window is information about the structure that did not come from
+ * the diffraction pattern, and a refinement that uses it is fitting more data
+ * than the reflection list alone contains. Rietveld practice has counted
+ * restraints in the observation total for decades, for exactly the reason that
+ * matters here: they are what makes an otherwise underdetermined model
+ * determined, and leaving them out of the count understates what the fit
+ * actually rests on.
+ *
+ * WHAT COUNTS AS ONE. A coordination-shell rule asking for n partners in a
+ * window is n statements about n distances, so it contributes n per
+ * INDEPENDENT SITE of that element -- not per atom in the cell. The symmetry
+ * images of a site are not independent observations; they are the same
+ * distance seen again, and counting the orbit would inflate the total by the
+ * multiplicity. A bare nearest-neighbour rule with no count is one statement.
+ *
+ * They are reported SEPARATELY from N_eff rather than folded into it, because
+ * a structure held up by restraints is a different claim from one determined
+ * by the data, and a single summed number would hide which of the two you have.
+ *
+ * @param {Object} restraints from buildRestraintTables: { rules, nRules }
+ * @param {Array}  sites      the candidate's sites, [{ elementIdx, w }]
+ * @returns {{count:number, detail:Array}}
+ */
+function swRestraintObservations(restraints, sites) {
+    const rules = (restraints && restraints.rules) || [];
+    if (!rules.length || !sites || !sites.length) return { count: 0, detail: [] };
+
+    // Independent sites per element type, which is what a rule applies to once.
+    const perType = new Map();
+    for (const s of sites) {
+        const t = s.elementIdx;
+        perType.set(t, (perType.get(t) || 0) + 1);
+    }
+
+    let count = 0;
+    const detail = [];
+    for (const r of rules) {
+        // [aType, bType, dmin, dmax, count, mode]; mode 0 is the bare
+        // nearest-neighbour form, which is one statement rather than r[4].
+        const aType = r[0], mode = r[5], want = r[4];
+        const nSites = perType.get(aType) || 0;
+        if (!nSites) continue;
+        const per = (mode !== 0 && want > 0) ? want : 1;
+        count += per * nSites;
+        detail.push({ aType, bType: r[1], perSite: per, sites: nSites, total: per * nSites });
+    }
+    return { count, detail };
 }
 
 /**
@@ -671,15 +1021,30 @@ async function runWyckoffSearch(o) {
     let ftab = { table: new Float32Array(0), missing: [] };
     
     {
-        refl = swPackReflections(obs.rows, { overlapTol: o.overlapTol });
+        refl = swPackReflections(obs.rows, {
+            overlapTol: o.overlapTol,
+            fwhmAt: o.fwhmAt,
+            overlapFwhmFrac: o.overlapFwhmFrac
+        });
         refl.problems.forEach(say);
-        say(`${refl.nGroups} reflection group(s), ${refl.overlapped} containing overlaps.`);
+        say(`${refl.nGroups} reflection group(s), ${refl.overlapped} containing overlaps ` +
+            `(grouped by ${refl.groupedBy}).`);
+        if (refl.groupedBy === 'profile-width-partial') {
+            say(`The profile returned no width for ${refl.widthMisses} reflection(s); ` +
+                `those fell back to the d rule. A profile that fails at every angle ` +
+                `would otherwise have made every line its own observation.`);
+        }
+        if (refl.groupedBy === 'd-tolerance') {
+            say(`No peak width was available, so lines were grouped on a fixed fraction ` +
+                `of d -- a property of the lattice, not of the pattern. Reflections the ` +
+                `data cannot separate may be counted here as independent observations.`);
+        }
 
         ftab = swScatteringTable(refl, demand, { overallB, formFactor: ff });
         if (ftab.missing.length) {
             say(`No tabulated scattering factor for ${ftab.missing.join(', ')}; using f = Z. ` +
                 `A missing element is indistinguishable from a wrong structure once it reaches ` +
-                `the correlation, so check scatters/ is present.`);
+                `the fitness, so check scatters/ is present.`);
         }
     }
     // o.minContact is the Minimum contact distance slider. It was passed in
@@ -903,20 +1268,20 @@ async function runWyckoffSearch(o) {
 
     // THE BOND PENALTY IS PER CHARGED NEIGHBOUR SLOT, NOT A RAW SUM.
     //
-    // penBond and penCoord are documented as being "in CC units", and they were
+    // penBond and penCoord are documented as being in FITNESS units, and they were
     // not: the kernel accumulates them over every atom carrying a rule and every
     // neighbour slot that rule tracks, and hands the total to a score that is
-    // CC minus the penalty, with CC confined to [0, 1]. On PbSO4 with the one
+    // (1 - wR2) minus the penalty, with the fitness confined to [0, 1]. On PbSO4 with the one
     // reasonable rule "S O 4 1.35/1.65" that is four sulfurs times four slots,
     // and at a random start with the nearest oxygens near 3 A the raw penalty
     // is 13.8 -- multiplied by the ramp, between 2.8 and 55. Against a
     // correlation that can only move by 1.0 in total, the diffraction data is
     // switched off: the sampler optimises geometry alone until a tetrahedron
-    // exists, and only then does CC begin to matter, by which point the chain
+    // exists, and only then does the fitness begin to matter, by which point the chain
     // is in whatever basin the geometry led it to.
     //
     // The symptom is a search that gets WORSE when given correct chemistry. The
-    // run that produced this fix returned CC 0.699 with the constraint and CC
+    // run that produced this fix returned a fitness of 0.699 with the constraint and
     // 0.993 without, and the structure it chose satisfied the constraint less
     // well than the one it rejected -- zero oxygens in the window against four,
     // penalty 0.87 against 0.00. It lost on both terms, which can only happen
@@ -1298,7 +1663,7 @@ async function runWyckoffSearch(o) {
         }
 
         /**
-         * One dispatch: coordinates in, fitness and CC out.
+         * One dispatch: coordinates in, score and fitness out.
          *
          * `duringWait` runs after the work is submitted and before the readback
          * is awaited - i.e. in the window where the GPU is busy and the main
@@ -1314,7 +1679,7 @@ async function runWyckoffSearch(o) {
          * produced; throwing it away because one Markov chain declined to move
          * there would lose answers the search had already found.
          */
-        function recordBest(fitArr, coords, scale) {
+        function recordBest(fitArr, coords, scale, forceRecord) {
             for (let i = 0; i < numParticles; i++) {
                 const A = assignOf[i], base = i * coordsPerParticle;
                 const f = fitArr[i];
@@ -1325,7 +1690,14 @@ async function runWyckoffSearch(o) {
                 // comparing: what is stored came from an older, gentler ramp.
                 const gRef = Number.isFinite(gBestCC[A]) ? gBestCC[A] - gBestPen[A] * scale
                                                         : gBestFit[A];
-                if (f > gRef) {
+                // FORCED: at full resolution the stored value is not a rival,
+                // it is a stale measurement of the SAME coordinates on a
+                // smaller reflection set. Comparing them keeps whichever set
+                // was easier, and the ramped subset always is -- so a correct
+                // full-resolution score loses to the number it was meant to
+                // replace, and the ramped one survives to be reported as
+                // "full res." That is not a tie-break, it is a unit error.
+                if (forceRecord || f > gRef) {
                     gBestFit[A] = f; gBestCC[A] = cc; gBestPen[A] = rawPen;
                     gBestPos.set(coords.subarray(base, base + coordsPerParticle),
                                  A * coordsPerParticle);
@@ -1401,22 +1773,68 @@ async function runWyckoffSearch(o) {
          * which is the same bias against high-dimensional assignments that the
          * particle weighting and the late prune point exist to remove.
          */
+        /**
+         * Re-score every archived best at FULL RESOLUTION, without optimising.
+         *
+         * The quench needs this before it compares anything, but so does an
+         * ABANDONED run: a stored best was scored on whatever ramped subset was
+         * active when it was found, and that number is systematically better
+         * than the full-resolution one because the subset is easier. Reporting
+         * it under a "full res." label is a unit error, not a caveat -- a
+         * stopped run showed wR2 = 13.04% for a structure whose real residual
+         * was 97.31%.
+         *
+         * One evaluation dispatch, no MCMC steps, so it costs a fraction of a
+         * quench and is affordable on the path where the user has just asked
+         * the search to stop.
+         *
+         * @param {number[]} candidateIds
+         * @returns {Promise<void>}
+         */
+        async function rescoreAtFullResolution(candidateIds) {
+            const live = candidateIds.filter(A => Number.isFinite(gBestFit[A]) &&
+                                                  Number.isFinite(gBestCC[A]));
+            if (!live.length) return;
+            params[PARAM.nGroupsActive] = refl.nGroups;
+            const scale = SW_DEFAULTS.penRampEnd;
+            params[PARAM.penScale] = scale;
+
+            const archived = new Float32Array(numParticles * coordsPerParticle);
+            for (let i = 0; i < numParticles; i++) {
+                const A = assignOf[i];
+                archived.set(
+                    gBestPos.subarray(A * coordsPerParticle, (A + 1) * coordsPerParticle),
+                    i * coordsPerParticle);
+            }
+            const fArch = await evaluateCoordsSync(archived);
+            recordBest(fArch, archived, scale, true);   // forced, not compared
+        }
+
         async function quench(candidateIds) {
             const live = candidateIds.filter(A => Number.isFinite(gBestFit[A]) &&
                                                   Number.isFinite(gBestCC[A]));
             if (!live.length) return;
 
-// Per assignment, not just the leader. Reporting only the best CC
+// Per assignment, not just the leader. Reporting only the best score
             // hides the case that matters: the leader is already converged and
             // eleven others move. Those others are what the R ranking compares.
-            const before = new Float32Array(assignments.length);
-            live.forEach(A => { before[A] = gBestCC[A]; });
-
             // The quench scores every candidate at FULL resolution, so the
             // ramp is over and the whole group list is in play.
             params[PARAM.nGroupsActive] = refl.nGroups;
             const scale = SW_DEFAULTS.penRampEnd;
             params[PARAM.penScale] = scale;
+
+            // RE-MEASURE THE ARCHIVE FIRST, before `before` is taken and before
+            // any quenched coordinate is compared against it. Every stored best
+            // was scored on a ramped subset; until each is re-scored here, none
+            // of them is on the same footing as anything produced below, and
+            // `before` would be a snapshot of the wrong quantity -- making the
+            // "N improved" line a comparison between two different reflection
+            // sets rather than between two structures.
+            await rescoreAtFullResolution(candidateIds);
+
+            const before = new Float32Array(assignments.length);
+            live.forEach(A => { before[A] = gBestCC[A]; });
 
             // Spread the chains over the assignments and start every one of them
             // on its own assignment's best. Chains sharing a start diverge
@@ -1471,11 +1889,11 @@ async function runWyckoffSearch(o) {
             }
             say(`Quench: ${live.length} assignment(s) at full resolution; ` +
                 (moved
-                    ? `${moved} improved, largest +${biggest.toFixed(4)} CC; `
+                    ? `${moved} improved, largest ${(biggest * 100).toFixed(2)} pts of wR2; `
                     : 'none improved; ') +
                 (leadAfter - leadBefore > 5e-5
-                    ? `best CC ${leadBefore.toFixed(4)} -> ${leadAfter.toFixed(4)}.`
-                    : `best CC unchanged at ${leadAfter.toFixed(4)}. The coordinates are at the ` +
+                    ? `best wR2 ${((1 - leadBefore) * 100).toFixed(2)}% -> ${((1 - leadAfter) * 100).toFixed(2)}%.`
+                    : `best wR2 unchanged at ${((1 - leadAfter) * 100).toFixed(2)}%. The coordinates are at the ` +
                       `bottom of their basins, so anything still wrong is the basin, not the polish.`));
         }
 
@@ -1750,7 +2168,21 @@ let needCurrentEval = true, firstEval = (wi === 0);
 
       }
 
-        if (!stopped) await quench(waves[wi].ids);
+        if (!stopped) {
+            await quench(waves[wi].ids);
+        } else {
+            // ABANDONED, BUT STILL MEASURED. Skipping the quench is right --
+            // the user asked it to stop and the quench is the expensive part --
+            // but skipping the re-score meant the figure reported for a stopped
+            // run was whatever ramped subset happened to be active, presented as
+            // full resolution. The scores are what the caller ranks and reports;
+            // they have to be on one footing whether the run finished or not.
+            await rescoreAtFullResolution(waves[wi].ids);
+            say('Stopped: re-scored the best of each assignment at full ' +
+                'resolution before reporting, so the figures below are ' +
+                'comparable with a completed run. No quench was run, so the ' +
+                'coordinates are not polished.');
+        }
 
         for (const A of waves[wi].ids) {
             if (!Number.isFinite(gBestFit[A]) || gBestFit[A] <= -Infinity) continue;
@@ -1767,8 +2199,9 @@ let needCurrentEval = true, firstEval = (wi === 0);
     }
 
     /* ---- 9. Report ---- */
-    // Ranked by CC alone - the agreement between the observed and calculated
-    // Patterson maps, which is the quantity that actually means something.
+    // Ranked by the fitness alone - the agreement between the observed and
+    // calculated intensities, which is the quantity that actually means
+    // something.
     //
     // The penalty weights are arbitrary: 0.05 per clash, 0.02 per Angstrom, no
     // more principled than any other pair of numbers. They earn their place
@@ -1800,14 +2233,143 @@ let needCurrentEval = true, firstEval = (wi === 0);
             w: s.w,
             x: r.coords[si * 3], y: r.coords[si * 3 + 1], z: r.coords[si * 3 + 2]
         }));
+        const nFreeParams = A.sites.reduce((n, s) => n + wyckoffFreedom(s.w), 0);
+        const restr = swRestraintObservations(restraints, A.sites);
+        const nEff = (refl.leverage && refl.leverage.nEff) || 0;
         return { cc: r.cc, score: r.score, penalty: r.penalty, assignment: A.sites.map(s => `${s.element} ${s.w.multiplicity}${s.w.letter}`).join(', '),
-                 harkerResidual: A.harkerResidual, sites, nFreeParams:
-                     A.sites.reduce((n, s) => n + wyckoffFreedom(s.w), 0) };
+                 harkerResidual: A.harkerResidual, sites, nFreeParams,
+                 // What this candidate's score actually rests on. Carried per
+                 // candidate because nFreeParams is per candidate; nEff is a
+                 // property of the data and is the same for all of them.
+                 nEff, nRestraints: restr.count, restraintDetail: restr.detail,
+                 obsPerParam: nFreeParams > 0
+                     ? (nEff + restr.count) / nFreeParams : Infinity };
     });
 
-    say(top.length ? `Best score ${top[0].score.toFixed(4)} (CC ${top[0].cc.toFixed(4)}) for ${top[0].assignment}.`
-                   : 'No candidate produced a finite score.');
+    // ------------------------------------------------------------------
+    //  CAN THIS DATA RANK ANYTHING?
+    //
+    //  Asked here, once, before the table is presented as a result. A model
+    //  with more free parameters than effective observations reproduces them
+    //  exactly whatever the structure, so every candidate scores ~1 and the
+    //  ordering between them is noise. The search cannot notice this from the
+    //  inside: a perfect score looks like success, and reporting the
+    //  winner of a meaningless ordering is worse than reporting no winner,
+    //  because only one of the two is believed.
+    //
+    //  A REFUSAL, NOT A FILTER. The candidates are still returned -- they may
+    //  be the right answer, and the coordinates are still worth looking at --
+    //  but `ranked` says the ordering carries no weight, so the caller states
+    //  that instead of presenting a best.
+    // ------------------------------------------------------------------
+    // ------------------------------------------------------------------
+    //  CROSS-CHECK THE WINNER'S FITNESS ON THE CPU.
+    //
+    //  Two numbers that must agree. They come from the same uploaded arrays by
+    //  two independent routes, so a disagreement localises the fault to the
+    //  kernel, the state read-back, or the buffers -- and an agreement rules
+    //  all three out, which is just as useful when the search and the
+    //  refinement disagree and only one of them can be wrong.
+    //
+    //  f32 in the kernel against f64 here, over sums that can span many orders
+    //  of magnitude, so the tolerance is loose. It is sized to catch a
+    //  DIFFERENT QUANTITY, not a rounding difference: two different figures
+    //  of merit for the same structure are nowhere near 1e-3 apart.
+    // ------------------------------------------------------------------
+    let cpuCheck = null;
+    if (top.length && results.length) {
+        try {
+            const best = results[0];
+            const cpu = swFitnessOnCpu({
+                coords: best.coords,
+                // Same row the kernel reads: (A * siteStride + s) * 12, with
+                // siteStride the host's allocation width, not the clamped one.
+                siteProj: T.siteProj,
+                projBase: best.assignIdx * T.maxSites * 12,
+                nSites: T.maxSites,
+                // genPack is one flat table, assignment A occupying
+                // [A*nTot, (A+1)*nTot) -- the same `gBase = A * params.nTot`
+                // the kernel computes. Sliced the same way rather than
+                // re-derived, so an error in the layout would show up as a
+                // disagreement instead of being reproduced identically here.
+                genPack: T.genPack.subarray(best.assignIdx * T.nTot,
+                                            (best.assignIdx + 1) * T.nTot),
+                symPacked, groupMeta: refl.groupMeta, reflPack: refl.reflPack,
+                fTab: ftab.table, nElem: ftab.nElem,
+                nGroups: refl.nGroups, stride: refl.groupStride
+            });
+            const gpu = best.cc;
+            cpuCheck = { gpu, cpu, delta: Math.abs(gpu - cpu) };
+            if (Number.isFinite(cpu) && Number.isFinite(gpu)) {
+                if (cpuCheck.delta > 1e-3) {
+                    say(`FITNESS CROSS-CHECK FAILED: the kernel returned ` +
+                        `${gpu.toFixed(4)} (wR2 ${((1 - gpu) * 100).toFixed(2)}%) and the same ` +
+                        `arrays recomputed on the CPU give ${cpu.toFixed(4)} ` +
+                        `(wR2 ${((1 - cpu) * 100).toFixed(2)}%). They should agree to 1e-3. ` +
+                        `The reported figure of merit is not the residual of this structure ` +
+                        `-- suspect a stale swarm_reflection.wgsl, or a changed state layout.`);
+                } else {
+                    say(`Fitness cross-check OK: kernel ${gpu.toFixed(4)}, CPU ${cpu.toFixed(4)}.`);
+                }
+            }
+        } catch (e) {
+            say(`Fitness cross-check could not run: ${e && e.message}.`);
+        }
+    }
+
+    const lev = refl.leverage || { nEff: 0, nGroups: refl.nGroups, top: [], share: 0 };
+    const worstRatio = top.length
+        ? Math.min(...top.map(t => t.obsPerParam)) : Infinity;
+    const ranked = !(worstRatio < WY_WITHHOLD_OBS_PER_PARAM);
+    const thin = worstRatio < WY_MIN_OBS_PER_PARAM;
+
+    if (lev.nEff > 0 && lev.nEff < lev.nGroups * 0.5) {
+        say(`Effective observations ${lev.nEff.toFixed(1)} out of ${lev.nGroups} groups: ` +
+            `the fitness is weighted, so a group counts for its share of the ` +
+            `weighted variance, not for being in the list.`);
+        if (lev.top.length) {
+            say(`  ${lev.top.slice(0, 3).map(t => `(${t.hkl}) ${(100 * t.share).toFixed(0)}%`).join(', ')}` +
+                ` -- top three carry ${(100 * lev.share).toFixed(0)}% of it.`);
+        }
+    }
+    if (top.length && top[0].nRestraints > 0) {
+        say(`Restraints add ${top[0].nRestraints} pseudo-observation(s) to the ` +
+            `${lev.nEff.toFixed(1)} from the pattern.`);
+    }
+
+    if (ranked && thin && top.length) {
+        say(`THIN DATA. ${top[0].nFreeParams} free parameter(s) against ` +
+            `${(lev.nEff + top[0].nRestraints).toFixed(1)} effective observation(s) -- ` +
+            `${top[0].obsPerParam.toFixed(2)} per parameter. The ranking below is kept, ` +
+            `because a correct structure can and does appear at this ratio, but the gap ` +
+            `between the leading candidates carries little weight: check the chemistry ` +
+            `and the refinement wR before accepting one.`);
+    }
+    if (!ranked && top.length) {
+        say(`RANKING WITHHELD. The best candidate has ${top[0].nFreeParams} free ` +
+            `parameter(s) against ${(lev.nEff + top[0].nRestraints).toFixed(1)} ` +
+            `effective observation(s) -- ${top[0].obsPerParam.toFixed(2)} per parameter, ` +
+            `below the ${WY_WITHHOLD_OBS_PER_PARAM} at which the model can reproduce ` +
+            `every observation exactly whatever the structure. ` +
+            `Every candidate will score near 1 here regardless of whether it is right. ` +
+            `The list below is unordered: treat it as candidates to test, not as a result.`);
+        say(`  To rank these: extract more reflections (the high-angle overlaps ` +
+            `whose sigma exceeds their own value carry almost no weight), or add ` +
+            `distance constraints, which count as observations.`);
+    } else {
+        say(top.length ? `Best score ${top[0].score.toFixed(4)} (wR2 ${((1 - top[0].cc) * 100).toFixed(2)}%) for ${top[0].assignment}.`
+                       : 'No candidate produced a finite score.');
+    }
     return { candidates: top, all: results.length, assignments: assignments.length,
+             // False when the data cannot support an ordering; the caller must
+             // not present candidates[0] as "the" answer in that case.
+             ranked, thin, leverage: lev,
+             minObsPerParam: WY_WITHHOLD_OBS_PER_PARAM,
+             cautionObsPerParam: WY_MIN_OBS_PER_PARAM,
+             // {gpu, cpu, delta} or null. Carried out so the report can state
+             // that the number it prints was independently reproduced, rather
+             // than leaving the reader to trust it.
+             cpuCheck,
              // How many the solver kept, so the caller can say so rather than
              // leaving the user to wonder why the table is shorter than the
              // number of assignments searched.

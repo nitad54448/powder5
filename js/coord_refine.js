@@ -75,15 +75,43 @@ const CR_DEFAULTS = Object.freeze({
  * The observation is the multiplicity-weighted sum over the group, which is
  * what the diffractometer actually measured.
  */
-function crGroupReflections(obsRows, overlapTol) {
+function crGroupReflections(obsRows, overlapTol, fwhmAt, sepFrac) {
+    // THE SAME RULE THE SEARCH USES, from the same width function.
+    //
+    // Two lines are one observation when the PATTERN cannot separate them,
+    // which is a question about the peak width, not about a fixed fraction of
+    // d. That is why swPackReflections groups on the profile; this must group
+    // identically or the two residuals are not comparable, and the search
+    // reporting wR2 = 88% beside a refinement reporting 32% on the same
+    // coordinates is exactly what that looks like. Splitting more finely than
+    // the refinement means being scored against intensities the extraction
+    // determined less well, and a residual against worse-determined
+    // observations is simply larger -- honestly so, and uselessly.
+    //
+    // Falls back to the d rule per pair when no width is available, for the
+    // same reason as there: a NaN width is not evidence that two lines are
+    // resolved, and a profile that failed at every angle would otherwise make
+    // every line its own observation.
+    const frac = Number.isFinite(sepFrac) ? sepFrac : 0.5;
     const sorted = [...obsRows].sort((a, b) => b.d - a.d);
     const groups = [];
     let cur = null;
     for (const r of sorted) {
-        if (cur && Math.abs(r.d - cur.d) / cur.d < overlapTol) {
-            cur.members.push(r);
+        const rt = Number.isFinite(r.tth) ? r.tth : r.twoTheta;
+        let same;
+        if (cur && fwhmAt && Number.isFinite(rt) && Number.isFinite(cur.lastTth)) {
+            const w = fwhmAt(rt);
+            same = (Number.isFinite(w) && w > 0)
+                ? Math.abs(rt - cur.lastTth) < frac * w
+                : Math.abs(r.d - cur.d) / cur.d < overlapTol;
         } else {
-            cur = { members: [r], d: r.d, Iobs: 0 };
+            same = !!cur && Math.abs(r.d - cur.d) / cur.d < overlapTol;
+        }
+        if (same) {
+            cur.members.push(r);
+            if (Number.isFinite(rt)) cur.lastTth = rt;
+        } else {
+            cur = { members: [r], d: r.d, Iobs: 0, lastTth: rt };
             groups.push(cur);
         }
     }
@@ -258,7 +286,7 @@ function refineCoordinatesAgainstPawley(o) {
                         `the refinement would be underdetermined.` };
     }
 
-    const groups = crGroupReflections(rows, opt.overlapTol);
+    const groups = crGroupReflections(rows, opt.overlapTol, opt.fwhmAt, opt.overlapFwhmFrac);
     const B = Number.isFinite(o.overallB) ? o.overallB : 0;
     const ffn = o.formFactor || (() => null);
 

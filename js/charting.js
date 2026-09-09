@@ -19,6 +19,83 @@ function getPeakInfoAt(tth) {
     return { peak: null, inRegion: false };
 }
 
+/**
+ * chart.update() that is safe when a dataset's LENGTH changed.
+ *
+ * THE BUG THIS EXISTS FOR. Chart.js decides whether newly inserted elements
+ * get initialised by:
+ *
+ *     const reset = !animsDisabled && newControllers.indexOf(controller) === -1;
+ *     controller.buildOrUpdateElements(reset);
+ *
+ * This chart sets `animation: false`, so animsDisabled is true, so reset is
+ * FALSE, so _insertElements() creates the new element without the
+ * updateElements() call that assigns its `.options`. Asking for 'none' does
+ * not repair it: 'none' is a direct-update mode and takes the branch that
+ * assumes options are already there.
+ *
+ * The element is then live, visible and hit-testable with options ===
+ * undefined. Nothing throws at insertion, nothing throws at draw. The failure
+ * arrives on the next MOUSE MOVE, inside Chart.js, where PointElement.inRange
+ * reads options.hitRadius -- and then on every mouse move after that, because
+ * the element is never repaired. One Ctrl-click placing one background anchor
+ * produces an unbounded stream of exceptions from a file the caller never
+ * touched.
+ *
+ * Growing a dataset therefore needs the DEFAULT mode, which resolves options
+ * for every element. That costs nothing here: with `animation: false` there is
+ * no animation for the default path to set up, which is the only thing 'none'
+ * was buying.
+ *
+ * Compared BEFORE the update, while meta.data still holds the previous count:
+ * afterwards the two always agree and the test could never fire.
+ *
+ * @param {Chart} chart
+ * @returns {void}
+ */
+function chartUpdateSafe(chart) {
+    if (!chart) return;
+
+    const metas = [];
+    let lengthChanged = false;
+    for (let i = 0; i < chart.data.datasets.length; i++) {
+        const meta = chart.getDatasetMeta(i);
+        if (!meta) continue;
+        metas.push(meta);
+        const n = (chart.data.datasets[i].data || []).length;
+        if (!meta.data || meta.data.length !== n) lengthChanged = true;
+    }
+
+    if (lengthChanged) {
+        // FORCE A FULL-RANGE ELEMENT PASS. Clearing _scaleRanges is not a
+        // trick; it is the exact condition Chart.js itself tests to decide
+        // whether the window optimisation above may be applied, and this is
+        // the one case where it may not.
+        for (const meta of metas) meta._scaleRanges = null;
+    }
+
+    chart.update(lengthChanged ? undefined : 'none');
+
+    // Belt and braces. If an element still has no options -- because this
+    // model of Chart.js's internals is wrong somewhere, or a future version
+    // moves the goalposts -- mark it skipped rather than leave it live.
+    // evaluateInteractionItems honours `skip`, so a skipped element is passed
+    // over instead of being asked for a hitRadius it does not have, and the
+    // next full pass will initialise and unskip it. Cheap: one walk of arrays
+    // that were just rebuilt anyway, and it converts a permanent crash into a
+    // point that is briefly not hoverable.
+    for (const meta of metas) {
+        const data = meta.data;
+        if (!data) continue;
+        for (let k = 0; k < data.length; k++) {
+            const el = data[k];
+            if (el && el.options === undefined) el.skip = true;
+        }
+    }
+}
+
+if (typeof window !== 'undefined') window.chartUpdateSafe = chartUpdateSafe;
+
 function initializeChart() {
     if (mainChart) mainChart.destroy();
 
@@ -122,7 +199,7 @@ function updatePlotRange(recalculateYMax = false) {
         mainChart.options.globalYMax = newYMax;
     }
     
-    mainChart.update('none');
+    chartUpdateSafe(mainChart);
 }
 
 function rescalePlot(updateY = false) {
@@ -231,7 +308,7 @@ function updateChart(netPeakPattern_sliced, background_sliced, hklList, params, 
 
     mainChart.options.scales.x.min = currentXMin;
     mainChart.options.scales.x.max = currentXMax;
-    mainChart.update('none');
+    chartUpdateSafe(mainChart);
 }
 
 function updatePreviewPattern() {
@@ -352,7 +429,7 @@ function updatePreviewPattern() {
     mainChart.options.scales.x.min = currentXMin;
     mainChart.options.scales.x.max = currentXMax;
 
-    mainChart.update('none');
+    chartUpdateSafe(mainChart);
 }
 
 function redrawFitForNewRange() {
@@ -410,7 +487,7 @@ function redrawFitForNewRange() {
     
     mainChart.options.scales.x.min = parseFloat(controls.tthMinSlider.value);
     mainChart.options.scales.x.max = parseFloat(controls.tthMaxSlider.value);
-    mainChart.update('none');
+    chartUpdateSafe(mainChart);
 }
 
 function refreshHklMarkers(params, positioned) {
@@ -549,7 +626,7 @@ function initCharting() {
         mainChart.options.scales.x.max = p.xMax - dx;
         mainChart.options.scales.y.min = p.yMin + dy;
         mainChart.options.scales.y.max = p.yMax + dy;
-        mainChart.update('none');
+        chartUpdateSafe(mainChart);
     }
 
     function endPan() {
@@ -566,6 +643,15 @@ function initCharting() {
         const x = e.offsetX, y = e.offsetY;
         if (x < left || x > right || y < top || y > bottom) return; 
 
+        // CTRL BOWS OUT FIRST, before the pan test rather than after it.
+        // Ctrl belongs to the other two gestures on this canvas -- Ctrl-click
+        // places a background point, Ctrl+Shift-drag marks an excluded region
+        // -- and the pan test only looks at altKey/shiftKey, so Ctrl+Shift-drag
+        // used to start a pan as well. The axis then moved under the pointer
+        // while the region band tracked the pointer, which is why the width of
+        // a dragged region could not be controlled: both ends were moving.
+        if (e.ctrlKey || e.metaKey) return;
+
         if (e.button === 1 || (e.button === 0 && (e.altKey || e.shiftKey))) {
             cancelRectZoom();
             if (beginPan(e.clientX, e.clientY)) e.preventDefault();
@@ -573,7 +659,6 @@ function initCharting() {
         }
 
         if (e.button !== 0) return; 
-        if (e.ctrlKey || e.metaKey) return;
         rectZoomState = { x0: x, y0: y, x1: x, y1: y, moved: false };
         e.preventDefault();
     });
@@ -626,7 +711,7 @@ function initCharting() {
         chart.options.scales.x.max = xMax;
         chart.options.scales.y.min = yMin;
         chart.options.scales.y.max = yMax;
-        chart.update('none');
+        chartUpdateSafe(chart);
         rescalePlot(false);
     });
 
@@ -657,7 +742,7 @@ function initCharting() {
 
         chart.options.scales[axisId].min = newMin;
         chart.options.scales[axisId].max = newMax;
-        chart.update('none');
+        chartUpdateSafe(chart);
         rescalePlot(false);
     }, { passive: false });
 
@@ -716,7 +801,7 @@ function initCharting() {
             };
             applyAxis('x', p.xFocal, p.xMin, p.xMax);
             applyAxis('y', p.yFocal, p.yMin, p.yMax);
-            chart.update('none');
+            chartUpdateSafe(chart);
             return;
         }
         if (panState && e.touches.length === 1) {
@@ -761,6 +846,6 @@ function initCharting() {
         updatePlotRange(true);
         rescalePlot(true);
 
-mainChart.update('none');
+chartUpdateSafe(mainChart);
     });
 }

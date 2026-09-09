@@ -463,6 +463,8 @@ blockquote {
             <li><a href="#wy-objective" class="sub-link">The Objective</a></li>
             <li><a href="#wy-controls" class="sub-link">Controls &amp; Capacities</a></li>
             <li><a href="#wy-constraints" class="sub-link">Distance Constraints</a></li>
+            <li><a href="#wyckoff-score" class="sub-link">Scoring: (1 &minus; wR2) &minus; pen</a></li>
+            <li><a href="#wyckoff-ranking" class="sub-link">When Ranking is Withheld</a></li>
             <li><a href="#wy-z" class="sub-link">Z, Density Window &amp; the Scan</a></li>
             <li><a href="#wy-how-many-sites" class="sub-link">How Many Sites</a></li>
             <li><a href="#wy-refinement" class="sub-link">Coordinate Refinement</a></li>
@@ -647,7 +649,7 @@ blockquote {
                 a Le Bail or Pawley refinement, a charge-flipping run, or a Wyckoff
                 search. It reads, for example
             </p>
-            <pre>Wyckoff search: Z = 4 (2/3), wave 2/3, restart 1/4, gen 500/1000, CC 0.8700
+            <pre>Wyckoff search: Z = 4 (2/3), wave 2/3, restart 1/4, gen 500/1000, wR2 13.0%
 Charge flipping: start 2/4, cycle 1300/2000, R 0.2841
 Refinement: 64%</pre>
             
@@ -746,13 +748,14 @@ Refinement: 64%</pre>
                 <a href="#parameters-background">Background Modeling</a> for what that costs.
             </p>
             <p>
-                <strong>Intensities are not bounded below by zero.</strong> An extracted intensity
-                is a measurement of a quantity whose true value is non-negative, but the
-                measurement itself carries noise, and forcing every realisation to be
-                \(\ge 0\) turns a symmetric error into a one-sided one. That bias lands hardest
-                on weak and systematically absent reflections - exactly the ones a
-                space-group test needs to be honest about. A negative intensity is refined,
-                reported and rendered as a negative contribution to the pattern.
+                <strong>Intensities are bounded at zero using Non-Negative Least Squares (NNLS).</strong>
+                An integrated intensity is physically non-negative, but unconstrained least squares
+                can split exactly overlapping reflections into large positive and negative values that sum correctly.
+                Imposing non-negativity via an active-set NNLS algorithm removes this physically impossible region.
+                Crucially, the <strong>Estimated Standard Deviations (ESDs) are extracted from the unconstrained normal equations matrix</strong>.
+                This ensures that a reflection pinned to zero still reports the true uncertainty of the measurement,
+                rather than falsely claiming an ESD of zero, preserving the statistical honesty required
+                for weak or systematically absent reflections.
             </p>
             <div class="note">
                 <strong>The intensity derivatives are analytic.</strong>
@@ -1386,7 +1389,7 @@ Refinement: 64%</pre>
                 $$H_L(\text{total}) = H_L(\text{isotropic}) + \frac{|H_{aniso}|}{1000}$$
                 This scaling allows the user to refine values in a manageable range (e.g., -10 to +10) rather than requiring input of very small decimals (e.g., 1e-4), a convention common in other refinement software.
             </div>
-        </section> <section id="parameters-profile-split"> <h3 id="parameters-profile-split">Split pVoigt (Asymmetric)</h3>
+        </section> <section id="parameters-profile-split"> <h3>Split pVoigt (Asymmetric)</h3>
             <p>
                 This profile function is a modification of the Simple pseudo-Voigt designed to model asymmetric peaks (e.g., from axial divergence or stacking faults). It achieves this by defining independent sets of profile width parameters for the left side (at $2\theta$ values less than the peak center) and the right side of the peak.
             </p>
@@ -2789,20 +2792,16 @@ Refinement: 64%</pre>
             <p>
                 A WebGPU swarm (replica-exchange MCMC) places atoms on trial Wyckoff assignments
                 that satisfy the stoichiometry exactly. Each candidate is scored by
-                $$f = \text{CC} - \text{pen}$$
-                where CC is a <strong>weighted Pearson correlation between
-                \(|F_{\text{calc}}|^2\) and the observed intensities</strong>, taken over
-                groups of reflections the powder pattern cannot separate. The observed intensity
-                of a group is \(\sum m |F_o|^2\) and the calculated one is accumulated the same
-                way, so the comparison is made where the measurement actually exists.
+                $$f = (1 - wR2) - \text{pen}$$
+                where <strong>wR2</strong> is the weighted residual between
+                \(|F_{\text{calc}}|^2\) and the observed intensities
+                <strong>with the scale refined by least squares</strong>, taken over groups of
+                reflections the powder pattern cannot separate. The observed intensity of a
+                group is \(\sum m |F_o|^2\) and the calculated one is accumulated
+                the same way, so the comparison is made where the measurement actually exists.
+                See <a href="#wyckoff-score">the scoring section</a> for the formula.
             </p>
-            <p>
-                Pearson rather than a cosine similarity or an R factor: it is scale-free, so there
-                is no scale factor to fit and no scale degeneracy for the swarm to explore;
-                subtracting the means keeps it discriminating, where a cosine similarity is
-                dominated by the large positive offset both vectors share; and it lands in
-                \([0,1]\), the range the clash and bond penalties are tuned against.
-            </p>
+            
             <p>
                 Scattering factors are the tabulated \(f(s)\) with an overall temperature factor
                 folded in as \(f(s)\exp(-Bs^2/4)\), pre-computed per (reflection, element) on the
@@ -2829,14 +2828,14 @@ Refinement: 64%</pre>
                 positions are kept, with the reason recorded.
             </p>
 
-            <h3>Resolution ramp - and why the running CC is not the final one</h3>
+            <h3>Resolution ramp - and why the running wR2 is not the final one</h3>
             <div class="warning-note">
                 The swarm starts on a <strong>subset</strong> of the reflection groups - as
                 few as a quarter - and reaches the full set part-way through each restart.
                 The figure shown while a search runs is computed on whatever subset is active, so
-                it reads considerably higher than the final value and is labelled
-                <strong>CC (partial res.)</strong>. Only the full-resolution figure from the
-                closing quench, shown in the results panel as <strong>Search: CC</strong>, is
+                it reads considerably lower than the final value and is labelled
+                <strong>wR2 (partial res.)</strong>. Only the full-resolution figure from the
+                closing quench, shown in the results panel as <strong>Search: wR2</strong>, is
                 comparable with anything. A running 0.99 alongside a final \(wR\) of 50% is not
                 a contradiction; it usually means the low-order reflections line up and the light
                 atoms are not yet placed.
@@ -2943,7 +2942,7 @@ Refinement: 64%</pre>
                 full-resolution quench inside the swarm. The coordinate refinement below runs
                 afterwards and is unaffected, so a stopped run still reports \(wR(F^2)\) and a
                 Refined positions table, and those are real. What is <em>not</em> final is the
-                <strong>Search: CC</strong> - without the quench it carries whatever
+                <strong>Search: wR2</strong> - without the quench it carries whatever
                 subset of reflections the resolution ramp had reached, so it is not a
                 full-resolution figure and is not comparable with \(wR\) - and the
                 <strong>ranking</strong> that chose this candidate over the others, which was
@@ -3159,7 +3158,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             </p>
             <p>
                 The results tab then opens with a <strong>Solutions</strong> table: one row per
-                \(Z\), with its density, atoms per cell, assignment, search CC and
+                \(Z\), with its density, atoms per cell, assignment, search wR2 and
                 \(wR(F^2)\). <strong>Click a row</strong> and everything below it - the
                 coordinate tables, the R factor, the CIF export, the contacts, the bond valences,
                 the structure plot and the PDF report - switches to that solution. The
@@ -3168,8 +3167,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             </p>
             <p>
                 The ranking is by \(wR(F^2)\). A solution whose refinement did not run has no
-                \(wR\), and is placed <em>below</em> every solution that has one and ranked
-                among its peers on search CC - the two are different quantities measured
+                \(wR\), and is placed <em>below</em> every solution that has one and ranked among its peers on search wR2 - the two are different quantities measured
                 against different things, and mixing them on a common scale would invent a
                 comparison that does not exist. Values of \(Z\) that produced nothing are listed
                 with their reasons rather than quietly omitted.
@@ -3258,8 +3256,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 against however many reflections your pattern resolves. A structure that clears
                 the capacity check by a wide margin can still be out of reach of the data, and
                 nothing in the search will tell you which of the two happened. If the reflection
-                count is not comfortably larger than the parameter count, treat a good CC with
-                suspicion and check the \(wR(F^2)\) from the refinement instead.
+                count is not comfortably larger than the parameter count, treat a good wR2 with suspicion and check the \(wR(F^2)\) from the refinement instead.
             </div>
 
             <h3 id="wy-refinement">Final coordinate refinement</h3>
@@ -3435,6 +3432,139 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 And the coordination number, though not the valence sum, depends on the contact
                 cutoff you set; the value in force is stated under the table.
             </div>
+
+            <h3 id="wyckoff-score">What the search actually maximises: (1 &minus; wR2) &minus; pen</h3>
+            <p>
+                Every candidate structure is scored by a single number,
+                \\( \\text{score} = (1 - wR2) - \\mathrm{pen} \\), and the candidate list is
+                ordered by it.
+            </p>
+            <p>
+                <strong>wR2</strong> is the <em>weighted residual with a least-squares refined
+                scale</em> over the observed group intensities:
+            </p>
+            <p style="text-align:center;">
+                \\( k = \\dfrac{\\sum w I_o I_c}{\\sum w I_c^2}, \\qquad
+                   wR2 = \\sqrt{\\dfrac{\\sum w (I_o - k I_c)^2}{\\sum w I_o^2}} \\)
+            </p>
+            <p>
+                Reflections the powder pattern cannot separate are summed into one group
+                first, so the comparison is made where the measurement exists. Each group is
+                weighted by \\( 1/\\sigma^2 \\) on its total, from the Pawley decomposition:
+                a group whose extracted intensity has an ESD larger than itself contributes
+                almost nothing.
+            </p>
+            <p>
+                <strong>pen</strong> is the <em>geometry penalty</em>, summed over every atom in
+                the trial cell. It is what stops the correlation buying a chemically impossible
+                structure. It has exactly three components:
+            </p>
+            <table>
+                <tr><th>Term</th><th>Default</th><th>Charged</th></tr>
+                <tr>
+                    <td><strong>penClash</strong></td><td>0.05</td>
+                    <td>Per pair closer than the contact floor \(d_{\min}\), as
+                        \( 0.05 \times (1 + 9\,\delta) \) with
+                        \( \delta = (d_{\min}-d)/d_{\min} \). A pair barely touching costs
+                        one unit, a fully collapsed pair ten: a soft wall that steepens, not a
+                        hard rejection.</td>
+                </tr>
+                <tr>
+                    <td><strong>penBond</strong></td><td>0.10</td>
+                    <td>Per bond outside a distance window. A bare nearest-neighbour rule
+                        charges the overshoot in &aring;ngstr&ouml;m. A coordination-shell rule
+                        charges each of its \(n\) slots by
+                        \( \text{miss}\,(1 + \text{miss}/\text{soft}) \), so being slightly
+                        out is cheap and being wildly out is not; a slot with <em>no</em>
+                        partner at all costs a flat maximum.</td>
+                </tr>
+                <tr>
+                    <td><strong>penCoord</strong></td><td>0.03</td>
+                    <td>Per neighbour <em>in excess</em> of the coordination number you asked
+                        for. Note the asymmetry: a shortfall is charged through penBond's
+                        empty-slot route, a surplus here.</td>
+                </tr>
+            </table>
+            <p>
+                The total is then multiplied by <strong>penScale</strong>, which ramps from
+                0.2 at the start of a run to 4.0 at the end. Geometry is nearly free early, so
+                the swarm can move through crowded configurations that lie between two good
+                basins, and expensive late, so the answer has to be physically legal. Archived
+                bests are stored with the penalty <em>un</em>scaled and re-scored at the current
+                weight whenever they are compared, so a candidate found early is never judged
+                against a rival on a different scale.
+            </p>
+            <div class="note">
+                <strong>A contact floor is a constraint, not a preference.</strong> Because the
+                clash term is soft during the search, a winning candidate can still contain an
+                illegal contact. The result stage therefore re-checks contacts against the same
+                floors and rejects on them outright, which is why a run can report
+                &ldquo;search positions kept&rdquo; after a refinement pulled a bond below its
+                floor.
+            </div>
+
+            <h3 id="wyckoff-ranking">When the ranking is withheld</h3>
+            <p>
+                A high fitness is not by itself evidence that a structure is right, and the search
+                now says so when it cannot be. Two properties of the correlation make this
+                necessary.
+            </p>
+            <p>
+                First, <strong>wR2 compares a DISTRIBUTION of intensity, and a
+                model can reproduce the few highest-leverage points while every other
+                reflection is wrong by any amount.</strong> A search figure and a refinement
+                \( wR(F^2) \) can therefore disagree sharply: they are computed over
+                different weightings of the same data, and when the effective observation
+                count is small the search figure is constrained by very little.
+            </p>
+            <p>
+                Second, <strong>the number of reflections is not the number of observations.</strong>
+                Because the correlation is weighted, a group counts for its share of the
+                weighted variance, \( w_i (I_i - \bar{I})^2 \), not for being in the list.
+                Those shares are very uneven: \(1/\sigma^2\) rewards sharp low-angle
+                reflections, whose ESDs are small, and all but erases high-angle overlaps a
+                Pawley fit could not partition, whose ESDs can exceed their own values. The
+                search reports the <strong>effective number of observations</strong>
+            </p>
+            <p style="text-align:center;">
+                \( N_{\text{eff}} = 1 / \sum_i p_i^2, \qquad
+                   p_i = w_i (I_i-\bar{I})^2 / \sum_j w_j (I_j-\bar{I})^2 \)
+            </p>
+            <p>
+                which equals \(N\) when all shares are equal and 1 when a single group is
+                everything. A list of 35 groups is routinely 5 or 6 effective observations.
+            </p>
+            <p>
+                <strong>Distance constraints count as observations.</strong> A window is
+                information about the structure that did not come from the pattern, and a fit
+                that uses it rests on more than the reflections alone &mdash; the same reason
+                Rietveld practice has counted restraints in the observation total for decades.
+                A coordination-shell rule asking for \(n\) partners contributes \(n\)
+                pseudo-observations <em>per independent site</em>, not per atom in the cell: the
+                symmetry images of a site are the same distance seen again, and counting the
+                orbit would inflate the total by the multiplicity. They are reported separately
+                from \(N_{\text{eff}}\), because a structure held up by restraints is a
+                different claim from one determined by the data.
+            </p>
+            <div class="warning">
+                <strong>Below three effective observations per free parameter, the ranking is
+                withheld.</strong> A model with more free parameters than effective observations
+                reproduces them exactly whatever the structure, so every candidate scores near 1
+                and the ordering between them is noise. The candidates are still returned and
+                still worth testing &mdash; the coordinates are real &mdash; but the result panel
+                says <em>one candidate, not a solution</em>, and no best is claimed. The
+                threshold is <code>SW_DEFAULTS.minObsPerParam</code>. It is a test of
+                <em>meaningfulness</em>, not of quality: above it a low score is still a real
+                answer, and below it a high one is not.
+            </div>
+            <p>
+                To lift a withheld ranking, give the search more to work with: extract more
+                reflections, particularly at high angle where severe overlap leaves \(\sigma/I\)
+                near or above 1 and the weighting correctly discards them; or add distance
+                constraints, which count. Reducing the free-parameter count &mdash; a smaller
+                \(Z\), or sites of higher symmetry &mdash; works from the other side.
+            </p>
+
         </section>
 
         <hr>
@@ -3891,14 +4021,16 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 without knowing which convention the program follows.
             </p>
             <div class="note">
-                <h4>Negative intensities are printed, not hidden</h4>
+                <h4>Weak reflections and Non-Negative Least Squares (NNLS)</h4>
                 <p>
-                    A least-squares or partitioned intensity can come out negative when the
-                    background runs above the data across a peak's window. That is a real
-                    measurement and <code>I_hkl</code> shows it; only $|F_o|$ is left blank, because
-                    there is no square root to take. Clipping such values at zero would bias every
-                    weak reflection upward, which is exactly what the French&ndash;Wilson correction
-                    used by the charge-flipping path exists to avoid.
+                    A Pawley intensity can naturally tend below zero when the background runs
+                    above the data across a peak's window. The NNLS solver actively bounds these
+                    intensities at zero (so <code>I_hkl</code> is reported as 0), preventing
+                    unphysical negative ripples. However, the corresponding standard uncertainty
+                    <code>sigma(I)</code> is correctly derived from the unconstrained covariance matrix.
+                    This tells downstream methods (like the French&ndash;Wilson correction used in
+                    charge flipping) exactly how poorly determined that zero value is, preventing
+                    the upward bias that a naive zero-clipping would introduce.
                 </p>
             </div>
         </section>
@@ -3962,6 +4094,10 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             <div class="reference-item">
                 <strong>Parallel Tempering:</strong><br>
                 Swendsen, R. H., & Wang, J. S. (1986). "Replica Monte Carlo simulation of spin-glasses". <em>Physical Review Letters</em>, 57(21), 2607.
+            </div>
+            <div class="reference-item">
+                <strong>Non-negative Least Squares (NNLS):</strong><br>
+                Lawson, C. L. &amp; Hanson, R. J. (1974). <em>Solving Least Squares Problems</em>. Prentice-Hall, Englewood Cliffs, NJ.
             </div>
             <div class="reference-item">
                 <strong>Separable least squares (variable projection):</strong><br>

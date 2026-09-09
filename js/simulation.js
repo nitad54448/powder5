@@ -223,8 +223,21 @@ function simActive() {
    driven by clicking on measured data: with nothing measured there is nothing
    to place anchors against, and anchors set during a fit stay in force and
    stay correct without the tab being open. */
-const SIM_FIT_ONLY_LEFT_TABS  = ['background', 'charge-flipping', 'wyckoff'];
+const SIM_FIT_ONLY_LEFT_TABS  = ['charge-flipping', 'wyckoff'];
 const SIM_FIT_ONLY_RIGHT_TABS = ['lebail', 'pawley', 'cf', 'wyckoff'];
+
+/* Background moved DOWN A LEVEL, into the Data tab's sub-tab strip, and is
+   listed here instead of above. It is still fit-only for the reason given in
+   the block comment: the spline editor places anchors by clicking on measured
+   data, and there is none.
+
+   Exclude joins it, for the same reason one level further on. An excluded
+   region is an interval of a MEASUREMENT that the refinement must not charge
+   to the structure. A simulation has no measurement and no refinement, so the
+   control would be offering to remove points from a fit that is not running,
+   and the shading would mark a region of a curve that was computed, not
+   observed. */
+const SIM_FIT_ONLY_LEFT_SUBTABS = ['background', 'exclude'];
 
 /**
  * Show or hide the fit-only controls and the Atoms tab.
@@ -247,6 +260,20 @@ function simApplyMode() {
     });
     const atomsBtn = document.getElementById('tab-btn-atoms');
     if (atomsBtn) atomsBtn.style.display = on ? '' : 'none';
+
+    // --- the Data tab's sub-tab strip -----------------------------------
+    SIM_FIT_ONLY_LEFT_SUBTABS.forEach(name => {
+        const btn = document.querySelector(`.subtab-buttons .subtab-btn[data-subtab="${name}"]`);
+        if (btn) btn.style.display = on ? 'none' : '';
+    });
+    // If the sub-tab in front is one that just disappeared, step off it, or
+    // the Data tab opens onto a hidden button's panel and reads as empty.
+    if (on) {
+        const activeSub = document.querySelector('.subtab-buttons .subtab-btn.active');
+        if (activeSub && SIM_FIT_ONLY_LEFT_SUBTABS.includes(activeSub.dataset.subtab)) {
+            simSwitchLeftSubtab('sample');
+        }
+    }
 
     // --- right panel tab strip ------------------------------------------
     SIM_FIT_ONLY_RIGHT_TABS.forEach(name => {
@@ -291,7 +318,9 @@ function simApplyMode() {
         }
     } else {
         const activeLeft = document.querySelector('.tab-buttons .tab-btn.active');
-        if (activeLeft && activeLeft.dataset.tab === 'atoms') simSwitchLeftTab('sample');
+        // 'data', not 'sample': Sample is a sub-tab now, and the main strip has
+        // no button with that name to click.
+        if (activeLeft && activeLeft.dataset.tab === 'atoms') simSwitchLeftTab('data');
     }
 
     simEnableTthRange(on);
@@ -325,6 +354,12 @@ function simApplyMode() {
 /** Click the left-panel tab button, so the app's own handler does the work. */
 function simSwitchLeftTab(name) {
     const btn = document.querySelector(`.tab-buttons .tab-btn[data-tab="${name}"]`);
+    if (btn) btn.click();
+}
+
+/** The same, one level down, for the Data tab's sub-tab strip. */
+function simSwitchLeftSubtab(name) {
+    const btn = document.querySelector(`.subtab-buttons .subtab-btn[data-subtab="${name}"]`);
     if (btn) btn.click();
 }
 
@@ -818,7 +853,7 @@ function simMarkersOnly(haveData) {
         mainChart.options.globalYMax = 1.15;
         simSizeMarkers(1.0);
     }
-    mainChart.update('none');
+    chartUpdateSafe(mainChart);
 }
 
 /** The chart dataset the simulation draws into. */
@@ -868,7 +903,7 @@ function simClearPattern() {
     const ds = simDataset();
     if (ds) ds.data = [];
     simShowLegendEntry(false);
-    if (mainChart) mainChart.update('none');
+    if (mainChart) chartUpdateSafe(mainChart);
 }
 
 /** Read a clamped number out of one of the Pattern boxes. */
@@ -1087,7 +1122,7 @@ function simResetView() {
     mainChart.options.scales.y.max = 1.10 * max;
     mainChart.options.globalYMax = 1.10 * max;
     simSizeMarkers(max);
-    mainChart.update('none');
+    chartUpdateSafe(mainChart);
 }
 
 /** Drop the cached geometry: the cell, the group or the mode changed. */
@@ -1336,7 +1371,7 @@ function simApplyAxes(haveData, pts) {
         // (it needs workingData), so the ticks are sized here instead.
         simSizeMarkers(max);
     }
-    mainChart.update('none');
+    chartUpdateSafe(mainChart);
 }
 
 // ---------------------------------------------------------------------------

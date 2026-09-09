@@ -876,6 +876,12 @@ function buildRestraintTables(demand, windows = [], options = {}) {
 
     return { tables, rMinOff, ruleOff, nRules: rules.length, nElem,
              ruleStride: RULE_STRIDE, maxDistance, problems,
+             // The rule RECORDS, not just their count. A restraint is a
+             // statement about the structure that did not come from the
+             // pattern, so the caller counts them as pseudo-observations when
+             // it reports what the fit rests on; that needs the mode and the
+             // requested coordination number, which nRules alone cannot give.
+             rules,
              // The resolved floors, so the post-search filter can reject on
              // exactly what the search enforced. They used to disagree: the
              // search applied per-pair floors while the filter applied a flat

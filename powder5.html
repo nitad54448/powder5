@@ -26,6 +26,7 @@
     <script src="js/profile_presets.js"></script>
     <script src="js/charting.js"></script>
     <script src="js/spline_background.js"></script>
+    <script src="js/excluded.js"></script>
     <script src="js/refinement_controller.js"></script>
     <!-- Simulation. scatterers.js was previously reachable only from
          wyckoff_worker.js through importScripts; the forward calculation needs
@@ -274,9 +275,8 @@
             <div id="controls-scroll">
             <input type="file" id="file-input" class="hidden" accept=".asc,.brml,.cif,.csv,.dat,.esd,.gsa,.mdi,.prn,.ras,.rasx,.rd,.sd,.std,.txt,.udf,.uxd,.xra,.xrdml,.xy">
             <div class="tab-buttons">
-                <button class="tab-btn active" data-tab="sample">Sample</button>
-                <button class="tab-btn" data-tab="background">Background</button>
-                <button class="tab-btn" data-tab="profile">Profile</button>
+                <button class="tab-btn active" data-tab="data">Data</button>
+                <button class="tab-btn" data-tab="instrument">Instrument</button>
                 <!-- Shown only when the Method is Simulation: nothing outside
                      that mode reads the atom list, and a tab that silently
                      does nothing is worse than one that is not there. -->
@@ -288,8 +288,33 @@
                         title="Fit atoms on Wyckoff positions directly to the Pawley intensities.">Wyckoff</button>
             </div>
 
-            <div class="tab-content-panels">
-            <div id="tab-panel-sample" class="tab-content-panel active">
+            <div class="tab-content-panels" id="main-tab-panels">
+            <div id="tab-panel-data" class="tab-content-panel active">
+
+                <!-- NOT .tab-buttons. That class draws the enclosing inset
+                     box, and a second box nested inside the first read as a
+                     panel border rather than as a row of tabs. The sub-strip is
+                     styled on the results tabs at the top right instead: no
+                     container, just an underline and a filled pill on the
+                     active one. .rp-tab itself is not reused because JS queries
+                     it globally (querySelectorAll('.rp-tab'), '.rp-tab.active')
+                     and a second set of elements answering those would drive
+                     the right-hand panel from the left one.
+
+                     The PANELS still carry .tab-content-panel: that is only
+                     display none/flex, both handlers are scoped to their own
+                     wrapper, and it keeps the show/hide working from a rule the
+                     stylesheet already had. -->
+                <div class="subtab-buttons" id="data-subtabs">
+                    <button class="subtab-btn active" data-subtab="sample">Sample</button>
+                    <button class="subtab-btn" id="subtab-btn-background" data-subtab="background">Background</button>
+                    <button class="subtab-btn" id="subtab-btn-exclude" data-subtab="exclude">Exclude</button>
+                    <button class="subtab-btn" data-subtab="profile">Profile</button>
+                </div>
+
+                <div class="tab-content-panels subtab-content-panels" id="data-subtab-panels">
+                <div id="subtab-panel-sample" class="tab-content-panel subtab-content-panel active">
+
                 <div class="control-group">
                     <h2>Data</h2>
                     <div class="run-row">
@@ -324,56 +349,10 @@
                     <div id="lattice-parameters-container">
                         </div>
                 </div>
-
-                <div class="control-group">
-                    <h2>Instrumental Parameters</h2>
-                    <div class="parameter-grid-3col">
-                        <label for="zero-shift" class="control-label">Zero (°)</label>
-                        <input type="number" id="zero-shift" value="0.0" step="0.001" class="control-input">
-                        <input type="checkbox" id="fit-zero-shift" class="fit-checkbox" title="Fit this parameter" >
-                    </div>
-                    <div class="form-row">
-                        <label for="wavelength" class="control-label">Radiation 1 (Å)</label>
-                        <input type="number" id="wavelength" value="1.54056" step="0.0001" class="control-input" min="0.01" title="Cu K-alpha 1">
-                    </div>
-                    <div class="form-row">
-                        <label for="wavelength2" class="control-label">Radiation 2 (Å)</label>
-                        <input type="number" id="wavelength2" value="1.54439" step="0.0001" class="control-input" min="0.01" title="Cu K-alpha 2">
-                    </div>
-                    <div class="form-row">
-                        <label for="ratio21" class="control-label">Ratio (I₂/I₁)</label>
-                        <input type="number" id="ratio21" value="0.497" step="0.01" class="control-input" min="0" max="1">
-                    </div>
-
-                    <!--   Polarisation model for the Lorentz-polarisation factor.
-                           Lp never enters the Le Bail / Pawley profile (the
-                           intensities are free parameters and absorb it); it is
-                           what converts an extracted intensity into |F|, so it
-                           has to be declared, applied and REPORTED. -->
-                    <div class="form-row">
-                        <label for="polarization-mode" class="control-label">Polarisation</label>
-                        <select id="polarization-mode" class="control-select"
-                                title="Polarisation model used in the Lorentz-polarisation factor Lp">
-                            <option value="lab" selected>Lab (X-ray tube)</option>
-                            <option value="synchrotron">Synchrotron</option>
-                            <option value="none">None (Lorentz only)</option>
-                        </select>
-                    </div>
-                    <div class="form-row" id="pol-mono-row">
-                        <label for="mono-2theta" class="control-label">Mono. 2θM (°)</label>
-                        <input type="number" id="mono-2theta" value="0" step="0.01" min="0" max="179.9"
-                               class="control-input"
-                               title="Monochromator take-off angle 2-theta_M. 0 = no monochromator, see the help file">
-                    </div>
-                    <div class="form-row" id="pol-frac-row" style="display:none;">
-                        <label for="pol-fraction" class="control-label">Pol. fraction</label>
-                        <input type="number" id="pol-fraction" value="0.95" step="0.01" min="0" max="1"
-                               class="control-input"
-                               title="Fraction of the beam polarised perpendicular to the diffraction plane. 1 = fully polarised (vertical scattering plane, P = 1); 0.5 = unpolarised.">
-                    </div>
                 </div>
 
-            </div> <div id="tab-panel-background" class="tab-content-panel">
+                <div id="subtab-panel-background" class="tab-content-panel subtab-content-panel">
+
                 <div class="control-group">
                     <h2>Background (Spline)</h2>
                     <div class="parameter-grid-2col" style="gap: 16px;">
@@ -396,8 +375,63 @@
                             </div>
                     </div>
                 </div>
-                
-                <div id="tab-panel-profile" class="tab-content-panel">
+
+                <div id="subtab-panel-exclude" class="tab-content-panel subtab-content-panel">
+
+                    <div class="control-group">
+                        <h2>Excluded Regions</h2>
+                        <p class="cf-hint" style="margin-bottom: 12px;">
+                            2&theta; intervals the refinement ignores: a sample-holder line, a
+                            detector artefact, a known impurity peak, the beam-stop shadow. The
+                            points inside a region are removed from the fit, so they contribute
+                            to no residual, no R factor and no degree of freedom. They are still
+                            drawn, shaded on the chart, so what was removed stays visible.
+                        </p>
+                        <p class="cf-hint" style="margin-bottom: 16px;">
+                            <b>Ctrl&#8209;Shift&#8209;drag across the chart</b> to add a region by
+                            eye. The other chart gestures are untouched: Ctrl&#8209;click still
+                            places a background point, Shift&#8209; or Alt&#8209;drag pans, and a
+                            plain drag zooms.
+                        </p>
+
+                        <div class="form-row" style="margin-bottom: 16px;">
+                            <label for="excluded-enable" class="control-label">Apply exclusions</label>
+                            <input type="checkbox" id="excluded-enable" class="fit-checkbox"
+                                   checked style="justify-self: end;"
+                                   title="Off keeps the list but fits the whole range, so a region can be tested without retyping it.">
+                        </div>
+
+                        <!-- From / To on one line each, in the same bordered
+                             row the spline editor uses for an anchor, so the
+                             typed entry and the listed regions below are read
+                             the same way. -->
+                        <div class="excluded-entry">
+                            <div class="excluded-row excluded-row-entry">
+                                <label for="excluded-min" class="excluded-cap">From</label>
+                                <input type="number" id="excluded-min" step="0.01" min="0" max="180"
+                                       class="control-input" placeholder="37.20">
+                                <label for="excluded-max" class="excluded-cap">To</label>
+                                <input type="number" id="excluded-max" step="0.01" min="0" max="180"
+                                       class="control-input" placeholder="38.60">
+                                <span class="excluded-unit">&deg;</span>
+                            </div>
+                        </div>
+
+                        <div class="run-row">
+                            <button type="button" id="excluded-add-btn" class="btn btn-primary">Add region</button>
+                            <button type="button" id="excluded-clear-btn" class="btn">Clear all</button>
+                        </div>
+
+                        <div id="excluded-summary" class="cf-hint" style="margin-top: 10px;">
+                            Nothing excluded; the fit uses the whole 2&theta; range.
+                        </div>
+
+                        <div id="excluded-list" class="excluded-list"></div>
+                    </div>
+                </div>
+
+                <div id="subtab-panel-profile" class="tab-content-panel subtab-content-panel">
+
                  <div class="control-group">
                      <div class="parameter-grid-2col" style="margin-bottom: 24px;">
                          <label for="profile-function-select" class="control-label">Profile Function</label>
@@ -548,6 +582,59 @@
                     </div>
 
                  </div> 
+                </div>
+                </div> <!-- Closes subtab-content-panels -->
+            </div> <!-- Closes tab-panel-data -->
+
+            <div id="tab-panel-instrument" class="tab-content-panel">
+
+                <div class="control-group">
+                    <h2>Instrumental Parameters</h2>
+                    <div class="parameter-grid-3col">
+                        <label for="zero-shift" class="control-label">Zero (°)</label>
+                        <input type="number" id="zero-shift" value="0.0" step="0.001" class="control-input">
+                        <input type="checkbox" id="fit-zero-shift" class="fit-checkbox" title="Fit this parameter" >
+                    </div>
+                    <div class="form-row">
+                        <label for="wavelength" class="control-label">Radiation 1 (Å)</label>
+                        <input type="number" id="wavelength" value="1.54056" step="0.0001" class="control-input" min="0.01" title="Cu K-alpha 1">
+                    </div>
+                    <div class="form-row">
+                        <label for="wavelength2" class="control-label">Radiation 2 (Å)</label>
+                        <input type="number" id="wavelength2" value="1.54439" step="0.0001" class="control-input" min="0.01" title="Cu K-alpha 2">
+                    </div>
+                    <div class="form-row">
+                        <label for="ratio21" class="control-label">Ratio (I₂/I₁)</label>
+                        <input type="number" id="ratio21" value="0.497" step="0.01" class="control-input" min="0" max="1">
+                    </div>
+
+                    <!--   Polarisation model for the Lorentz-polarisation factor.
+                           Lp never enters the Le Bail / Pawley profile (the
+                           intensities are free parameters and absorb it); it is
+                           what converts an extracted intensity into |F|, so it
+                           has to be declared, applied and REPORTED. -->
+                    <div class="form-row">
+                        <label for="polarization-mode" class="control-label">Polarisation</label>
+                        <select id="polarization-mode" class="control-select"
+                                title="Polarisation model used in the Lorentz-polarisation factor Lp">
+                            <option value="lab" selected>Lab (X-ray tube)</option>
+                            <option value="synchrotron">Synchrotron</option>
+                            <option value="none">None (Lorentz only)</option>
+                        </select>
+                    </div>
+                    <div class="form-row" id="pol-mono-row">
+                        <label for="mono-2theta" class="control-label">Mono. 2θM (°)</label>
+                        <input type="number" id="mono-2theta" value="0" step="0.01" min="0" max="179.9"
+                               class="control-input"
+                               title="Monochromator take-off angle 2-theta_M. 0 = no monochromator, see the help file">
+                    </div>
+                    <div class="form-row" id="pol-frac-row" style="display:none;">
+                        <label for="pol-fraction" class="control-label">Pol. fraction</label>
+                        <input type="number" id="pol-fraction" value="0.95" step="0.01" min="0" max="1"
+                               class="control-input"
+                               title="Fraction of the beam polarised perpendicular to the diffraction plane. 1 = fully polarised (vertical scattering plane, P = 1); 0.5 = unpolarised.">
+                    </div>
+                </div>
             </div>
 
             <!-- CHARGE FLIPPING TAB -->
@@ -903,7 +990,7 @@
                     <button id="wyckoff-cancel-btn" class="btn" disabled>Stop</button>
                 </div>
 
-                <!-- CC, the generation counter, the progress bar and the
+                <!-- The figure of merit, the generation counter, the progress bar and the
                      status line are now in the unified status footer. Every
                      writer below is null-safe, and setWyckoffStatus() routes
                      its text to the footer instead -- several of its messages
@@ -1292,7 +1379,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 172, O6 sept 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 173, O9 sept 2026";
 
 // ===========================================================================
 //  LAST-RESORT ERROR REPORTING
@@ -2260,22 +2347,16 @@ function wySetRunning(running) {
     setLeftPanelLocked(running, ['wyckoff-cancel-btn']);
     const run = document.getElementById('run-wyckoff-btn');
     const cancel = document.getElementById('wyckoff-cancel-btn');
-    const prog = document.getElementById('wyckoff-progress-container');
     const formula = (document.getElementById('cf-wyckoff-formula') || {}).value || '';
     if (run) {
         run.disabled = running || !formula.trim();
         run.textContent = running ? 'Searching\u2026' : 'Search Wyckoff';
     }
     if (cancel) cancel.disabled = !running;
-    if (prog) prog.classList.toggle('hidden', !running);
-    if (!running) {
-        const bar = document.getElementById('wyckoff-progress-bar');
-        if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
-        const cc = document.getElementById('wyckoff-cc');
-        if (cc) cc.textContent = '--';
-        const gen = document.getElementById('wyckoff-gen-count');
-        if (gen) gen.textContent = '0 / 0';
-    }
+    // The in-tab progress bar, generation counter and fitness readout are gone;
+    // AppStatus above is the progress display. Their lookups and `if (bar)`
+    // guards went with them rather than being left to fetch null forever
+    // behind a test that could no longer fail.
     updateWyckoffHint();
 }
 
@@ -2868,7 +2949,7 @@ let wyckoffPhase = 'idle';
  * Wyckoff search progress, straight to the unified footer.
  *
  * This used to write four elements inside the Wyckoff tab -- a container to
- * unhide, a bar, a generation counter and a CC readout. They are gone, so the
+ * unhide, a bar, a generation counter and a fitness readout. They are gone, so the
  * lookups and their `if (bar)` guards went with them rather than being left
  * to fetch null forever behind a test that could no longer fail.
  *
@@ -2905,7 +2986,8 @@ function wyckoffProgress(msg) {
         zTag.replace(/\s*\u00b7\s*$/, ', ')
         + (msg.waves > 1 ? `wave ${msg.wave}/${msg.waves}, ` : '')
         + `restart ${msg.restart}/${msg.restarts}, gen ${msg.generation}/${msg.generations}`
-        + (Number.isFinite(msg.best) ? `, CC ${msg.best.toFixed(4)}` : ''));
+        + (Number.isFinite(msg.best)
+              ? `, wR2 ${((1 - msg.best) * 100).toFixed(1)}%` : ''));
 }
 
 /**
@@ -3293,8 +3375,10 @@ function setLeftPanelLocked(locked, allowIds) {
     const allow = new Set(allowIds || []);
 
     // The tab strip: switching tabs mid-run would expose a second panel that
-    // this function has not frozen.
-    document.querySelectorAll('.tab-buttons .tab-btn').forEach(b => {
+    // this function has not frozen. Both levels, for the same reason -- the
+    // sub-tabs reach Background, Exclude and Profile, every one of which
+    // changes what the running fit is being fitted to.
+    document.querySelectorAll('.tab-buttons .tab-btn, .subtab-buttons .subtab-btn').forEach(b => {
         if (locked) {
             if (b.dataset.prevDisabled === undefined) b.dataset.prevDisabled = b.disabled ? '1' : '0';
             b.disabled = true;
@@ -3344,31 +3428,11 @@ function cfSetRunning(running) {
     }
     if (cancel) cancel.disabled = !running;   // disabled, not hidden: the row keeps its shape
 
-    // Hide the progress container when not running
-    const progContainer = document.getElementById('cf-progress-container');
-    if (progContainer) {
-        progContainer.classList.toggle('hidden', !running);
-    }
-    
-    // Reset the progress bar and readouts to 0
-    if (!running) {
-        const bar = document.getElementById('cf-progress-bar');
-        if (bar) {
-            bar.style.transition = 'none'; // Snap instantly without rewinding
-            bar.style.width = '0%';
-        }
-        
-        const countEl = document.getElementById('cf-iter-count');
-        if (countEl) countEl.innerText = '0 / 0';
-        
-        const rFactorEl = document.getElementById('cf-r-factor');
-        if (rFactorEl) {
-            if (rFactorEl.previousSibling && rFactorEl.previousSibling.nodeType === 3) {
-                rFactorEl.previousSibling.textContent = 'R-factor: ';
-            }
-            rFactorEl.innerText = '--';
-        }
-    }
+    // #cf-progress-container, #cf-progress-bar, #cf-iter-count and
+    // #cf-r-factor were removed from the Charge Flipping tab; AppStatus is
+    // the progress display now. Roughly a hundred lines of bar-width, reflow
+    // and label-swapping logic used to run against elements that are never
+    // there, all of it behind `if (el)` guards that could no longer fail.
 }
 
 
@@ -4020,18 +4084,9 @@ const gridSize   = parseInt(document.getElementById('cf-grid-size').value, 10);
         return;
     }
 
-{ const c = document.getElementById('cf-progress-container'); if (c) c.classList.remove('hidden'); }
     document.getElementById('cf-results-group').classList.add('hidden');
     cfCancelled = false;
     cfSetRunning(true);
-
-    const progBar = document.getElementById('cf-progress-bar');
-    if (progBar) {
-        progBar.style.transition = 'none';
-        progBar.style.width = '0%';
-        progBar.style.backgroundColor = 'var(--system-blue)';
-        void progBar.offsetWidth; // Force CSS reflow
-    }
 
     let best = null;
     let trialIndex = 0;
@@ -4117,23 +4172,12 @@ seed: (Date.now() + trialIndex * 7919) >>> 0,
         const msg = e.data || {};
         
         if (msg.type === 'cf-wyckoff-start') {
-            const bar = document.getElementById('cf-progress-bar');
-            if (bar) {
-                bar.style.transition = 'none';
-                bar.style.width = '0%';
-                bar.style.backgroundColor = '#17a2b8'; // Switch to teal color to visually indicate GPU phase
-                void bar.offsetWidth; // Force CSS reflow so it snaps instantly
-            }
-            const countEl = document.getElementById('cf-iter-count');
-            if (countEl) countEl.innerText = msg.message;
-
-            const rFactorEl = document.getElementById('cf-r-factor');
-            if (rFactorEl) {
-                if (rFactorEl.previousSibling && rFactorEl.previousSibling.nodeType === 3) {
-                    rFactorEl.previousSibling.textContent = 'Fitness (CC): ';
-                }
-                rFactorEl.innerText = 'Initializing...';
-            }
+            // msg.message says which phase is starting. It used to go to
+            // #cf-iter-count, which no longer exists, so it went nowhere at
+            // all; the footer is where progress is shown now. The branch is
+            // kept rather than deleted -- without it the message falls
+            // through to the tests below and is answered by none of them.
+            AppStatus.set('cf', 0, msg.message || 'starting\u2026');
             return;
         }
 
@@ -4147,26 +4191,6 @@ if (msg.type === 'cf-progress') {
                     + `cycle ${msg.iter}/${msg.total}`
                     + (Number.isFinite(shownR) ? `, R ${shownR.toFixed(4)}` : ''));
             }
-            const bar = document.getElementById('cf-progress-bar');
-            if (bar) {
-                bar.style.backgroundColor = 'var(--system-blue)'; // Reset to default blue for classical CF
-                bar.style.transition = 'width 0.1s linear';
-                bar.style.width = `${Math.min(100, doneFraction * 100)}%`;
-            }
-            
-            const countEl = document.getElementById('cf-iter-count');
-
-            if (countEl) countEl.innerText = trials > 1 ? `start ${trialIndex}/${trials} · ${msg.iter} / ${msg.total}` : `${msg.iter} / ${msg.total}`;
-            
-            const rFactorEl = document.getElementById('cf-r-factor');
-            if (rFactorEl) {
-                // Ensure the label says R-factor for the classical CF phase
-                if (rFactorEl.previousSibling && rFactorEl.previousSibling.nodeType === 3) {
-                    rFactorEl.previousSibling.textContent = 'R-factor: ';
-                }
-                const shown = Number.isFinite(msg.bestR) ? msg.bestR : msg.R;
-                rFactorEl.innerText = Number.isFinite(shown) ? shown.toFixed(4) : '--';
-            }
             return;
         }
         
@@ -4175,34 +4199,8 @@ if (msg.type === 'cf-wyckoff-progress') {
             const doneFraction = (msg.wave - 1 + (msg.restart - 1 + msg.generation / msg.generations) / msg.restarts) / msg.waves;
             AppStatus.set('cf', doneFraction,
                 `wave ${msg.wave}/${msg.waves}, restart ${msg.restart}/${msg.restarts}`
-                + (Number.isFinite(msg.best) ? `, CC ${msg.best.toFixed(4)}` : ''));
-            const bar = document.getElementById('cf-progress-bar');
-            
-            if (bar) {
-                // Snap the bar back to 0 at the start of Wyckoff without sliding backwards
-                if (msg.generation === 0 && msg.wave === 1 && msg.restart === 1) {
-                    bar.style.transition = 'none';
-                    bar.style.width = '0%';
-                    void bar.offsetWidth; // Force CSS reflow so 'none' applies instantly
-                }
-                bar.style.transition = 'width 0.1s linear';
-                bar.style.width = `${Math.min(100, doneFraction * 100)}%`;
-            }
-
-            const countEl = document.getElementById('cf-iter-count');
-            if (countEl) {
-                const waveText = msg.waves > 1 ? `Wave ${msg.wave}/${msg.waves} · ` : '';
-                countEl.innerText = `Wyckoff: ${waveText}Restart ${msg.restart}/${msg.restarts} · Gen ${msg.generation}/${msg.generations}`;
-            }
-
-            const rFactorEl = document.getElementById('cf-r-factor');
-            if (rFactorEl) {
-                // Swap the label to Fitness (CC) for the Wyckoff phase
-                if (rFactorEl.previousSibling && rFactorEl.previousSibling.nodeType === 3) {
-                    rFactorEl.previousSibling.textContent = 'Fitness (CC): ';
-                }
-                rFactorEl.innerText = Number.isFinite(msg.best) ? msg.best.toFixed(4) : '--';
-            }
+                + (Number.isFinite(msg.best)
+                      ? `, wR2 ${((1 - msg.best) * 100).toFixed(1)}%` : ''));
             return;
         }
         
@@ -5125,6 +5123,24 @@ function runWyckoffStandalone() {
             done();
             cfStructure = msg.results;
             cfStructure.spaceGroup = sg;
+            // STAMPED HERE, on arrival, before anything clones or snapshots it.
+            // Doing it inside rpSnapshotWyckoff was too late: by then the
+            // per-Z solution objects have already been copied into the history
+            // entry, so the container got the constraints and the objects the
+            // PDF is actually generated from did not -- and the report
+            // asserted "None" while the log listed both.
+            {
+                const wins = (typeof vc !== 'undefined' && vc && Array.isArray(vc.windows))
+                    ? vc.windows : null;
+                if (wins) {
+                    cfStructure.distanceConstraints = wins;
+                    if (Array.isArray(cfStructure.solutions)) {
+                        cfStructure.solutions.forEach(sol => {
+                            if (sol) sol.distanceConstraints = wins;
+                        });
+                    }
+                }
+            }
             // The report expands the asymmetric unit to compute contacts and
             // coordination numbers, which needs the matrices rather than the
             // xyz strings. The charge-flipping route already keeps them; the
@@ -5142,9 +5158,11 @@ function runWyckoffStandalone() {
                 // "no final refinement pass" contradicted the wR(F2) and the
                 // Refined positions table sitting on the results page.
                 setWyckoffStatus('Stopped early \u2014 showing the best structure found so far. ' +
-                                 'The closing full-resolution pass was skipped, so the search CC ' +
-                                 'and the choice between candidates are provisional. The ' +
-                                 'coordinate refinement did run.', 'warn');
+                                 'The search wR2 IS at full resolution: a stopped run re-scores ' +
+                                 'every candidate before reporting. What was skipped is the ' +
+                                 'quench, so the coordinates are unpolished and the choice ' +
+                                 'between candidates is provisional. The coordinate ' +
+                                 'refinement did run.', 'warn');
                 showToast('Stopped \u2014 best structure so far is shown.', 'info');
             } else {
                 const n = Array.isArray(msg.results && msg.results.solutions)
@@ -5182,6 +5200,13 @@ function runWyckoffStandalone() {
     wyckoffWorker.postMessage({
         type: 'wyckoff-search',
         cell,
+        // THE FITTED PROFILE, so the worker can ask how wide a peak is at a
+        // given angle. That is what decides whether two lines are one
+        // observation; without it the search groups on a fixed fraction of d,
+        // which is a property of the lattice and not of the pattern, and it
+        // counts reflections the data cannot separate as independent.
+        profileParams: getAllParams(),
+        profileType: (getAllParams() || {}).profileType,
         symops: got.symops,
         wyckoffTable: got.setting.wyckoff,
         targetComposition: formula.trim(),
@@ -5196,7 +5221,13 @@ function runWyckoffStandalone() {
         swarmParticles: iv(partEl) || 512,
         swarmIterations: wyIterationsValue(),
         swarmRestarts: iv(restEl) || 4,
-        minContact: minContEl ? (parseFloat(minContEl.value) || 1.0) : 1.0,
+        // `Number.isFinite`, not `||`. wyckoff_assign treats an explicit 0 as
+        // "no contact floor" and only an absent value as "use the default";
+        // `parseFloat(...) || 1.0` collapsed a hand-typed 0 into a 1.0 A floor
+        // the user had just asked not to have. An empty or unparseable field
+        // still yields undefined, which is the absent case.
+        minContact: minContEl && Number.isFinite(parseFloat(minContEl.value))
+            ? parseFloat(minContEl.value) : undefined,
         // The validated set from above, not a second parse: re-parsing here
         // would have quietly re-applied the same silent drop this launcher
         // just refused to perform.
@@ -6118,6 +6149,40 @@ const base =
             workingData.intensity = fullExperimentalData.intensity.slice(startIndex, endIndex);
             workingData.startIndex = startIndex; // Store the offset
 
+            // -----------------------------------------------------------------
+            //  EXCLUDED REGIONS, APPLIED HERE AND NOWHERE ELSE.
+            //
+            //  One place, before anything reads workingData, so the refinement,
+            //  the Le Bail / Pawley decomposition, the statistics and the
+            //  degrees of freedom all see the same set of observations without
+            //  a single change in refinement_worker.js. Zero-weighting the
+            //  points instead would have left Rp and the dof counting them --
+            //  see the header of excluded.js for why that is the worse failure.
+            //
+            //  indexMap is what replaces `startIndex + i` once the array is no
+            //  longer contiguous: indexMap[i] is the position of working point i
+            //  on the FULL axis. Left null when nothing was removed, which is
+            //  the usual case, so the usual case pays nothing for this.
+            // -----------------------------------------------------------------
+            workingData.indexMap = null;
+            const keep = (typeof EXCLUDED !== 'undefined')
+                ? EXCLUDED.keepIndices(workingData.tth) : null;
+            if (keep && keep.length !== workingData.tth.length) {
+                const k = keep.length;
+                const tthK = new Float64Array(k);
+                const intK = new Float64Array(k);
+                const map  = new Int32Array(k);
+                for (let i = 0; i < k; i++) {
+                    const j = keep[i];
+                    tthK[i] = workingData.tth[j];
+                    intK[i] = workingData.intensity[j];
+                    map[i]  = startIndex + j;
+                }
+                workingData.tth = tthK;
+                workingData.intensity = intK;
+                workingData.indexMap = map;
+            }
+
             // ANCHORS OUTSIDE THE FITTED RANGE ARE DROPPED.
             //
             // Narrowing the range used to leave them in the list and in the
@@ -6839,10 +6904,16 @@ function generateMasterHklList() {
                 if (backgroundDataset) {
                     backgroundDataset.hidden = false;
                     const start = workingData.startIndex || 0;
+                    // indexMap, when present, is the only correct way back to
+                    // the full axis: excluded regions have been compacted out
+                    // of workingData, so `start + i` no longer lands on the
+                    // point it used to and the background would be drawn
+                    // progressively further left of the data it belongs to.
+                    const map = workingData.indexMap || null;
                     if (workingData && workingData.tth && workingData.tth.length > 0) {
                         backgroundDataset.data = Array.from(workingData.tth).map((t, i) => ({
                             x: t,
-                            y: calculatedBackground[start + i]
+                            y: calculatedBackground[map ? map[i] : start + i]
                         }));
                     } else {
                         backgroundDataset.data = Array.from(fullExperimentalData.tth).map((t, i) => ({
@@ -6859,7 +6930,10 @@ function generateMasterHklList() {
                 mainChart.options.scales.y.min = currentYMin;
                 mainChart.options.scales.y.max = currentYMax;
 
-                mainChart.update('none');
+                // Length-aware: the Background dataset is rebuilt here and
+                // its point count changes whenever the fitted range or the
+                // excluded regions do. See chartUpdateSafe in charting.js.
+                chartUpdateSafe(mainChart);
             }
         }
 
@@ -7054,7 +7128,14 @@ const currentParams = getAllParams();
             const algorithm = controls.algorithmSelect.value;
 
             if (!workingData.isValid || workingData.tth.length === 0) {
-                showToast("No data in the selected 2-theta range. Aborting fit.", "error");
+                // Naming the cause: with exclusions on, an empty slice is far
+                // more likely to be a region that swallowed the range than a
+                // mis-set slider, and the old message sent the user to the
+                // wrong control.
+                const exclOn = (typeof EXCLUDED !== 'undefined') && EXCLUDED.isEnabled();
+                showToast(exclOn
+                    ? "No data left to fit: the excluded regions cover the whole 2-theta range."
+                    : "No data in the selected 2-theta range. Aborting fit.", "error");
                 isFitting = false; setUIState(false); return;
             }
 
@@ -7063,7 +7144,18 @@ const currentParams = getAllParams();
                  tth: workingData.tth.slice(), // Send copies
                  intensity: workingData.intensity.slice(),
                  weights: workingData.weights.slice(),
-                 startIndex: workingData.startIndex
+                 startIndex: workingData.startIndex,
+                 // Carried so a consumer of the RESULTS can map back to the
+                 // full axis exactly as the live slice does. Null unless
+                 // excluded regions actually removed something.
+                 indexMap: workingData.indexMap ? workingData.indexMap.slice() : null,
+                 // Frozen HERE, next to the slice it explains, and at the only
+                 // moment the two are guaranteed to agree. The region list is
+                 // editable for as long as the app is open, so a report that
+                 // read it live would caption this refinement with regions
+                 // that were never applied to it.
+                 excluded: (typeof EXCLUDED !== 'undefined')
+                     ? EXCLUDED.snapshot(fullExperimentalData.tth) : null
              };
 
 const minTth = parseFloat(controls.tthMinSlider.value);
@@ -7483,7 +7575,7 @@ function debounce(func, wait) {
             mainChart.options.scales.y.max = 1.12;
             mainChart.options.scales.y.ticks.display = false;
             mainChart.options.scales.y.title.text = 'Reflections (theoretical)';
-            mainChart.update('none');
+            chartUpdateSafe(mainChart);
         }
 
         // Build the plain-text theoretical report saved by "Save Report"
@@ -7992,7 +8084,7 @@ function debounce(func, wait) {
             if (!mainChart) return;
             generateMasterHklList();
             rescalePlot(false);
-            mainChart.update('none');
+            chartUpdateSafe(mainChart);
         };
 
         // Create a debounced version of the background update handler.
@@ -8005,7 +8097,7 @@ function debounce(func, wait) {
             if (!mainChart) return;
             updatePreviewPattern();
             rescalePlot(false);
-            mainChart.update('none');
+            chartUpdateSafe(mainChart);
         };
         //1.0.4
         const debouncedSimplePreviewUpdate = debounce(handleSimplePreviewUpdate, 350); 
@@ -8288,7 +8380,7 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                 }
                 if (typeof mainChart !== 'undefined' && mainChart) {
                     requestAnimationFrame(() => {
-                        mainChart.update('none');
+                        chartUpdateSafe(mainChart);
                         if (activeEl && document.contains(activeEl) && document.activeElement !== activeEl) {
                             activeEl.focus();
                         }
@@ -8308,7 +8400,7 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
         }
 
         // 3. Background parameters have their own dedicated updater function
-        document.getElementById('tab-panel-background').addEventListener('input', (e) => {
+        document.getElementById('subtab-panel-background').addEventListener('input', (e) => {
             if (e.target.id === 'show-anchors-checkbox') return;
             debouncedBackgroundUpdate();
         });
@@ -8718,7 +8810,7 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                     updateBackgroundForPreview();
 
                     rescalePlot(false); 
-                    mainChart.update('none');
+                    chartUpdateSafe(mainChart);
 
                 } catch (error) {
                     alert(`Error reading file: ${error.message}`);
@@ -8823,6 +8915,52 @@ function rpSnapshotFit(mode, results) {
         logEvent(`${mode === 'pawley' ? 'Pawley' : 'Le Bail'} run #${entry.id}` +
                  (entry.algorithm ? ` (${entry.algorithm})` : '') +
                  (bits.length ? ' \u2014 ' + bits.join(', ') : ''));
+
+        // ------------------------------------------------------------------
+        //  NEGATIVE EXTRACTED INTENSITIES.
+        //
+        //  A Pawley intensity is a free least-squares parameter with no
+        //  non-negativity constraint, so a weak or heavily overlapped
+        //  reflection can refine below zero. That is not a bug in the fit --
+        //  the pattern really is consistent with a negative value there once
+        //  the background and the neighbours have taken their share -- but it
+        //  is a fact about the extraction the user has no other way to see.
+        //  |Fo| = sqrt(I/(m*Lp)) is undefined for it, and the reflection table
+        //  prints the square root of a negative as a small positive number
+        //  with no mark on it.
+        //
+        //  Reported, not silently repaired. The downstream consumers already
+        //  handle it and say so: charge flipping and the Wyckoff search apply
+        //  a French-Wilson correction and clamp what survives to zero, which
+        //  is the statistically right treatment. What was missing is any
+        //  notice at the point the negatives are CREATED, so a user reading a
+        //  Pawley report has no idea how much of it is below zero.
+        // ------------------------------------------------------------------
+        try {
+            const refl = (entry.results && entry.results.hklList) || [];
+            const neg = [];
+            for (const r of refl) {
+                const I = Number(r && (r.area ?? r.intensity));
+                if (Number.isFinite(I) && I < 0) neg.push({ r, I });
+            }
+            if (neg.length) {
+                neg.sort((a, b) => a.I - b.I);
+                const worst = neg.slice(0, 3).map(n => {
+                    const h = n.r.h ?? n.r.h_orig, k = n.r.k ?? n.r.k_orig, l = n.r.l ?? n.r.l_orig;
+                    return `(${h},${k},${l}) ${n.I.toFixed(1)}`;
+                }).join(', ');
+                logEvent(`  WARNING: ${neg.length} of ${refl.length} extracted intensities ` +
+                         `came out NEGATIVE. Worst: ${worst}. An intensity is a free ` +
+                         `parameter here with no non-negativity constraint, so a weak or ` +
+                         `overlapped reflection can refine below zero; |Fo| is undefined ` +
+                         `for those. Charge flipping and the Wyckoff search apply a ` +
+                         `French-Wilson correction and clamp to zero, so they are handled, ` +
+                         `but treat the corresponding rows of the reflection table as ` +
+                         `"not measured" rather than as small.`);
+            }
+        } catch (e) {
+            console.warn('negative-intensity check failed:', e);
+        }
     }
 }
 
@@ -8941,15 +9079,6 @@ function wyResetInputs() {
     if (typeof wyUpdateDensityHint === 'function') { try { wyUpdateDensityHint(); } catch (e) {} }
     if (typeof updateWyckoffHint === 'function') { try { updateWyckoffHint(); } catch (e) {} }
 
-    // The progress read-out belongs to a run on the previous pattern.
-    const bar = document.getElementById('wyckoff-progress-bar');
-    if (bar) bar.style.width = '0%';
-    const cont = document.getElementById('wyckoff-progress-container');
-    if (cont) cont.classList.add('hidden');
-    const gen = document.getElementById('wyckoff-gen-count');
-    if (gen) gen.textContent = '0 / 0';
-    const cc = document.getElementById('wyckoff-cc');
-    if (cc) cc.textContent = '--';
 }
 
 // Charge-flipping UI back to its pre-run state: no map, no structure, no
@@ -8967,15 +9096,6 @@ function cfResetState() {
 
     const status = document.getElementById('cf-structure-status');
     if (status) { status.textContent = '–'; status.className = 'cf-hint'; }
-
-    const prog = document.getElementById('cf-progress-container');
-    if (prog) prog.classList.add('hidden');
-    const bar = document.getElementById('cf-progress-bar');
-    if (bar) bar.style.width = '0%';
-    const rf = document.getElementById('cf-r-factor');
-    if (rf) rf.textContent = '--';
-    const iter = document.getElementById('cf-iter-count');
-    if (iter) iter.textContent = '0 / 0';
 
     ['cf-sym-status', 'cf-estimate'].forEach(id => {
         const el = document.getElementById(id);
@@ -9302,6 +9422,15 @@ function rpSwitchTab(name) {
 // cf-results-group, driven by the existing render functions.
 function rpSnapshotCF(result, opts) {
     const when = new Date();
+    // Frozen onto the entry, not read live when the report is generated. The
+    // region list stays editable for as long as the app is open, so a report
+    // built from this history entry an hour from now would otherwise be
+    // captioned with regions that were never applied to it.
+    const _excl = (typeof workerWorkingData !== 'undefined' && workerWorkingData &&
+                   workerWorkingData.excluded) ? workerWorkingData.excluded
+                : ((typeof EXCLUDED !== 'undefined') ? EXCLUDED.snapshot() : null);
+    if (result && !result.excluded) result.excluded = _excl;
+
     rpRunCounter++;
     const entry = {
         id: rpRunCounter, when,
@@ -9350,12 +9479,21 @@ function rpSnapshotCF(result, opts) {
 /**
  * Push a completed Wyckoff search onto the run history.
  *
- * Labelled by R(F^2) rather than by CC: R is the figure of merit the panel
+ * Labelled by R(F^2) rather than by the search wR2: R is the figure of merit the panel
  * reports, and a picker labelled with a different number from the one in the
  * body invites the reader to compare two things that are not the same.
  */
 function rpSnapshotWyckoff(structure, opts) {
     const when = new Date();
+    // Frozen onto the entry, not read live when the report is generated. The
+    // region list stays editable for as long as the app is open, so a report
+    // built from this history entry an hour from now would otherwise be
+    // captioned with regions that were never applied to it.
+    const _excl = (typeof workerWorkingData !== 'undefined' && workerWorkingData &&
+                   workerWorkingData.excluded) ? workerWorkingData.excluded
+                : ((typeof EXCLUDED !== 'undefined') ? EXCLUDED.snapshot() : null);
+    if (structure && !structure.excluded) structure.excluded = _excl;
+
     rpRunCounter++;
     const ref = (structure && (structure.refinement ||
                 (structure.wyckoffResult && structure.wyckoffResult.refinement))) || {};
@@ -9378,6 +9516,21 @@ function rpSnapshotWyckoff(structure, opts) {
     // to be able to tell them apart.
     if (structure && opts && Array.isArray(opts.distanceConstraints)) {
         structure.distanceConstraints = opts.distanceConstraints;
+        // AND ONTO EVERY SOLUTION. The container is not what the PDF reporter
+        // is handed: a multi-Z run produces one solution object per Z and the
+        // report is generated from those, so stamping only the container left
+        // the report asserting "None" while the screen -- which falls back to
+        // the run's opts -- listed both constraints correctly. A provenance
+        // section that says a structure was found unconstrained when it was
+        // not is worse than one that says nothing.
+        const sols = structure.solutions;
+        if (Array.isArray(sols)) {
+            for (const sol of sols) {
+                if (sol && !Array.isArray(sol.distanceConstraints)) {
+                    sol.distanceConstraints = opts.distanceConstraints;
+                }
+            }
+        }
     }
     const entry = {
         id: rpRunCounter, when,
@@ -9424,6 +9577,11 @@ function rpWyckoffView(entry) {
 
     return {
         ...base,
+        // Explicit, not left to the spread. `...base` carries the container's
+        // copy, but if this view is built from a solution that has its own the
+        // solution's is the one that describes these coordinates.
+        distanceConstraints: (Array.isArray(s.distanceConstraints) ? s.distanceConstraints
+                              : base.distanceConstraints),
         sites: s.sites,
         refinement: s.refinement,
         z: s.z,
@@ -9439,6 +9597,20 @@ function rpWyckoffView(entry) {
             refinement: s.refinement,
             z: s.z,
             stopped: !!s.stopped,
+            // PER SOLUTION, not inherited from `base`. Whether an ordering
+            // means anything depends on this Z's free-parameter count, so a Z
+            // that is well determined and one that is not must not borrow each
+            // other's verdict -- which is exactly what spreading `base` above
+            // would do for any field not restated here.
+            ranked: s.ranked !== false,
+            thin: !!s.thin,
+            cautionObsPerParam: s.cautionObsPerParam ?? null,
+            leverage: s.leverage || null,
+            cpuCheck: s.cpuCheck || null,
+            nFreeParams: s.nFreeParams ?? null,
+            nRestraints: s.nRestraints ?? 0,
+            obsPerParam: s.obsPerParam ?? null,
+            minObsPerParam: s.minObsPerParam ?? null,
             // The candidate list belongs to the search that produced the BEST
             // solution, not to this one. Carrying it over would attach one Z's
             // rejected assignments to another Z's answer.
@@ -9487,13 +9659,13 @@ function rpWyckoffSolutionsTable(st, entry) {
                `<td>${num(s.rho, 2)}</td>` +
                `<td>${Number.isFinite(s.nAtoms) ? s.nAtoms : '\u2013'}</td>` +
                `<td>${escapeHtml(s.assignment || '?')}</td>` +
-               `<td>${Number.isFinite(s.searchCC) ? s.searchCC.toFixed(4) : '\u2013'}</td>` +
+               `<td>${Number.isFinite(s.searchCC) ? ((1 - s.searchCC) * 100).toFixed(1) + '%' : '\u2013'}</td>` +
                `<td>${R !== null ? (R * 100).toFixed(2) + '%' : '\u2013'}</td>` +
                `<td>${on ? 'shown' : '<span style="color:var(--system-blue,#0a84ff);">show</span>'}</td>` +
                `</tr>`;
     }).join('');
 
-    // WHY THE ORDER IS THE ORDER. Ranking on wR and ranking on CC are not the
+    // WHY THE ORDER IS THE ORDER. Ranking on wR and ranking on the search wR2 are not the
     // same ranking, and a reader who sees rows sorted by a column that is not
     // monotonic down the page will assume the table is broken rather than that
     // two different figures of merit are in play.
@@ -9521,7 +9693,7 @@ function rpWyckoffSolutionsTable(st, entry) {
         ` The best structure for each is below, ` +
         `ranked by wR(F&sup2;)` +
         (mixed ? ` where there is one; solutions whose refinement did not run are ranked ` +
-                 `below those that have an R, on search CC, and the two figures are not comparable`
+                 `below those that have an R, on search wR2, and the two figures are not comparable`
                : '') +
         `. Click a row to show that solution in the tables and the plot below.` +
         (fails.length ? ` Values of Z that produced nothing: ` +
@@ -9529,7 +9701,7 @@ function rpWyckoffSolutionsTable(st, entry) {
         `</p>` +
         `<div class="cf-table-scroll"><table class="cf-peak-table wy-sol-table">` +
         `<thead><tr><th>#</th><th>Z</th><th>&rho; (g/cm&sup3;)</th><th>Atoms/cell</th>` +
-        `<th>Assignment</th><th>Search CC</th><th>wR(F&sup2;)</th><th></th></tr></thead>` +
+        `<th>Assignment</th><th>Search wR2</th><th>wR(F&sup2;)</th><th></th></tr></thead>` +
         `<tbody>${rows}</tbody></table></div>` +
         `<p style="font-size:12px;color:var(--system-secondary-label);margin:6px 0 14px 0;">` +
         `A better wR does not by itself make a Z right: check the contacts and the bond ` +
@@ -9650,7 +9822,7 @@ function rpRenderWyckoffRun() {
         // quantities and there is no reason for them to agree, so reporting
         // only one of them hides whichever step actually did the work.
         //
-        // The CC shown here is the FULL-RESOLUTION figure from the quench. The
+        // The wR2 shown here is the FULL-RESOLUTION figure from the quench. The
         // progress readout during a run is computed on a resolution-ramped
         // SUBSET of the groups -- as few as a quarter of them early on -- so it
         // reads much higher than the final value, and comparing it against wR
@@ -9662,18 +9834,46 @@ function rpRenderWyckoffRun() {
         // number a reader would use to decide whether the solution is any good.
         (wy.stopped
             ? `<p class="cf-hint" style="font-size:12px;margin-bottom:6px;">` +
-              `<b>Stopped before the closing full-resolution pass.</b> The coordinates and the ` +
-              `refinement below are real; the search CC and the ranking that chose this ` +
-              `candidate over the others are provisional.</p>`
+              `<b>Stopped before the quench.</b> The search wR2 below is at full ` +
+              `resolution \u2014 a stopped run re-scores every candidate first, so it is ` +
+              `comparable with a completed run. What was skipped is the polish: these ` +
+              `coordinates are unpolished, and the ranking that chose this candidate ` +
+              `over the others is provisional.</p>`
+            : '') +
+        // THE RANKING VERDICT, ABOVE THE FIGURE OF MERIT RATHER THAN BELOW IT. When the
+        // data cannot order the candidates every one of them scores near 1,
+        // so the wR2 underneath is the most convincing number on the page and
+        // the least meaningful. Printing the caveat afterwards would let it be
+        // read as a footnote to a good result instead of as a warning that
+        // there is no result.
+        (wy.ranked === false
+            ? `<p class="cf-hint" style="font-size:12px;margin-bottom:6px;` +
+              `border-left:3px solid var(--system-orange,#ff9f0a);padding-left:8px;">` +
+              `<b>Ranking withheld \u2014 this is one candidate, not a solution.</b> ` +
+              `The correlation rests on ` +
+              `${wy.leverage && Number.isFinite(wy.leverage.nEff) ? wy.leverage.nEff.toFixed(1) : '?'} ` +
+              `effective observation(s)` +
+              (wy.nRestraints ? ` plus ${wy.nRestraints} from the distance constraints` : '') +
+              `, against ${wy.nFreeParams ?? '?'} free parameter(s) \u2014 ` +
+              `${Number.isFinite(wy.obsPerParam) ? wy.obsPerParam.toFixed(2) : '?'} per parameter, ` +
+              `below the ${wy.minObsPerParam ?? 3} a correlation needs to mean anything. ` +
+              `Every candidate scores near 1 here whether or not it is right, so the ordering ` +
+              `carries no information and a good wR2 below is not evidence.` +
+              (wy.leverage && wy.leverage.top && wy.leverage.top.length
+                ? ` The reflections ${wy.leverage.top.slice(0, 3).map(t => `(${t.hkl})`).join(', ')} ` +
+                  `alone carry ${(100 * (wy.leverage.share || 0)).toFixed(0)}% of it.`
+                : '') +
+              ` Extract more reflections, or add distance constraints \u2014 they count as ` +
+              `observations.</p>`
             : '') +
         `<p style="font-size:12px;color:var(--system-secondary-label);">` +
         (Number.isFinite(wy.searchCC)
-            ? `<b>Search:</b> CC = ${wy.searchCC.toFixed(4)}` +
+            ? `<b>Search:</b> wR2 = ${((1 - wy.searchCC) * 100).toFixed(1)}%` +
               (wy.stopped
                 ? ` on the reflection subset the resolution ramp had reached when the run was ` +
-                  `stopped \u2014 <b>not</b> a full-resolution figure, and not comparable with wR.<br>`
+                  `stopped \u2014 <b>not</b> a full-resolution figure.<br>`
                 : ` at full resolution ` +
-                  `(the running value during a search is on a reduced set of reflections and reads higher).<br>`)
+                  `(the running value during a search is on a reduced set of reflections and reads lower).<br>`)
             : '') +
         `<b>Refinement:</b> ${fom}<br>` +
         `Weighted on 1/sigma&sup2; from the Pawley decomposition, with tabulated scattering factors` +
@@ -9787,11 +9987,21 @@ function rpRenderCFRun() {
 // 5. General UI Listeners (not related to HKL caching)
         document.querySelector('.tab-buttons').addEventListener('click', (e) => { 
     const clickedTab = e.target.closest('.tab-btn'); 
+    // Defensive: this handler resolves `tab-panel-${clickedTab.dataset.tab}`
+    // and would throw on a .tab-btn without a data-tab. None exists today --
+    // the sub-strip no longer shares the class -- but the failure mode is a
+    // crash, not a no-op, so it is worth one line to make it impossible.
+    if (clickedTab && !clickedTab.dataset.tab) return;
     if (clickedTab && !clickedTab.disabled) { 
         e.currentTarget.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active')); 
         clickedTab.classList.add('active'); 
         
-        document.querySelectorAll('.tab-content-panel').forEach(panel => panel.classList.remove('active')); 
+        // SCOPED to the outer wrapper's direct children. The sub-panels carry
+        // .tab-content-panel too now, so an unscoped query would clear the
+        // active sub-panel on every main-tab click and Data would come back
+        // showing an empty column.
+        document.querySelectorAll('#main-tab-panels > .tab-content-panel')
+                .forEach(panel => panel.classList.remove('active'));
         const tabName = clickedTab.dataset.tab;
         document.getElementById(`tab-panel-${tabName}`).classList.add('active'); 
         
@@ -9811,6 +10021,52 @@ function rpRenderCFRun() {
             (isSolutionTab || simOn) ? 'none' : '';
     } 
 });
+
+        // ---------------------------------------------------------------
+        //  The Data tab's SECOND level: Sample / Background / Exclude /
+        //  Profile.
+        //
+        //  Deliberately a separate class set (.subtab-*) rather than a second
+        //  use of .tab-*. The handler above deactivates EVERY .tab-content-panel
+        //  in the document on each click; sharing the class would mean opening a
+        //  main tab silently closed whichever sub-panel was in front, and coming
+        //  back to Data would show an empty column. Two levels, two vocabularies.
+        // ---------------------------------------------------------------
+        const dataSubtabs = document.getElementById('data-subtabs');
+        if (dataSubtabs) {
+            dataSubtabs.addEventListener('click', (e) => {
+                const clicked = e.target.closest('.subtab-btn');
+                if (!clicked || clicked.disabled) return;
+
+                dataSubtabs.querySelectorAll('.subtab-btn')
+                           .forEach(b => b.classList.remove('active'));
+                clicked.classList.add('active');
+
+                document.querySelectorAll('#data-subtab-panels > .tab-content-panel')
+                        .forEach(pane => pane.classList.remove('active'));
+                const pane = document.getElementById(`subtab-panel-${clicked.dataset.subtab}`);
+                if (pane) pane.classList.add('active');
+
+                // The excluded-region summary counts points against the loaded
+                // pattern, so it is stale if a file was opened while the tab
+                // was hidden.
+                if (clicked.dataset.subtab === 'exclude' && window.EXCLUDED) EXCLUDED.render();
+            });
+        }
+
+        // Re-slice and redraw whenever the excluded regions change. This is the
+        // same entry point the 2-theta sliders use, because the two do the same
+        // thing to workingData: decide which measured points the fit sees.
+        if (window.EXCLUDED) {
+            EXCLUDED.setOnChange(() => {
+                if (typeof mainChart !== 'undefined' && mainChart &&
+                    typeof redrawFitForNewRange === 'function') {
+                    redrawFitForNewRange();
+                } else if (typeof updateWorkingData === 'function') {
+                    updateWorkingData();
+                }
+            });
+        }
 
         // EVERY run selector needs a change handler, and only the Wyckoff one
         // had ever been given one. Picking an older run from the Le Bail,
@@ -9877,6 +10133,14 @@ document.getElementById('spline-points-list').addEventListener('click', handleSp
 
 
 controls.mainChartCanvas.addEventListener('click', e => {
+    // CTRL ALONE. A Ctrl+Shift-drag marks an excluded region and still ends in
+    // a click on this canvas with ctrlKey set, so without the shift test the
+    // same gesture would mark the region AND drop a background anchor in the
+    // middle of it. Testing the modifier is what keeps the two apart; the
+    // alternative -- letting both run and having one tell the other to stand
+    // down afterwards -- makes a single click drive two code paths through the
+    // chart, which is how the previous attempt at this went wrong.
+    if (e.shiftKey || e.altKey) return;
     if (e.ctrlKey && mainChart && fullExperimentalData.tth.length > 0) { // Check data exists
         e.preventDefault();
         e.stopPropagation();
@@ -9915,7 +10179,7 @@ controls.mainChartCanvas.addEventListener('click', e => {
         // Restore Y zoom state
         mainChart.options.scales.y.min = currentYMin;
         mainChart.options.scales.y.max = currentYMax;
-        mainChart.update('none');
+        chartUpdateSafe(mainChart);
     }
 });
 
@@ -10053,7 +10317,7 @@ document.getElementById('show-spline-points-checkbox').addEventListener('change'
         const splineDataset = mainChart.data.datasets.find(d => d.label === 'Spline Points');
         if (splineDataset) {
             splineDataset.hidden = !isVisible; // Toggle hidden state based on checkbox
-            mainChart.update('none'); // Update chart without animation
+            chartUpdateSafe(mainChart); // Update chart without animation
 }
     }
 });

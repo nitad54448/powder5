@@ -40,6 +40,26 @@ function autoFindSplinePoints(numPoints) {
     newSplinePoints.push({ index: firstPoint.index, tth: minTth, y: firstPoint.y });
     newSplinePoints.push({ index: lastPoint.index, tth: maxTth, y: lastPoint.y });
 
+    // -----------------------------------------------------------------------
+    //  NO ANCHOR INSIDE AN EXCLUDED REGION.
+    //
+    //  A region is normally excluded BECAUSE it holds something the model
+    //  cannot account for -- an impurity peak, a holder line, an amorphous
+    //  hump. This routine anchors the background at local minima, and the foot
+    //  of exactly such a feature is a local minimum, so the anchor would land
+    //  there by preference. The fit no longer sees those points, but the spline
+    //  through them still shapes the baseline UNDER THE POINTS EITHER SIDE that
+    //  it does see: a region excluded to keep a feature out of the refinement
+    //  would go on distorting it through the background.
+    //
+    //  The two EDGE anchors are kept wherever they fall. The background has to
+    //  stay defined across the whole displayed range, gap included, and a
+    //  missing endpoint would leave the flat extrapolation with nothing to
+    //  extrapolate from.
+    // -----------------------------------------------------------------------
+    const inExcluded = (idx) =>
+        (typeof EXCLUDED !== 'undefined') && EXCLUDED.contains(tth[idx]);
+
     //   Find Internal Points (with Refined Minimum and Averaging)  
     if (internalPointsToFind > 0) {
         let startIndex = fullExperimentalData.tth.findIndex(t => t >= minTth);
@@ -62,6 +82,7 @@ function autoFindSplinePoints(numPoints) {
                 let initialMinIndex = -1;
                 for (let j = chunkStartIdx; j < chunkEndIdx; j++) {
                     if (j === firstPoint.index || j === lastPoint.index) continue;
+                    if (inExcluded(j)) continue;
                     if (intensity[j] < initialMinVal) {
                         initialMinVal = intensity[j];
                         initialMinIndex = j;
@@ -85,6 +106,7 @@ function autoFindSplinePoints(numPoints) {
                 // Iterate through the original chunk indices
                 for (let j = chunkStartIdx; j < chunkEndIdx; j++) {
                      if (j === firstPoint.index || j === lastPoint.index) continue;
+                    if (inExcluded(j)) continue;
                     if (tth[j] >= refineMinTth && tth[j] <= refineMaxTth) {
                         if (intensity[j] < finalMinVal) {
                             finalMinVal = intensity[j];
@@ -103,7 +125,12 @@ function autoFindSplinePoints(numPoints) {
                     const windowStart = Math.max(0, finalMinIndex - AVERAGE_WINDOW_HALF_WIDTH);
                     const windowEnd = Math.min(totalDataPoints, finalMinIndex + AVERAGE_WINDOW_HALF_WIDTH + 1);
 
+                    // The window is a fixed number of points wide and can
+                    // straddle a region edge, so it is filtered too: averaging
+                    // in the flank of an excluded peak would lift the anchor
+                    // above the baseline it is supposed to sit on.
                     for (let k = windowStart; k < windowEnd; k++) {
+                        if (inExcluded(k)) continue;
                         sumY += intensity[k];
                         countY++;
                     }
@@ -141,7 +168,12 @@ function updateSplinePointsOnChart() {
             x: anchor.tth,
             y: anchor.y
         }));
-       mainChart.update('none'); // Redraw the chart without animation, too slwo and useless
+       // chartUpdateSafe, not update('none'): this line has just CHANGED THE
+       // LENGTH of the anchor dataset, and with `animation: false` a length
+       // change under 'none' leaves the new PointElement without its options.
+       // The next mouse move then throws inside Chart.js, once per move. See
+       // chartUpdateSafe in charting.js.
+       chartUpdateSafe(mainChart);
     }
 }
         // function to find the nearest data point to a click

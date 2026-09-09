@@ -507,6 +507,56 @@ function describePolarization(pol) {
 //  Orbits are emitted in cluster order so that a cluster is a contiguous
 //  range, which is what lets one GPU thread handle a whole cluster.
 // ===========================================================================
+
+/**
+ * Explains why buildReflectionModel came back empty, using the counts it
+ * collected rather than assuming the grid was to blame.
+ *
+ * WHY THIS EXISTS. Both callers used to answer the empty model with one fixed
+ * sentence -- "no reflection fits an NxNxN grid, the largest index is
+ * <maxIndexSeen>, you need at least <minGridForAll>" -- and threw the
+ * droppedZero / droppedRange counts away. That sentence is right for one of
+ * the two ways the model can come out empty and actively misleading for the
+ * other. If every reflection was refused for a missing or negative intensity,
+ * nothing ever reached the index test, so maxIndexSeen is still 0 and the
+ * message reads "the largest index in the fit is 0, which needs a grid of at
+ * least 2" -- it names the grid, which is fine, and hides the real cause,
+ * which is the input intensities. Raising the grid size then changes nothing,
+ * twice, before anyone thinks to look elsewhere.
+ *
+ * @param {object} model The failed return from buildReflectionModel.
+ * @param {number} N     The grid edge that was attempted.
+ * @returns {string} A message naming the cause that actually applied.
+ */
+function cfEmptyModelMessage(model, N) {
+    const zero  = model.droppedZero  | 0;
+    const range = model.droppedRange | 0;
+    const grid  = `${N}x${N}x${N}`;
+
+    // Nothing survived the intensity test, so the index test never ran and
+    // maxIndexSeen means nothing. Say what was actually refused.
+    if (range === 0 && zero > 0) {
+        return `No reflection reached the grid: all ${zero} were refused for a ` +
+               `missing or negative intensity. Charge flipping needs |F|^2 ` +
+               `values, so run a fit first, and apply a French-Wilson ` +
+               `correction if the extraction can return negatives.`;
+    }
+    if (range === 0 && zero === 0) {
+        return `No reflections were supplied to charge flipping. Fit a pattern ` +
+               `first, so there is a reflection list with intensities to phase.`;
+    }
+
+    // The grid genuinely is the binding constraint.
+    let msg = `No reflection fits a ${grid} grid. The largest index in the fit ` +
+              `is ${model.maxIndexSeen}, which needs a grid of at least ` +
+              `${model.minGridForAll}.`;
+    if (zero > 0) {
+        msg += ` (${zero} further reflection(s) were refused before that, for a ` +
+               `missing or negative intensity.)`;
+    }
+    return msg;
+}
+
 function buildReflectionModel(job, N) {
     const N2 = N * N, N3 = N2 * N;
     const wrap = v => ((v % N) + N) % N;
@@ -523,6 +573,10 @@ function buildReflectionModel(job, N) {
     let lpFromHost = 0, lpFromModel = 0;
     const tolTth = Number.isFinite(job.overlapTolTth) ? job.overlapTolTth : 0.05;
 
+    // Counts of what was refused and why. On the SUCCESS path these already
+    // reach the user through model.droppedRange / model.droppedZero; the
+    // helper below is what carries them out of the FAILURE path, which is
+    // where they matter most -- see cfEmptyModelMessage.
     let droppedZero = 0, droppedRange = 0, droppedDuplicate = 0;
     let multiplicityMismatch = 0, multiplicityExample = '';
     let maxIndexSeen = 0;
@@ -1029,7 +1083,7 @@ function runChargeFlippingCPU(job) {
 
     const model = buildReflectionModel(job, N);
     if (model.error) {
-        return { error: `No reflection fits a ${N}x${N}x${N} grid. The largest index in the fit is ${model.maxIndexSeen}, which needs a grid of at least ${model.minGridForAll}.` };
+        return { error: cfEmptyModelMessage(model, N) };
     }
 
     // WEAK-REFLECTION PHASE FLIP (Oszlanyi & Suto 2005), same as the GPU path.
@@ -1636,7 +1690,7 @@ async function runChargeFlippingGPU(job) {
 
     const model = buildReflectionModel(job, N);
     if (model.error) {
-        return { error: `No reflection fits a ${N}x${N}x${N} grid. Largest index ${model.maxIndexSeen} needs at least ${model.minGridForAll}.` };
+        return { error: cfEmptyModelMessage(model, N) };
     }
 
     // ----------------------------------------------------------------------

@@ -117,12 +117,42 @@ let MIN_PROFILE_FWHM_DEG = 1e-3;
  * producing a zero or absurdly small floor, which would re-open the collapse
  * the floor exists to prevent.
  *
+ * WHY THE MEDIAN STEP AND NOT THE MEAN. This used to be
+ * (last - first) / (n - 1), which is the mean step and is only the real step
+ * on a gap-free, uniformly-stepped axis. Excluded regions break both
+ * assumptions: the points inside them are removed from workingData, so the
+ * span stays the same while n falls, and the mean step rises with it.
+ * Excluding a third of a pattern would have raised this floor by half and
+ * clamped peaks the data can perfectly well resolve -- quietly, since a floor
+ * only shows up as a refinement that will not narrow a peak. The median is
+ * unaffected by the handful of large differences a gap contributes, and it is
+ * also the right answer for the variable-step axes some file formats carry,
+ * which the mean was already getting wrong before exclusion existed.
+ *
+ * On a uniform gap-free axis the median and the mean are the same number, so
+ * nothing changes for the ordinary case.
+ *
  * @param {ArrayLike<number>} tthAxis Ascending 2-theta axis, degrees.
  * @returns {void}
  */
 function setMinProfileFwhmFromAxis(tthAxis) {
     if (!tthAxis || tthAxis.length < 3) return;
-    const step = (tthAxis[tthAxis.length - 1] - tthAxis[0]) / (tthAxis.length - 1);
+
+    const n = tthAxis.length;
+    const diffs = new Float64Array(n - 1);
+    let m = 0;
+    for (let i = 1; i < n; i++) {
+        const d = tthAxis[i] - tthAxis[i - 1];
+        // Non-positive differences mean an unsorted or duplicated axis. They
+        // are not a step and averaging them in would drag the floor down.
+        if (isFinite(d) && d > 0) diffs[m++] = d;
+    }
+    if (m === 0) return;
+
+    const used = diffs.subarray(0, m).slice().sort();   // typed sort is numeric
+    const step = (m % 2) ? used[(m - 1) >> 1]
+                         : 0.5 * (used[m / 2 - 1] + used[m / 2]);
+
     if (isFinite(step) && step > 0) MIN_PROFILE_FWHM_DEG = Math.max(1e-4, 2 * step);
 }
 

@@ -101,6 +101,18 @@ const MIN_IMAGE_SHELL: i32 = 0;  //__MIN_IMAGE_SHELL__
 // Injected by the host exactly like MAX_GEN_ATOMS, so the weighted and
 // unweighted packers can share this kernel. It is a compile-time constant, so
 // the `weight` branch below folds away entirely when it is 3.
+// KERNEL_FOM: wR2-scaled-v1
+//
+// A CONTRACT MARKER, checked by the host before this kernel is compiled. The
+// shader is fetched over HTTP at run time while the JS that reads its output
+// ships with the page, so the two can be different vintages: a browser that
+// serves a cached copy of this file pairs an OLD kernel with NEW host code.
+// That failure is silent and convincing -- the host relabels whatever number
+// it is handed, so a kernel computing a different quantity is presented under
+// this one's name -- a number that reads like an excellent fit and is not one.
+//
+// Bump the version whenever the meaning of the value written to
+// mcmcState[].cc changes, so an old kernel is refused instead of believed.
 const GROUP_STRIDE: u32 = 3u; //__GROUP_STRIDE__
 const MAX_BOND_RULES: u32 = 8u;
 const RULE_STRIDE: u32 = 6u;
@@ -197,24 +209,27 @@ var<workgroup> gz: array<f32, MAX_GEN_ATOMS>;
 var<workgroup> gT: array<u32, MAX_GEN_ATOMS>;
 
 var<workgroup> rPen: array<f32, WG>;
-// Accumulators for a WEIGHTED PEARSON CORRELATION between Icalc and Iobs over
-// the active groups. Six partial sums rather than one, because the correlation
-// needs both means and both variances, and each thread only sees the groups it
-// happened to be handed.
+// ---------------------------------------------------------------------------
+//  Accumulators for wR2, THE WEIGHTED RESIDUAL WITH A REFINED SCALE.
 //
-// Pearson rather than a plain cosine similarity, and rather than an R factor:
-//   - It is scale-free, so there is NO SCALE FACTOR to fit. That removes a
-//     parameter, and more importantly removes a degeneracy the swarm would
-//     otherwise have to explore.
-//   - Subtracting the means makes it discriminating. Icalc and Iobs are both
-//     non-negative and share a large positive offset; a cosine similarity is
-//     dominated by that offset and reads high for almost any structure.
-//   - It lands in [0, 1] after clamping, which is the range the bond and
-//     clash penalties below were tuned against. An R factor would have needed
-//     every penalty weight retuned.
-var<workgroup> rSw:  array<f32, WG>;   // sum w
-var<workgroup> rSc:  array<f32, WG>;   // sum w * Icalc
-var<workgroup> rSo:  array<f32, WG>;   // sum w * Iobs
+//  The scale is refined by least squares rather than fitted as a parameter:
+//
+//      k     = sum(w*Io*Ic) / sum(w*Ic^2)
+//      wR2^2 = sum(w*(Io - k*Ic)^2) / sum(w*Io^2)
+//
+//  Substituting k collapses the numerator to sum(w*Io^2) - sco^2/scc, so
+//
+//      wR2^2 = 1 - sco^2 / (scc * soo)
+//
+//  which needs three sums and not six: the mean-carrying terms cancel. An
+//  arbitrary overall factor on Icalc leaves this unchanged, while a change in
+//  how intensity is DISTRIBUTED between sites does not -- which is what makes
+//  it sensitive to which element sits where.
+//
+//  The fitness reported is 1 - wR2, so it rises towards 1 for a good structure
+//  and lands in [0, 1], the range the clash and bond penalties are tuned
+//  against.
+// ---------------------------------------------------------------------------
 var<workgroup> rScc: array<f32, WG>;   // sum w * Icalc^2
 var<workgroup> rSoo: array<f32, WG>;   // sum w * Iobs^2
 var<workgroup> rSco: array<f32, WG>;   // sum w * Icalc * Iobs
@@ -463,9 +478,6 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     let nReflTot = u32(params.nRefl);
     let isCentro = params.centro > 0.5;
 
-    var sw: f32 = 0.0;
-    var sc: f32 = 0.0;
-    var so: f32 = 0.0;
     var scc: f32 = 0.0;
     var soo: f32 = 0.0;
     var sco: f32 = 0.0;
@@ -531,9 +543,6 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
             iCalc = iCalc + mult * (fr * fr + fi * fi);
         }
 
-        sw  = sw  + wgt;
-        sc  = sc  + wgt * iCalc;
-        so  = so  + wgt * iObs;
         scc = scc + wgt * iCalc * iCalc;
         soo = soo + wgt * iObs  * iObs;
         sco = sco + wgt * iCalc * iObs;
@@ -751,9 +760,6 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     pen = pen * params.penScale;
 
     rPen[lid] = pen;
-    rSw[lid]  = sw;
-    rSc[lid]  = sc;
-    rSo[lid]  = so;
     rScc[lid] = scc;
     rSoo[lid] = soo;
     rSco[lid] = sco;
@@ -762,9 +768,6 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     for (var stride = WG / 2u; stride > 0u; stride = stride >> 1u) {
         if (lid < stride) {
             rPen[lid] = rPen[lid] + rPen[lid + stride];
-            rSw[lid]  = rSw[lid]  + rSw[lid + stride];
-            rSc[lid]  = rSc[lid]  + rSc[lid + stride];
-            rSo[lid]  = rSo[lid]  + rSo[lid + stride];
             rScc[lid] = rScc[lid] + rScc[lid + stride];
             rSoo[lid] = rSoo[lid] + rSoo[lid + stride];
             rSco[lid] = rSco[lid] + rSco[lid + stride];
@@ -773,25 +776,26 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     }
 
 if (lid == 0u) {
-        // Weighted Pearson correlation between Icalc and Iobs, clamped into
-        // [0, 1] so it occupies the same range the density kernel returns and
-        // the penalty weights below keep their tuning.
+        //     wR2^2 = 1 - sco^2 / (scc * soo),  fitness = 1 - wR2
         //
-        // A zero variance on either side means the comparison carries no
+        // A NEGATIVE sco is rejected outright rather than squared away. It
+        // means the least-squares scale k = sco/scc comes out negative, i.e.
+        // the best fit to these observations is a NEGATIVE multiple of the
+        // calculated intensities. That is not a poor structure, it is not a
+        // structure at all; squaring sco would hand an anticorrelated model
+        // the same score as the correctly correlated one.
+        //
+        // A zero on either of scc or soo means the comparison carries no
         // information: every group calculated the same intensity (all atoms
-        // stacked on one point, or no atoms at all), or the observations are
-        // flat. Returning 0 there is correct and is what the host expects --
-        // random starting positions legitimately score 0.
-        let wSum = max(rSw[0], 1e-9);
-        let mc = rSc[0] / wSum;
-        let mo = rSo[0] / wSum;
-        let varC = rScc[0] / wSum - mc * mc;
-        let varO = rSoo[0] / wSum - mo * mo;
-        let cov  = rSco[0] / wSum - mc * mo;
+        // stacked on one point, or none at all), or the observations are flat.
+        // Returning 0 there is correct and is what the host expects -- random
+        // starting positions legitimately score 0.
         var cc: f32 = 0.0;
-        let denom = varC * varO;
-        if (denom > 1e-20) {
-            cc = clamp(cov / sqrt(denom), 0.0, 1.0);
+        let denom = rScc[0] * rSoo[0];
+        if (denom > 1e-20 && rSco[0] > 0.0) {
+            let r2   = clamp(rSco[0] * rSco[0] / denom, 0.0, 1.0);
+            let wR2  = sqrt(max(0.0, 1.0 - r2));
+            cc = clamp(1.0 - wR2, 0.0, 1.0);
         }
         let pen = rPen[0];
         let f_new = cc - pen;

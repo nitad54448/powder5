@@ -27,7 +27,7 @@
 // has been removed, and it now uses crystal.js's. Loading it first only costs
 // a console warning, but the order below is the supported one.
 if (typeof importScripts === 'function') {
-    importScripts('constants.js', 'crystal.js',
+    importScripts('constants.js', 'profile.js', 'crystal.js',
                   'symmetry_utils.js', 'observations.js', 'wyckoff_assign.js',
                   'scatterers.js', 'contacts.js', 'swarm_wyckoff.js', 'coord_refine.js');
 }
@@ -123,7 +123,47 @@ const WY_ATOM_DATA = {
  * @param {object} job
  * @returns {object[]} rows carrying h, k, l, Ihkl, lp, multiplicity, d, tth
  */
+/**
+ * A 2-theta -> FWHM function built from the fitted profile, or null.
+ *
+ * WHY THE SEARCH NEEDS THIS. Two powder lines are one observation when the
+ * pattern cannot separate them, and that is a question about the PEAK WIDTH at
+ * that angle -- the instrument and the sample -- not about the lattice. The
+ * packer's fallback rule, a fixed fraction of d, answers the wrong question:
+ * on a real Pnma dataset it declared 42 independent observations where the
+ * Pawley covariance analysis found one cluster spanning the whole pattern with
+ * 36 of 64 reflections carrying an ESD larger than their own intensity. The
+ * report told the user to use the cluster totals downstream; the search was
+ * the downstream consumer that did not.
+ *
+ * Returns null rather than a guess when the profile is absent. A wrong width
+ * is worse than a crude one: too large merges genuinely separate lines and
+ * discards real information, and it would do so silently.
+ *
+ * @param {Object} job
+ * @returns {((tth:number)=>number)|null}
+ */
+function wyMakeFwhmAt(job) {
+    const params = job && job.profileParams;
+    const type = (job && job.profileType) || (params && params.profileType);
+    if (!params || typeof calculateProfileWidths !== 'function'
+                || typeof getPeakFWHM !== 'function') return null;
+    return (tth) => {
+        if (!Number.isFinite(tth)) return NaN;
+        try {
+            // hkl only matters for the anisotropic terms; a null reflection
+            // gives the isotropic width, which is what a separability test
+            // wants -- it must not depend on which of the pair is asked.
+            const w = calculateProfileWidths(tth, null, params, type);
+            if (!w) return NaN;
+            const f = getPeakFWHM(w.gamma_G, w.gamma_L);
+            return Number.isFinite(f) && f > 0 ? f : NaN;
+        } catch (e) { return NaN; }
+    };
+}
+
 function wyRawObservationRows(job) {
+    let negative = 0, nonFinite = 0;
     const applyLP = job.applyLP !== false;
     const polModel = (job.polarization !== undefined && job.polarization !== null)
         ? job.polarization : job.monochromatorTth;
@@ -133,7 +173,13 @@ function wyRawObservationRows(job) {
         if (!peak) continue;
         const I = Number(peak.intensity);
         const h = peak.h_orig, k = peak.k_orig, l = peak.l_orig;
-        if (!Number.isFinite(I) || I < 0) continue;
+        // COUNTED, not just skipped. A negative intensity is a real outcome of
+        // an unconstrained Pawley refinement, and dropping it silently tells
+        // the search the reflection was never measured -- leaving the model
+        // free to put anything there -- while leaving no trace that a
+        // reflection went missing. The count is reported by the caller.
+        if (!Number.isFinite(I)) { nonFinite++; continue; }
+        if (I < 0) { negative++; continue; }
         if (!Number.isFinite(h) || !Number.isFinite(k) || !Number.isFinite(l)) continue;
         if (h === 0 && k === 0 && l === 0) continue;
         // Ten bits per index in the kernel's packing, biased by 512.
@@ -150,10 +196,23 @@ function wyRawObservationRows(job) {
                 : 1
         });
     }
+    if (negative || nonFinite) {
+        // Warned here rather than left to the reflection count silently
+        // shrinking. A reflection the extraction put below zero is not weak,
+        // it is unmeasured, and the search should not be asked to explain it.
+        wySay(`${negative} reflection(s) with a NEGATIVE extracted intensity` +
+              (nonFinite ? ` and ${nonFinite} non-numeric` : '') +
+              ` were dropped from the search. A Pawley intensity is a free ` +
+              `parameter with no non-negativity constraint, so weak or ` +
+              `overlapped reflections can refine below zero; |F| is undefined ` +
+              `for them. Applying a French-Wilson correction before the search ` +
+              `recovers them as small positive values instead of losing them.`);
+    }
     return rows;
 }
 
 function wyObservationsFromHkl(job, symops) {
+    let negative = 0, nonFinite = 0;
     const applyLP = job.applyLP !== false;
     const polModel = (job.polarization !== undefined && job.polarization !== null)
         ? job.polarization : job.monochromatorTth;
@@ -163,12 +222,32 @@ function wyObservationsFromHkl(job, symops) {
         if (!peak) continue;
         const I = Number(peak.intensity);
         const h = peak.h_orig, k = peak.k_orig, l = peak.l_orig;
-        if (!Number.isFinite(I) || I < 0) continue;
+        // COUNTED, not just skipped. A negative intensity is a real outcome of
+        // an unconstrained Pawley refinement, and dropping it silently tells
+        // the search the reflection was never measured -- leaving the model
+        // free to put anything there -- while leaving no trace that a
+        // reflection went missing. The count is reported by the caller.
+        if (!Number.isFinite(I)) { nonFinite++; continue; }
+        if (I < 0) { negative++; continue; }
         if (!Number.isFinite(h) || !Number.isFinite(k) || !Number.isFinite(l)) continue;
         if (h === 0 && k === 0 && l === 0) continue;
 
+        // sigma IS PART OF THE OBSERVATION. Without it crGroupReflections sets
+        // varObs = null on every group and every weight falls through to the
+        // 1/I fallback, so the refinement minimises a differently weighted
+        // residual from the search -- same formula, same groups, same
+        // structure, two different fits. That is the whole of a search wR2 of
+        // 86.5% sitting beside a refinement wR of 35.7%.
+        //
+        // It also made the report untrue: it states the coordinates were
+        // "weighted on 1/sigma^2 from the Pawley decomposition", and with the
+        // field absent they were weighted on 1/I.
+        //
+        // wyRawObservationRows, three functions up, carries it. These two
+        // builders are otherwise identical and both feed normaliseObservations;
+        // they differed by this one field.
         const row = { h, k, l, Ihkl: I, multiplicity: peak.multiplicity,
-                      d: peak.d, twoTheta: peak.tth };
+                      d: peak.d, twoTheta: peak.tth, sigma: peak.sigma };
         if (applyLP) {
             // Prefer the host's Lp - it was evaluated at the refined 2-theta
             // including the zero shift, and is the same number the map was
@@ -634,9 +713,31 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
     // it (the effect integrateSphere(), over in the charge-flipping worker,
     // was written to work around).
     const shaderFile = '../swarm_reflection.wgsl';
-    const shaderResp = await fetch(shaderFile);
+    // cache: 'reload' -- go to the network and IGNORE the HTTP cache. This file
+    // changes with the host code that reads its output, but it is fetched at
+    // run time while that host code ships with the page, so a cached copy
+    // pairs an old kernel with new JS. Reloading the page does not fix it:
+    // the page is what gets reloaded, this is a separate request.
+    const shaderResp = await fetch(shaderFile, { cache: 'reload' });
     if (!shaderResp.ok) throw new Error(shaderFile + ' could not be loaded.');
     const swarmShaderSrc = await shaderResp.text();
+
+    // REFUSE A KERNEL THAT DOES NOT MATCH THIS HOST, rather than run it.
+    // The host cannot tell from the returned number which figure of merit
+    // produced it -- a correlation of 0.994 and a fitness of 0.994 are the
+    // same float -- so a mismatch is invisible downstream and arrives as a
+    // report claiming wR2 = 0.56% next to a refinement wR of 92%. The marker
+    // is the only point at which the two versions can still be compared.
+    const KERNEL_FOM = 'wR2-scaled-v1';
+    if (!swarmShaderSrc.includes('KERNEL_FOM: ' + KERNEL_FOM)) {
+        const got = (swarmShaderSrc.match(/KERNEL_FOM:\s*(\S+)/) || [])[1] || 'none';
+        throw new Error(
+            `${shaderFile} is the wrong version: this build needs KERNEL_FOM ` +
+            `${KERNEL_FOM} and the file served reports "${got}". The figure of ` +
+            `merit changed from a correlation to a scaled residual, so an older ` +
+            `kernel would return a number the report would mislabel. Replace ` +
+            `swarm_reflection.wgsl, or clear the cache for it.`);
+    }
 
     // Raw observation rows for the reflection objective. runWyckoffSearch
     // normalises them itself and estimates the Wilson B from them, so they are
@@ -655,7 +756,7 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
     // coord_refine's `o.formFactor || (() => null)` fell through to f = Z on
     // every single run.
     //
-    // That is the discrepancy behind a search reporting CC = 0.99 and the
+    // That is the discrepancy behind a search reporting a near-perfect fit and the
     // refinement then reporting R = 50%: THEY WERE NOT SCORING THE SAME MODEL.
     // The search used tabulated f(s) with its angular fall-off; the refinement
     // used a flat atomic number, which overweights every heavy atom at high
@@ -1047,9 +1148,16 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
                     // same B or they are not fitting the same model.
                     const refB = Number.isFinite(job.overallB) ? job.overallB
                                : (Number.isFinite(out.overallB) ? out.overallB : 0);
+                    // THE SAME WIDTH FUNCTION THE SEARCH GROUPED WITH. The
+                    // comment above says the two must use the same B or they
+                    // are not fitting the same model; the same is true of what
+                    // counts as one observation. Grouping them differently is
+                    // what left a search wR2 of 88% beside a refinement wR of
+                    // 32% on identical coordinates.
                     const r = refineCoordinatesAgainstPawley({
                         sites: seed, symOps: symops, obsRows,
-                        overallB: refB, formFactor: job.formFactor || refineFormFactor
+                        overallB: refB, formFactor: job.formFactor || refineFormFactor,
+                        fwhmAt: wyMakeFwhmAt(job)
                     });
 
                     // ------------------------------------------------------
@@ -1245,6 +1353,33 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
             stopped: !!(out && out.stopped),
             assignment: best.assignment,
             candidates: out.candidates,
+            // ------------------------------------------------------------
+            //  WHETHER THE ORDERING ABOVE MEANS ANYTHING.
+            //
+            //  `ranked` is false when the data cannot support an ordering:
+            //  the model has more free parameters than the correlation has
+            //  EFFECTIVE observations, so every candidate reproduces them and
+            //  scores near 1 whether or not it is right. `best` is then the
+            //  first candidate that passed the contact filter and nothing
+            //  more -- still worth looking at, not a result. The caller must
+            //  say which of the two it is holding; presenting an arbitrary
+            //  pick as "the" structure is the failure this whole diagnostic
+            //  exists to prevent, and it is invisible without the flag
+            //  because a near-perfect figure of merit looks like success.
+            // ------------------------------------------------------------
+            ranked: (out && out.ranked !== false),
+            thin: !!(out && out.thin),
+            cautionObsPerParam: (out && out.cautionObsPerParam) || null,
+            leverage: (out && out.leverage) || null,
+            // The independent replay of the winner's fitness. Carried so the
+            // report can state that the figure it prints was reproduced,
+            // rather than leaving the reader to trust a single number from a
+            // kernel they cannot see.
+            cpuCheck: (out && out.cpuCheck) || null,
+            minObsPerParam: (out && out.minObsPerParam) || null,
+            nFreeParams: Number.isFinite(best.nFreeParams) ? best.nFreeParams : null,
+            nRestraints: Number.isFinite(best.nRestraints) ? best.nRestraints : 0,
+            obsPerParam: Number.isFinite(best.obsPerParam) ? best.obsPerParam : null,
             refinement,
             // The search's own numbers, kept separate from the refinement's.
             // searchCC is the FULL-RESOLUTION correlation from the quench, not
@@ -1294,6 +1429,11 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
             out = await runWyckoffSearch({
             device, 
             ccShaderSource: swarmShaderSrc,
+            // THE REAL PEAK WIDTH, so reflections are grouped by whether the
+            // PATTERN can separate them rather than by a fixed fraction of d.
+            // Returns null when the job carried no profile, and swPackReflections
+            // then says so instead of pretending the better rule ran.
+            fwhmAt: wyMakeFwhmAt(job),
             // No groupStride here: swPackReflections decides it, and
             // hard-coding 3 would have overridden the weighted layout
             // it now emits, leaving the kernel reading Iobs where the
@@ -1384,8 +1524,19 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
 
         const rTxt = (sol.refinement && Number.isFinite(sol.refinement.R))
             ? `wR(F^2) = ${(sol.refinement.R * 100).toFixed(2)}%`
-            : (Number.isFinite(sol.searchCC) ? `CC = ${sol.searchCC.toFixed(4)}` : 'no figure of merit');
-        wySay(`Z = ${Z}: ${sol.assignment || '?'} -- ${rTxt}.`);
+            : (Number.isFinite(sol.searchCC)
+                  ? `search wR2 = ${((1 - sol.searchCC) * 100).toFixed(1)}%`
+                  : 'no figure of merit');
+        // "one of N candidates", not "the answer", when the data cannot order
+        // them. The distinction has to be in the LINE ITSELF: a log that reads
+        // the same either way is how a provisional pick becomes a result on
+        // the way to being written down.
+        wySay(sol.ranked === false
+            ? `Z = ${Z}: ${sol.assignment || '?'} -- ${rTxt}, but UNRANKED ` +
+              `(${(sol.obsPerParam ?? 0).toFixed(2)} effective observations per free ` +
+              `parameter, below ${sol.minObsPerParam ?? 3}). One candidate among ` +
+              `${(sol.candidates || []).length}, not a solution.`
+            : `Z = ${Z}: ${sol.assignment || '?'} -- ${rTxt}.`);
       }
     } catch (e) {
         console.error('[Wyckoff] the search failed:', e);
@@ -1419,7 +1570,7 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
     //
     //  On wR(F^2) where there is one, because that is the figure the panel
     //  reports and the only one computed against the observations themselves.
-    //  The search CC is the fallback for a solution whose refinement was
+    //  The search fitness is the fallback for a solution whose refinement was
     //  skipped, and it is NOT interchangeable with wR -- so a solution with an
     //  R is always ranked above one without, rather than the two being mixed
     //  on a common scale that does not exist.
@@ -1441,7 +1592,8 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
                 ? `wR(F^2) = ${(s.refinement.R * 100).toFixed(2)}%` : 'no wR';
             wySay(`  ${i + 1}. Z = ${s.z}  rho = ${Number.isFinite(s.rho) ? s.rho.toFixed(2) : '?'} g/cm^3  ` +
                   `${s.assignment || '?'}  ${r}` +
-                  (Number.isFinite(s.searchCC) ? `  CC = ${s.searchCC.toFixed(4)}` : ''));
+                  (Number.isFinite(s.searchCC)
+                      ? `  wR2 = ${((1 - s.searchCC) * 100).toFixed(1)}%` : ''));
         });
     }
     if (zFailures.length) {
@@ -1460,13 +1612,30 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
     const best = solutions[0];
     return {
         ...best,
+        // STAMPED IN THE WORKER, at the source, where job.distanceConstraints
+        // is simply in scope.
+        //
+        // Not on the page. The page CAN reach the constraints, and stamping
+        // them there is what was tried, but this list is an explicit field
+        // enumeration: anything not named is silently dropped, and the drop
+        // happens here, before the page has the object to stamp. The same trap
+        // has now cost `ranked`, `leverage`, `cpuCheck` and this. A field that
+        // must survive the hop belongs on the side that owns the data.
+        //
+        // On EVERY solution and on the top level, because rpWyckoffView builds
+        // its report object by spreading the container and then overwriting a
+        // named subset from one solution -- so a report can be produced from
+        // either, and "no constraints" is a claim about the run that must not
+        // depend on which.
+        distanceConstraints: job.distanceConstraints || [],
         solutions: solutions.map(s => ({
             z: s.z, rho: s.rho, vpa: s.vpa, nAtoms: s.nAtoms,
             assignment: s.assignment,
             searchCC: s.searchCC, searchScore: s.searchScore,
             refinement: s.refinement,
             sites: s.sites, searchSites: s.searchSites,
-            stopped: !!s.stopped
+            stopped: !!s.stopped,
+            distanceConstraints: job.distanceConstraints || []
         })),
         zPlan: zPlan.map(c => ({ Z: c.Z, rho: Number.isFinite(c.rho) ? c.rho : null,
                                  vpa: Number.isFinite(c.vpa) ? c.vpa : null,

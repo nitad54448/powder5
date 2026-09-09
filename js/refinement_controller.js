@@ -116,6 +116,15 @@ function createRefinementWorker() {
             } else if (type === 'result') {
                 disarmFitWatchdog();
                 fitResults = results;
+                // Travels WITH the results, so the history selector and a PDF
+                // pressed an hour from now describe the data this run actually
+                // saw. Taken from workerWorkingData rather than read live: that
+                // is the snapshot frozen beside the slice that was sent, and it
+                // cannot have drifted since.
+                if (fitResults && typeof workerWorkingData !== 'undefined' &&
+                    workerWorkingData && workerWorkingData.excluded) {
+                    fitResults.excluded = workerWorkingData.excluded;
+                }
                 if (fitResults && fitResults.params) window.enforceSymmetryConstraints(fitResults.params);
 
                 // ONE clone, and J^T J shared BY REFERENCE rather than copied.

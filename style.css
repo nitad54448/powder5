@@ -593,6 +593,119 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 .tab-content-panel.active { display: flex; }
 .tab-content-panel > .control-group { border-top: none; }
 
+/* ---------- Sub-tabs (the Data tab's second level) ---------- */
+/* Drawn on the results tabs at the top right, NOT on the main strip below.
+   .tab-buttons paints an inset, bordered, rounded container around its
+   buttons; putting a second one of those inside the first gave two nested
+   boxes, and the inner one read as the edge of a panel rather than as a row of
+   tabs. The right-hand tabs have no container at all -- an underline for the
+   row, a filled pill for the active one -- which is exactly the weaker,
+   subordinate treatment a second level wants.
+
+   The rules are copied rather than the class being reused: JS queries .rp-tab
+   globally (querySelectorAll('.rp-tab'), '.rp-tab.active'), so a second set of
+   elements answering to it would let the left panel drive the right one. */
+.subtab-buttons {
+    display: flex;
+    gap: 2px;
+    align-items: flex-end;
+    padding: 0 2px;
+    margin: -2px 0 16px;
+    border-bottom: 1px solid var(--system-gray-5, var(--rule));
+}
+.subtab-btn {
+    flex: 1;
+    appearance: none;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 7px 10px;
+    border-radius: 8px 8px 0 0;
+    color: var(--system-secondary-label, var(--fg-2));
+    background: transparent;
+    white-space: nowrap;
+}
+.subtab-btn:hover { color: var(--system-label, var(--fg)); }
+.subtab-btn.active {
+    color: var(--fg);
+    background: var(--rule-soft);
+    border-radius: 4px;
+    box-shadow: var(--shadow-1);
+}
+.subtab-btn:disabled { opacity: 0.4; cursor: default; }
+
+.subtab-content-panels { position: relative; }
+.subtab-content-panel > .control-group { border-top: none; }
+
+/* ---------- Excluded regions ---------- */
+/* Deliberately the same row as .anchor-point-item in the spline editor: a
+   bordered, inset, single-line strip holding the numbers and a remove button.
+   The two panels list the same kind of thing -- a handful of user-placed
+   positions along the 2-theta axis -- and drawing them two different ways
+   would suggest they behave differently. */
+.excluded-entry { margin-bottom: 4px; }
+
+.excluded-row {
+    /* minmax(0, 1fr) for the same reason as .anchor-point-item: a bare 1fr is
+       floored at a number input's default ~20-character width, so the row
+       would refuse to shrink and would overflow the panel. */
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr) auto;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 4px;
+    padding: 6px 8px;
+    background: var(--bg-inset);
+    border: 1px solid var(--rule-soft);
+    border-radius: var(--r-1);
+}
+.excluded-row .control-input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    height: 26px;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+.excluded-cap {
+    font-size: 11px;
+    color: var(--fg-2);
+    white-space: nowrap;
+}
+.excluded-unit {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--fg-3);
+    padding: 0 6px;
+}
+.excluded-row-entry { border-style: dashed; }
+
+.excluded-list {
+    margin-top: 10px;
+    max-height: clamp(120px, calc(100vh - 560px), 40vh);
+    overflow-y: auto;
+    resize: vertical;
+    background: var(--bg-stage);
+    box-sizing: border-box;
+    border: 1px solid var(--system-gray-4, var(--rule));
+    border-radius: 8px;
+    padding: 8px 8px 4px;
+}
+.excluded-del {
+    background: transparent;
+    border: none;
+    color: var(--fg-3);
+    font-weight: bold;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 6px;
+    line-height: 1;
+    transition: color 0.12s;
+}
+.excluded-del:hover { color: var(--danger); }
+
 #lattice-parameters-container {
     display: flex;
     flex-direction: column;
@@ -1834,7 +1947,8 @@ input[type="range"].custom-slider:disabled::-moz-range-thumb     { opacity: 0.4;
     position: relative;
 }
 #controls-panel.panel-locked .control-group,
-#controls-panel.panel-locked .tab-buttons {
+#controls-panel.panel-locked .tab-buttons,
+#controls-panel.panel-locked .subtab-buttons {
     opacity: 0.55;
     transition: opacity 0.15s;
 }

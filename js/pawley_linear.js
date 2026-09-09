@@ -296,6 +296,153 @@ function solveSkylineSPD(A, b, scratchA, x) {
     return { x: sol, repaired };
 }
 
+/**
+ * Matrix-vector product for the packed skyline store: out = A x.
+ *
+ * @param {SkylineMatrix} A
+ * @param {ArrayLike<number>} x
+ * @param {Float64Array} out
+ * @returns {void}
+ */
+function skylineMultiply(A, x, out) {
+    const n = A.n, a = A.a, first = A.first, ptr = A.ptr;
+    for (let i = 0; i < n; i++) out[i] = 0;
+    for (let i = 0; i < n; i++) {
+        const f = first[i], p = ptr[i];
+        let acc = 0;
+        for (let j = f; j < i; j++) {
+            const v = a[p + (j - f)];
+            if (v !== 0) { acc += v * x[j]; out[j] += v * x[i]; }   // symmetric
+        }
+        out[i] += acc + a[p + (i - f)] * x[i];
+    }
+}
+
+/**
+ * NON-NEGATIVE least squares for the intensities, by Lawson-Hanson active set
+ * on the normal equations.
+ *
+ * WHY. An integrated intensity is m|F|^2 times positive factors, so it cannot
+ * be negative. The unconstrained solve does not know that, and on a pattern
+ * with exact overlaps it does not merely produce noise around zero: it splits
+ * a coincident pair into a large positive and a large negative whose sum is
+ * right. On PbSO4, (3,4,4) and (7,2,3) coincide at d = 0.998 and came out at
+ * roughly -3650 and +1170. Both numbers are meaningless individually, and the
+ * positive one is the more dangerous because nothing about it looks wrong.
+ *
+ * Constraining the solve is the fix Sivia and David argue for: the prior that
+ * intensity is non-negative is real information, and imposing it is not
+ * cosmetic tidying but the removal of a physically impossible region from the
+ * parameter space. What it buys here is that a coincident pair can no longer
+ * trade a negative against a positive -- the pair's intensity has to be
+ * distributed between two non-negative numbers, which is what the data
+ * actually determines.
+ *
+ * ON THE SKYLINE, NOT A DENSE SUBMATRIX. The passive set is a scattered
+ * subset, so its submatrix has no envelope to inherit and a dense
+ * factorisation would be O(|P|^3) inside a loop that already runs once per
+ * refinement iteration. Instead the bound variables are masked out of a COPY
+ * of the packed store -- zero row, zero column, unit diagonal, zero
+ * right-hand side -- which leaves the reduced problem exactly and keeps the
+ * existing O(n * band) Cholesky. Masking costs one pass over the store, the
+ * same order as the factorisation it feeds.
+ *
+ * WARM STARTED. After the first call the passive set barely moves between
+ * refinement iterations, so the loop usually exits in one or two passes and
+ * the cost is close to the unconstrained solve it replaces.
+ *
+ * @param {SkylineMatrix} A Normal matrix (untouched).
+ * @param {Float64Array} b Right-hand side (untouched).
+ * @param {object} [cache] Reusable scratch; carries `nnlsPassive` between calls.
+ * @returns {{x:Float64Array, repaired:number[], bound:number[],
+ *            iterations:number, converged:boolean}|null}
+ */
+function solveSkylineNNLS(A, b, cache) {
+    const n = A.n;
+    const c = cache || {};
+    if (!c.nnlsMask || c.nnlsMask.length < A.a.length) c.nnlsMask = new Float64Array(A.a.length);
+    if (!c.nnlsRhs || c.nnlsRhs.length < n) c.nnlsRhs = new Float64Array(n);
+    if (!c.nnlsW || c.nnlsW.length < n) c.nnlsW = new Float64Array(n);
+    if (!c.nnlsGx || c.nnlsGx.length < n) c.nnlsGx = new Float64Array(n);
+    if (!c.nnlsX || c.nnlsX.length < n) c.nnlsX = new Float64Array(n);
+    const mask = c.nnlsMask, rhs = c.nnlsRhs, w = c.nnlsW, gx = c.nnlsGx, x = c.nnlsX;
+    x.fill(0);
+
+    // Warm start, but only from a mask of the right length: the reflection
+    // list changes with the 2-theta range.
+    let passive = (c.nnlsPassive && c.nnlsPassive.length === n)
+        ? c.nnlsPassive : new Uint8Array(n);
+    if (passive.length !== n) passive = new Uint8Array(n);
+    c.nnlsPassive = passive;
+
+    let cMax = 0;
+    for (let j = 0; j < n; j++) { const v = Math.abs(b[j]); if (v > cMax) cMax = v; }
+    const tol = 1e-10 * Math.max(cMax, 1);
+
+    const first = A.first, ptr = A.ptr;
+    /** Masked factor-and-solve: bound rows/cols zeroed, unit diagonal. */
+    function solveMasked() {
+        mask.set(A.a);
+        for (let i = 0; i < n; i++) {
+            const f = first[i], p = ptr[i];
+            if (!passive[i]) {
+                for (let j = f; j <= i; j++) mask[p + (j - f)] = 0;
+                mask[p + (i - f)] = 1;
+                rhs[i] = 0;
+            } else {
+                for (let j = f; j < i; j++) if (!passive[j]) mask[p + (j - f)] = 0;
+                rhs[i] = b[i];
+            }
+        }
+        const tmp = { n, a: mask, first, ptr };
+        return solveSkylineSPD(tmp, rhs, c.fac, c.sol);
+    }
+
+    let iterations = 0, converged = false, last = null;
+    const maxOuter = Math.max(16, 2 * n);
+    for (let outer = 0; outer < maxOuter; outer++) {
+        skylineMultiply(A, x, gx);
+        for (let j = 0; j < n; j++) w[j] = b[j] - gx[j];
+
+        let best = -1, bestW = tol;
+        for (let j = 0; j < n; j++) if (!passive[j] && w[j] > bestW) { bestW = w[j]; best = j; }
+        if (best < 0) { converged = true; break; }
+        passive[best] = 1;
+
+        for (let inner = 0; inner < maxOuter; inner++) {
+            iterations++;
+            const res = solveMasked();
+            if (!res) { passive[best] = 0; converged = true; break; }
+            last = res;
+            const s = res.x;
+            let minS = Infinity;
+            for (let j = 0; j < n; j++) if (passive[j] && s[j] < minS) minS = s[j];
+            if (!(minS <= 0)) { for (let j = 0; j < n; j++) x[j] = passive[j] ? s[j] : 0; break; }
+
+            let alpha = Infinity;
+            for (let j = 0; j < n; j++) {
+                if (passive[j] && s[j] <= 0) {
+                    const den = x[j] - s[j];
+                    if (den > 0) { const t = x[j] / den; if (t < alpha) alpha = t; }
+                }
+            }
+            if (!(alpha < Infinity)) alpha = 0;
+            for (let j = 0; j < n; j++) if (passive[j]) x[j] += alpha * (s[j] - x[j]);
+            let dropped = 0;
+            for (let j = 0; j < n; j++) {
+                if (passive[j] && !(x[j] > 0)) { x[j] = 0; passive[j] = 0; dropped++; }
+            }
+            if (!dropped) break;   // cannot make progress; leave it to the outer test
+        }
+    }
+
+    const bound = [];
+    for (let j = 0; j < n; j++) if (!passive[j]) { x[j] = 0; bound.push(j); }
+    const out = new Float64Array(n);
+    out.set(x.subarray(0, n));
+    return { x: out, repaired: (last && last.repaired) || [], bound, iterations, converged };
+}
+
 // ===========================================================================
 //  3. The intensity solve
 // ===========================================================================
@@ -438,8 +585,29 @@ function solvePawleyIntensities(tthAxis, buckets, win, sqrtW, target, cache) {
         }
     }
 
-    const res = solveSkylineSPD(ne.A, ne.rhs, c.fac, c.sol);
+    // NON-NEGATIVE by default. An integrated intensity is m|F|^2 times
+    // positive factors; a negative one is not a small value, it is an
+    // impossible one, and on an overlapped pattern it is how the solve hides a
+    // split it cannot determine. Set nonNegative: false to recover the old
+    // unconstrained behaviour for comparison.
+    const useNNLS = !(cache && cache.nonNegative === false);
+    const res = useNNLS ? solveSkylineNNLS(ne.A, ne.rhs, c)
+                        : solveSkylineSPD(ne.A, ne.rhs, c.fac, c.sol);
     if (!res) return null;
+
+    if (useNNLS) {
+        c.fac.set(ne.A.a);
+        const unconstrainedRepaired = [];
+        if (skylineCholeskyInPlace(c.fac, ne.first, ne.A.ptr, n, unconstrainedRepaired)) {
+            res.repaired = unconstrainedRepaired;
+        }
+    }
+    // Reflections the constraint is holding AT zero, excluding those that were
+    // never determined at all: the two mean different things. An undetermined
+    // reflection is outside the fitted range and was never asked; a bound one
+    // was asked and the answer came back impossible.
+    const undeterminedSet = new Set(undetermined);
+    const boundAtZero = (res.bound || []).filter(j => !undeterminedSet.has(j));
 
     // -------------------------------------------------------------------
     //  DEGENERATE GROUPS, not just repaired pivots.
@@ -490,7 +658,7 @@ function solvePawleyIntensities(tthAxis, buckets, win, sqrtW, target, cache) {
     return { I: res.x, cols: ne.cols,
              degenerate: res.repaired,        // the propped-up pivots
              degenerateGroups: groups,        // every reflection each one affects
-             undetermined, cache: c };
+             undetermined, boundAtZero, cache: c };
 }
 
 /**
@@ -530,6 +698,7 @@ if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         bucketContributionsByPeak, peakWindows, peakProfileColumn,
         SkylineMatrix, skylineCholeskyInPlace, skylineSolveInPlace, solveSkylineSPD,
+        skylineMultiply, solveNNLS: solveSkylineNNLS,
         intensityEnvelope, buildIntensityNormalEquations,
         solvePawleyIntensities, weightedCostFromColumns
     };
