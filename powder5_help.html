@@ -490,7 +490,7 @@ blockquote {
                 This document serves as a scientific and technical guide for the <strong>powder5</strong> web application, a tool for the analysis of powder X-ray diffraction (PXRD) data via whole-pattern fitting. This technique, also known as pattern decomposition, is a crucial method in materials science and crystallography for refining structural and microstructural parameters when a complete structural model is either unknown or unnecessary.
             </p>
             <p>
-                The application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two principal decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the simultaneous <strong>Pawley method</strong> for unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using a monotonic cubic spline interpolation between user-defined
+                This application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the <strong>Pawley method</strong> for unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using a monotonic cubic spline interpolation between user-defined
                 anchors, which are held fixed or fitted during refinement.
             </p>
             <p>
@@ -499,7 +499,7 @@ blockquote {
                 density map with no model at all, and is the first move when the composition
                 is unknown. The <strong>Wyckoff search</strong> is a direct-space method: it fits
                 atoms on Wyckoff positions of a known composition directly to the extracted
-                intensities, needs no map, and copes far better with light atoms in the presence of
+                intensities, needs no map, and copes better with light atoms in the presence of
                 heavy ones - where charge-flipping ripples can be as large as some light atoms.
             </p>
         </section>
@@ -527,7 +527,7 @@ blockquote {
             </div>
  
             <div class="note">
-                <strong>Before loading any data:</strong> the chart already shows a live theoretical stick pattern ($2\theta$ positions and relative Kα1/Kα2 markers) for the currently selected space group and lattice parameters, updating as you change them. The <b>report button</b> in the top-right corner works even without a data file, exporting that theoretical reflection list as a PDF - useful for previewing where reflections are expected before you have a scan in hand.
+                <strong>Before loading any data:</strong> the chart already shows a live theoretical stick pattern ($2\theta$ positions and relative Kα1/Kα2 markers) for the currently selected space group and lattice parameters, updating as you change them. The <b>report button</b> in the top-right corner works even without a data file, exporting that theoretical reflection list as a PDF - useful for previewing where reflections are expected for the selected symmetry.
             </div>
         </section>
 
@@ -547,7 +547,7 @@ blockquote {
                     <tr><td><code>style.css</code></td><td>All styling.</td></tr>
                     <tr><td><code>charge_flipping.wgsl</code></td><td>WebGPU kernels for the charge-flipping loop.</td></tr>
                     <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel. Scores a trial structure by |F<sub>calc</sub>|&sup2; against the Pawley intensities; this is the only objective the Wyckoff search has.</td></tr>
-                    <tr><td><code>js/</code></td><td>All application modules - <code>state.js</code>, <code>constants.js</code>, <code>crystal.js</code>, <code>profile.js</code>, <code>observations.js</code>, <code>coord_refine.js</code>, <code>swarm_wyckoff.js</code>, <code>wyckoff_assign.js</code>, <code>sg_engine.js</code>, <code>reporting.js</code>, <code>density3d.js</code>, <code>wyckoff_report.js</code>, <code>simulation.js</code>, <code>scatterers.js</code> and the two Web Workers <code>refinement_worker.js</code> and <code>charge_flipping_worker.js</code>.</td></tr>
+                    <tr><td><code>js/</code></td><td>All application modules - <code>charting.js</code>, <code>constants.js</code>, <code>contacts.js</code>, <code>coord_refine.js</code>, <code>crystal.js</code>, <code>data_io.js</code>, <code>density3d.js</code>, <code>excluded.js</code>, <code>observations.js</code>, <code>parsers.js</code>, <code>pawley_linear.js</code>, <code>polarization.js</code>, <code>profile.js</code>, <code>profile_presets.js</code>, <code>refinement_controller.js</code>, <code>reporting.js</code>, <code>scatterers.js</code>, <code>sg_engine.js</code>, <code>simulation.js</code>, <code>spacegroup_ui.js</code>, <code>spline_background.js</code>, <code>state.js</code>, <code>status_bar.js</code>, <code>swarm_wyckoff.js</code>, <code>symmetry_utils.js</code>, <code>wyckoff_assign.js</code>, <code>wyckoff_report.js</code> and the three Web Workers <code>charge_flipping_worker.js</code>, <code>refinement_worker.js</code>, and <code>wyckoff_worker.js</code>.</td></tr>
                     <tr><td><code>lib/</code></td><td>Vendor bundles: <code>chart.umd.min.js</code>, <code>three.min.js</code>, <code>jspdf.umd.min.js</code>, <code>html2canvas.min.js</code>.</td></tr>
                     <tr><td><code>sg/</code></td><td>Space-group database (all settings of the 230 groups).</td></tr>
                     <tr><td><code>scatters/</code></td><td>Tabulated atomic scattering factors, with <code>index.json</code> naming the available tables.</td></tr>
@@ -782,7 +782,7 @@ Refinement: 64%</pre>
                     convex.</li>
             </ul>
              <div class="note">
-                <strong>Which algorithm for a Pawley fit?</strong><br>
+                <strong>Which algorithm for a Pawley fit?</strong>
                 Parallel tempering searches the same dozen
                 non-linear parameters it searches in Le Bail mode, and is the better
                 choice whenever the starting cell is uncertain. Use
@@ -796,13 +796,7 @@ Refinement: 64%</pre>
 
         <section id="algorithms">
             <h2>Minimization Algorithms</h2>
-            <div class="note">
-                The selector these live in is headed <strong>Method</strong>, and its last
-                entry is <a href="#simulation">Simulation</a> &mdash; which is not a
-                minimizer at all, but a forward calculation of a pattern from a structural
-                model. It shares this box because it answers the same question the box
-                exists for: what is the program doing with my model?
-            </div>
+
             <p>The goal of refinement is to minimize the sum-of-squares objective function, $\chi^2 = \sum w_i (y_{i,obs} - y_{i,calc})^2$, where $w_i$ is the statistical weight of each data point (typically $w_i = 1/y_{i,obs}$). This application provides several algorithms to navigate the complex parameter space and find the minimum of this function.</p>
 
             <h3 id="algorithms-lm">Levenberg-Marquardt (LM)</h3>
@@ -840,7 +834,7 @@ Refinement: 64%</pre>
                 \(\lambda\) and tries again.
             </div>
             <div class="note">
-                <strong>Parameters with no effect are dropped, and said so.</strong> A parameter
+                <strong>Parameters with no effect are dropped.</strong> A parameter
                 whose Jacobian column is identically zero is excluded from the solve and reported
                 once by name. The test is on the column itself, not on its size relative to other
                 columns: diagonals of \(J^{T}J\) are in different physical units - counts
@@ -1287,10 +1281,9 @@ Refinement: 64%</pre>
              <div class="note">
                  <strong>Fit background.</strong> With the checkbox ticked, the <em>height</em>
                  \(y\) of every anchor becomes a refined parameter, bounded below at zero
-                 &mdash; a negative background is not physical. The \(2\theta\) positions stay
+                 since a negative background has no physical meaning. The \(2\theta\) positions stay
                  where you put them: the anchors are where you have decided the baseline can be
-                 read, and moving them is a judgement about the data, not something a
-                 least-squares step should make on your behalf.
+                 read, you can move them but their x positions is not fitted.
              </div>
              <p>
                  Whether you tick it changes what the numbers in the report mean.
@@ -1318,8 +1311,7 @@ Refinement: 64%</pre>
                  </tbody>
              </table>
              <p>
-                 The statistics block states which of the two applied on every run, rather than
-                 leaving it as an unstated assumption.
+                 The statistics block states which of the two applied on every run.
              </p>
              <div class="warning-note">
                  <strong>Fitting the background does not excuse you from placing the anchors
@@ -2793,10 +2785,11 @@ Refinement: 64%</pre>
                 A WebGPU swarm (replica-exchange MCMC) places atoms on trial Wyckoff assignments
                 that satisfy the stoichiometry exactly. Each candidate is scored by
                 $$f = (1 - wR2) - \text{pen}$$
-                where <strong>wR2</strong> is the weighted residual between
-                \(|F_{\text{calc}}|^2\) and the observed intensities
-                <strong>with the scale refined by least squares</strong>, taken over groups of
-                reflections the powder pattern cannot separate. The observed intensity of a
+                where <strong>wR2</strong> is derived from the <strong>centered Pearson correlation</strong> 
+                between \(|F_{\text{calc}}|^2\) and the observed intensities, taken over groups of
+                reflections the powder pattern cannot separate. Because it is centered, the score 
+                is naturally invariant to both overall scale and constant background shifts 
+                (which frequently leak from Pawley extractions). The observed intensity of a
                 group is \(\sum m |F_o|^2\) and the calculated one is accumulated
                 the same way, so the comparison is made where the measurement actually exists.
                 See <a href="#wyckoff-score">the scoring section</a> for the formula.
@@ -3439,21 +3432,25 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 \\( \\text{score} = (1 - wR2) - \\mathrm{pen} \\), and the candidate list is
                 ordered by it.
             </p>
-            <p>
-                <strong>wR2</strong> is the <em>weighted residual with a least-squares refined
-                scale</em> over the observed group intensities:
+           
+           
+           <p>
+                <strong>wR2</strong> is derived from the <em>weighted centered Pearson correlation
+                coefficient</em> (\(r\)) over the observed group intensities. This centering makes 
+                the objective invariant to arbitrary baseline shifts:
             </p>
             <p style="text-align:center;">
-                \\( k = \\dfrac{\\sum w I_o I_c}{\\sum w I_c^2}, \\qquad
-                   wR2 = \\sqrt{\\dfrac{\\sum w (I_o - k I_c)^2}{\\sum w I_o^2}} \\)
+                \( r = \dfrac{\sum w (I_o - \bar{I}_o)(I_c - \bar{I}_c)}{\sqrt{\sum w (I_o - \bar{I}_o)^2 \sum w (I_c - \bar{I}_c)^2}}, \qquad
+                   wR2 = \sqrt{1 - r^2} \)
             </p>
             <p>
                 Reflections the powder pattern cannot separate are summed into one group
                 first, so the comparison is made where the measurement exists. Each group is
-                weighted by \\( 1/\\sigma^2 \\) on its total, from the Pawley decomposition:
+                weighted by \( 1/\sigma^2 \) on its total, from the Pawley decomposition:
                 a group whose extracted intensity has an ESD larger than itself contributes
                 almost nothing.
             </p>
+
             <p>
                 <strong>pen</strong> is the <em>geometry penalty</em>, summed over every atom in
                 the trial cell. It is what stops the correlation buying a chemically impossible

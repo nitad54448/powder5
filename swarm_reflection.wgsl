@@ -233,6 +233,9 @@ var<workgroup> rPen: array<f32, WG>;
 var<workgroup> rScc: array<f32, WG>;   // sum w * Icalc^2
 var<workgroup> rSoo: array<f32, WG>;   // sum w * Iobs^2
 var<workgroup> rSco: array<f32, WG>;   // sum w * Icalc * Iobs
+var<workgroup> rSw:  array<f32, WG>;   // sum w
+var<workgroup> rSic: array<f32, WG>;   // sum w * Icalc
+var<workgroup> rSio: array<f32, WG>;   // sum w * Iobs
 var<workgroup> local_rMin: array<f32, 64>;         // MAX_ELEM * MAX_ELEM
 
 // Cartesian lengths of the 27 shell translations, indexed (a+1)*9+(b+1)*3+(c+1).
@@ -481,6 +484,9 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     var scc: f32 = 0.0;
     var soo: f32 = 0.0;
     var sco: f32 = 0.0;
+    var sw:  f32 = 0.0;
+    var sic: f32 = 0.0;
+    var sio: f32 = 0.0;
 
     for (var g = lid; g < nGroups; g = g + WG) {
         let gb    = g * GROUP_STRIDE;
@@ -546,6 +552,9 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
         scc = scc + wgt * iCalc * iCalc;
         soo = soo + wgt * iObs  * iObs;
         sco = sco + wgt * iCalc * iObs;
+        sw  = sw  + wgt;
+        sic = sic + wgt * iCalc;
+        sio = sio + wgt * iObs;
     }
 
     let t_off = u32(params.tablesOff);
@@ -763,6 +772,9 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     rScc[lid] = scc;
     rSoo[lid] = soo;
     rSco[lid] = sco;
+    rSw[lid]  = sw;
+    rSic[lid] = sic;
+    rSio[lid] = sio;
     workgroupBarrier();
 
     for (var stride = WG / 2u; stride > 0u; stride = stride >> 1u) {
@@ -771,29 +783,25 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
             rScc[lid] = rScc[lid] + rScc[lid + stride];
             rSoo[lid] = rSoo[lid] + rSoo[lid + stride];
             rSco[lid] = rSco[lid] + rSco[lid + stride];
+            rSw[lid]  = rSw[lid]  + rSw[lid + stride];
+            rSic[lid] = rSic[lid] + rSic[lid + stride];
+            rSio[lid] = rSio[lid] + rSio[lid + stride];
         }
         workgroupBarrier();
     }
 
 if (lid == 0u) {
-        //     wR2^2 = 1 - sco^2 / (scc * soo),  fitness = 1 - wR2
-        //
-        // A NEGATIVE sco is rejected outright rather than squared away. It
-        // means the least-squares scale k = sco/scc comes out negative, i.e.
-        // the best fit to these observations is a NEGATIVE multiple of the
-        // calculated intensities. That is not a poor structure, it is not a
-        // structure at all; squaring sco would hand an anticorrelated model
-        // the same score as the correctly correlated one.
-        //
-        // A zero on either of scc or soo means the comparison carries no
-        // information: every group calculated the same intensity (all atoms
-        // stacked on one point, or none at all), or the observations are flat.
-        // Returning 0 there is correct and is what the host expects -- random
-        // starting positions legitimately score 0.
         var cc: f32 = 0.0;
-        let denom = rScc[0] * rSoo[0];
-        if (denom > 1e-20 && rSco[0] > 0.0) {
-            let r2   = clamp(rSco[0] * rSco[0] / denom, 0.0, 1.0);
+        let sum_w = rSw[0];
+        
+        // Centered Pearson Correlation Coefficient
+        let d_ic = rScc[0] - (rSic[0] * rSic[0]) / sum_w;
+        let d_io = rSoo[0] - (rSio[0] * rSio[0]) / sum_w;
+        let cov  = rSco[0] - (rSic[0] * rSio[0]) / sum_w;
+        
+        let denom = d_ic * d_io;
+        if (denom > 1e-20 && cov > 0.0) {
+            let r2   = clamp((cov * cov) / denom, 0.0, 1.0);
             let wR2  = sqrt(max(0.0, 1.0 - r2));
             cc = clamp(1.0 - wR2, 0.0, 1.0);
         }

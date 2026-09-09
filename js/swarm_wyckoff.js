@@ -623,8 +623,8 @@ function swFitnessOnCpu(args) {
         gT[i] = Math.min(ty, Math.max(nElem, 1) - 1);
     }
 
-    // --- the same three sums the kernel reduces
-    let scc = 0, soo = 0, sco = 0;
+    // --- the same sums the kernel reduces
+    let scc = 0, soo = 0, sco = 0, sw = 0, sic = 0, sio = 0;
     for (let g = 0; g < nGroups; g++) {
         const gb = g * stride;
         const start = groupMeta[gb] | 0, count = groupMeta[gb + 1] | 0;
@@ -651,10 +651,18 @@ function swFitnessOnCpu(args) {
         scc += wgt * iCalc * iCalc;
         soo += wgt * iObs * iObs;
         sco += wgt * iCalc * iObs;
+        sw  += wgt;
+        sic += wgt * iCalc;
+        sio += wgt * iObs;
     }
-    const den = scc * soo;
-    if (!(den > 1e-20) || !(sco > 0)) return 0;
-    const r2 = Math.min(1, Math.max(0, (sco * sco) / den));
+    
+    const d_ic = scc - (sic * sic) / sw;
+    const d_io = soo - (sio * sio) / sw;
+    const cov  = sco - (sic * sio) / sw;
+    
+    const den = d_ic * d_io;
+    if (!(den > 1e-20) || !(cov > 0)) return 0;
+    const r2 = Math.min(1, Math.max(0, (cov * cov) / den));
     return Math.min(1, Math.max(0, 1 - Math.sqrt(Math.max(0, 1 - r2))));
 }
 

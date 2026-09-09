@@ -579,13 +579,10 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 .tab-btn:hover { color: var(--system-label, var(--fg)); background: var(--bg-hover); }
 .tab-btn.active {
     color: var(--fg);
-    background: var(--rule-soft, var(--bg-stage));
+    background: var(--bg-elevated);
     box-shadow: var(--shadow-1);
 }
 .tab-btn:disabled { opacity: 0.4; cursor: default; background: transparent; }
-[data-theme="dark"] .tab-btn.active {
-    background: var(--bg-elevated);
-}
 
 
 .tab-content-panels { position: relative; padding-top: 0; }
@@ -614,14 +611,13 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
     border-bottom: 1px solid var(--system-gray-5, var(--rule));
 }
 .subtab-btn {
-    flex: 1;
     appearance: none;
     border: none;
     cursor: pointer;
     font: inherit;
     font-size: 12px;
     font-weight: 600;
-    padding: 7px 10px;
+    padding: 7px 14px;
     border-radius: 8px 8px 0 0;
     color: var(--system-secondary-label, var(--fg-2));
     background: transparent;
@@ -630,7 +626,7 @@ input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 .subtab-btn:hover { color: var(--system-label, var(--fg)); }
 .subtab-btn.active {
     color: var(--fg);
-    background: var(--rule-soft);
+    background: var(--bg-elevated);
     border-radius: 4px;
     box-shadow: var(--shadow-1);
 }
