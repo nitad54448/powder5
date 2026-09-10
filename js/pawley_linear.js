@@ -368,11 +368,10 @@ function solveSkylineNNLS(A, b, cache) {
     const mask = c.nnlsMask, rhs = c.nnlsRhs, w = c.nnlsW, gx = c.nnlsGx, x = c.nnlsX;
     x.fill(0);
 
-    // Warm start, but only from a mask of the right length: the reflection
-    // list changes with the 2-theta range.
-    let passive = (c.nnlsPassive && c.nnlsPassive.length === n)
+    // x starts at zero, so its passive set must also start empty.
+    const passive = (c.nnlsPassive && c.nnlsPassive.length === n)
         ? c.nnlsPassive : new Uint8Array(n);
-    if (passive.length !== n) passive = new Uint8Array(n);
+    passive.fill(0);
     c.nnlsPassive = passive;
 
     let cMax = 0;
@@ -493,9 +492,11 @@ function intensityEnvelope(start, stop) {
  */
 function buildIntensityNormalEquations(tthAxis, buckets, win, sqrtW, target, cache) {
     const n = win.start.length;
-    const first = (cache && cache.A && cache.A.n === n && cache.first) ? cache.first
-                                                                      : intensityEnvelope(win.start, win.stop);
-    let A = (cache && cache.A && cache.A.n === n && cache.first === first) ? cache.A : new SkylineMatrix(first);
+    const envelope = intensityEnvelope(win.start, win.stop);
+    const reuse = !!(cache && cache.A && cache.A.n === n &&
+        cache.A.first.every((v, i) => v === envelope[i]));
+    const A = reuse ? cache.A : new SkylineMatrix(envelope);
+    const first = A.first;
     A.zero();
     const rhs = (cache && cache.rhs && cache.rhs.length === n) ? cache.rhs : new Float64Array(n);
     rhs.fill(0);
