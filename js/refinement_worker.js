@@ -1503,7 +1503,6 @@ function refineParametersPT(initialParams, fitFlags, maxIter, hklList, system, r
                 const contributions = buildPeakContributions(tthAxis, hkl_list_obj, p_obj);
                 const buckets = bucketContributionsByPeak(contributions, n_peaks);
                 const win = peakWindows(buckets, n_peaks);
-                cache.first = null; cache.A = null;
                 const sol = solvePawleyIntensities(tthAxis, buckets, win, sqrtW, scratch_net, cache);
                 if (!sol) return 1e12;
                 for (let j = 0; j < n_peaks; j++) if (hkl_list_obj[j]) hkl_list_obj[j].intensity = sol.I[j];

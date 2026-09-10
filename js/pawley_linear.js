@@ -245,12 +245,15 @@ function skylineSolveInPlace(a, first, ptr, n, x) {
         x[i] = s / a[pi + (i - fi)];
     }
     for (let i = n - 1; i >= 0; i--) {
-        let s = x[i];
-        for (let k = i + 1; k < n; k++) {
-            const fk = first[k];
-            if (fk <= i) s -= a[ptr[k] + (i - fk)] * x[k];
+        const fi = first[i];
+        const pi = ptr[i];
+
+        x[i] /= a[pi + (i - fi)];
+        const xi = x[i];
+
+        for (let j = fi; j < i; j++) {
+            x[j] -= a[pi + (j - fi)] * xi;
         }
-        x[i] = s / (a[ptr[i] + (i - first[i])]);
     }
     for (let i = 0; i < n; i++) if (!isFinite(x[i])) return false;
     return true;
@@ -357,91 +360,183 @@ function skylineMultiply(A, x, out) {
  * @returns {{x:Float64Array, repaired:number[], bound:number[],
  *            iterations:number, converged:boolean}|null}
  */
+
 function solveSkylineNNLS(A, b, cache) {
     const n = A.n;
     const c = cache || {};
-    if (!c.nnlsMask || c.nnlsMask.length < A.a.length) c.nnlsMask = new Float64Array(A.a.length);
-    if (!c.nnlsRhs || c.nnlsRhs.length < n) c.nnlsRhs = new Float64Array(n);
-    if (!c.nnlsW || c.nnlsW.length < n) c.nnlsW = new Float64Array(n);
-    if (!c.nnlsGx || c.nnlsGx.length < n) c.nnlsGx = new Float64Array(n);
-    if (!c.nnlsX || c.nnlsX.length < n) c.nnlsX = new Float64Array(n);
-    const mask = c.nnlsMask, rhs = c.nnlsRhs, w = c.nnlsW, gx = c.nnlsGx, x = c.nnlsX;
-    x.fill(0);
 
-    // x starts at zero, so its passive set must also start empty.
+    if (!c.nnlsMask || c.nnlsMask.length < A.a.length)
+        c.nnlsMask = new Float64Array(A.a.length);
+    if (!c.nnlsRhs || c.nnlsRhs.length < n)
+        c.nnlsRhs = new Float64Array(n);
+    if (!c.nnlsW || c.nnlsW.length < n)
+        c.nnlsW = new Float64Array(n);
+    if (!c.nnlsGx || c.nnlsGx.length < n)
+        c.nnlsGx = new Float64Array(n);
+    if (!c.nnlsX || c.nnlsX.length < n)
+        c.nnlsX = new Float64Array(n);
+
+    const mask = c.nnlsMask;
+    const rhs = c.nnlsRhs;
+    const w = c.nnlsW;
+    const gx = c.nnlsGx;
+    const x = c.nnlsX;
+
+    const warm = c.nnlsReady === true && c.nnlsN === n;
+    c.nnlsReady = false;
+
     const passive = (c.nnlsPassive && c.nnlsPassive.length === n)
         ? c.nnlsPassive : new Uint8Array(n);
-    passive.fill(0);
     c.nnlsPassive = passive;
 
-    let cMax = 0;
-    for (let j = 0; j < n; j++) { const v = Math.abs(b[j]); if (v > cMax) cMax = v; }
-    const tol = 1e-10 * Math.max(cMax, 1);
+    for (let j = 0; j < n; j++) {
+        if (warm) {
+            // Previous non-negative solution is a feasible starting point,
+            // even when the matrix or background has changed.
+            x[j] = Number.isFinite(x[j]) && x[j] > 0 ? x[j] : 0;
+            passive[j] = x[j] > 0 ? 1 : 0;
+        } else {
+            // Cold start: try all variables together, then remove those
+            // that hit zero. Avoid adding every reflection one by one.
+            x[j] = 0;
+            passive[j] = 1;
+        }
+    }
 
-    const first = A.first, ptr = A.ptr;
-    /** Masked factor-and-solve: bound rows/cols zeroed, unit diagonal. */
+    let cMax = 0;
+    for (let j = 0; j < n; j++) {
+        const v = Math.abs(b[j]);
+        if (v > cMax) cMax = v;
+    }
+    const tol = 1e-10 * Math.max(cMax, 1);
+    const first = A.first;
+    const ptr = A.ptr;
+
     function solveMasked() {
         mask.set(A.a);
+
         for (let i = 0; i < n; i++) {
-            const f = first[i], p = ptr[i];
+            const f = first[i];
+            const p = ptr[i];
+
             if (!passive[i]) {
-                for (let j = f; j <= i; j++) mask[p + (j - f)] = 0;
+                for (let j = f; j <= i; j++)
+                    mask[p + (j - f)] = 0;
+
                 mask[p + (i - f)] = 1;
                 rhs[i] = 0;
             } else {
-                for (let j = f; j < i; j++) if (!passive[j]) mask[p + (j - f)] = 0;
+                for (let j = f; j < i; j++) {
+                    if (!passive[j]) mask[p + (j - f)] = 0;
+                }
                 rhs[i] = b[i];
             }
         }
+
         const tmp = { n, a: mask, first, ptr };
         return solveSkylineSPD(tmp, rhs, c.fac, c.sol);
     }
 
-    let iterations = 0, converged = false, last = null;
-    const maxOuter = Math.max(16, 2 * n);
-    for (let outer = 0; outer < maxOuter; outer++) {
-        skylineMultiply(A, x, gx);
-        for (let j = 0; j < n; j++) w[j] = b[j] - gx[j];
+    let iterations = 0;
+    let converged = false;
+    let last = null;
+    const maxSolves = Math.max(32, 10 * n);
 
-        let best = -1, bestW = tol;
-        for (let j = 0; j < n; j++) if (!passive[j] && w[j] > bestW) { bestW = w[j]; best = j; }
-        if (best < 0) { converged = true; break; }
-        passive[best] = 1;
+    while (iterations < maxSolves) {
+        // Always re-solve the passive set for the CURRENT matrix/RHS.
+        // Reusing the previous intensities without this is incorrect.
+        const res = solveMasked();
+        iterations++;
+        if (!res) return null;
 
-        for (let inner = 0; inner < maxOuter; inner++) {
-            iterations++;
-            const res = solveMasked();
-            if (!res) { passive[best] = 0; converged = true; break; }
-            last = res;
-            const s = res.x;
-            let minS = Infinity;
-            for (let j = 0; j < n; j++) if (passive[j] && s[j] < minS) minS = s[j];
-            if (!(minS <= 0)) { for (let j = 0; j < n; j++) x[j] = passive[j] ? s[j] : 0; break; }
+        last = res;
+        const s = res.x;
 
-            let alpha = Infinity;
-            for (let j = 0; j < n; j++) {
-                if (passive[j] && s[j] <= 0) {
-                    const den = x[j] - s[j];
-                    if (den > 0) { const t = x[j] / den; if (t < alpha) alpha = t; }
+        // Move towards the restricted solution while staying feasible.
+        let alpha = 1;
+        let hit = -1;
+
+        for (let j = 0; j < n; j++) {
+            if (passive[j] && s[j] <= 0) {
+                const den = x[j] - s[j];
+                const t = den > 0 ? x[j] / den : 0;
+
+                if (hit < 0 || t < alpha) {
+                    alpha = t;
+                    hit = j;
                 }
             }
-            if (!(alpha < Infinity)) alpha = 0;
-            for (let j = 0; j < n; j++) if (passive[j]) x[j] += alpha * (s[j] - x[j]);
-            let dropped = 0;
+        }
+
+        if (hit >= 0) {
             for (let j = 0; j < n; j++) {
-                if (passive[j] && !(x[j] > 0)) { x[j] = 0; passive[j] = 0; dropped++; }
+                if (!passive[j]) continue;
+
+                x[j] = Math.max(0, x[j] + alpha * (s[j] - x[j]));
+
+                // At a cold start alpha can be zero. Keep variables
+                // whose restricted solution points into the feasible set.
+                if (x[j] === 0 && s[j] <= 0) passive[j] = 0;
             }
-            if (!dropped) break;   // cannot make progress; leave it to the outer test
+
+            // Drop the limiting variable explicitly despite roundoff.
+            x[hit] = 0;
+            passive[hit] = 0;
+            continue;
+        }
+
+        for (let j = 0; j < n; j++)
+            x[j] = passive[j] ? s[j] : 0;
+
+        // Check whether a bound variable should enter the passive set.
+        skylineMultiply(A, x, gx);
+
+        let best = -1;
+        let bestW = tol;
+
+        for (let j = 0; j < n; j++) {
+            w[j] = b[j] - gx[j];
+            if (!Number.isFinite(w[j])) return null;
+
+            if (!passive[j] && w[j] > bestW) {
+                bestW = w[j];
+                best = j;
+            }
+        }
+
+        if (best < 0) {
+            converged = true;
+            break;
+        }
+
+        passive[best] = 1;
+    }
+
+    // Do not report an unfinished active-set solve as successful.
+    if (!converged) return null;
+
+    c.nnlsN = n;
+    c.nnlsReady = true;
+
+    const bound = [];
+    for (let j = 0; j < n; j++) {
+        if (!passive[j]) {
+            x[j] = 0;
+            bound.push(j);
         }
     }
 
-    const bound = [];
-    for (let j = 0; j < n; j++) if (!passive[j]) { x[j] = 0; bound.push(j); }
     const out = new Float64Array(n);
     out.set(x.subarray(0, n));
-    return { x: out, repaired: (last && last.repaired) || [], bound, iterations, converged };
-}
 
+    return {
+        x: out,
+        repaired: (last && last.repaired) || [],
+        bound,
+        iterations,
+        converged
+    };
+}
 // ===========================================================================
 //  3. The intensity solve
 // ===========================================================================
