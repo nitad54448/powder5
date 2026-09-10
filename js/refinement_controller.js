@@ -9,7 +9,7 @@
 // takes minutes, and it takes two minutes to notice a wedged worker on a small
 // one. The budget is now a multiple of the slowest gap between progress
 // messages actually observed in THIS run, clamped at both ends.
-const FIT_WATCHDOG_MIN_MS = 30000;
+const FIT_WATCHDOG_MIN_MS = 120000;
 const FIT_WATCHDOG_MAX_MS = 600000;
 const FIT_WATCHDOG_FACTOR = 20;
 let fitWatchdog = null;
