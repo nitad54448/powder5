@@ -195,6 +195,142 @@ function writeXRA(b) {
     return out.join('\n') + '\n';
 }
 
+// ---------------------------------------------------------------------------
+//  pdCIF DATA NAMES -- cif_pd 2.5.0 (2026-09-08) AND EVERYTHING BEFORE IT
+// ---------------------------------------------------------------------------
+//
+//  The powder dictionary was converted from DDL1 to DDLm, and with cif_pd
+//  2.5.0 the DDLm spelling is what the dictionary's own examples use. So
+//  every standard tag below is written as <category>.<object>:
+//
+//      _pd_meas_2theta_scan   ->   _pd_meas.2theta_scan
+//
+//  The underscore forms are still declared as aliases and are still legal;
+//  they are not what a current file looks like. Four of the tags this module
+//  used, though, are not aliases of anything -- they are deprecated, and the
+//  2.5.0 changelog names them:
+//
+//    _pd_block_id             PD_BLOCK is deprecated. Replaced here by
+//                             _pd_diffractogram.id, which is also the key
+//                             every other 2.5.0 category links back to.
+//    _pd_refln_wavelength_id  Deprecated 2021-12-06, restated explicitly in
+//                             2.5.0. The core item _refln.wavelength_id --
+//                             which links to _diffrn_radiation_wavelength.id,
+//                             exactly what the loop below means -- replaces it.
+//    _pd_calib_2theta_offset  PD_CALIB_OFFSET is deprecated in favour of
+//                             PD_CALIB_XCOORD, a nominal->actual table rather
+//                             than a single offset. See writePdCIF().
+//    _pd_proc_intensity_bkg_calc  Not deprecated, but 2.5.0 added
+//                             _pd_calc.intensity_bkg and says to prefer it
+//                             when the background carries no s.u. -- which is
+//                             this program's case, so it is what gets written.
+//
+//  READING IS UNCHANGED IN SCOPE: every spelling this module ever wrote, plus
+//  the DDL1 aliases, plus the two or three non-standard names other producers
+//  use, still load. They are folded onto one canonical name on the way in so
+//  that the rest of the reader compares against a single string instead of a
+//  growing list of synonyms.
+
+/**
+ * Legacy, deprecated and non-standard spellings, mapped to the one name the
+ * reader compares against. Keys and values are lower case; CIF data names are
+ * case insensitive.
+ *
+ * Entries marked "not a data name" were never in any dictionary -- they are
+ * spellings seen in files from other programs. Keeping them costs one table
+ * row and is the difference between loading such a file and rejecting it.
+ */
+const PDCIF_TAG_ALIASES = {
+    // ---- core: cell, symmetry, radiation, audit, refinement ---------------
+    '_cell_length_a': '_cell.length_a',
+    '_cell_length_b': '_cell.length_b',
+    '_cell_length_c': '_cell.length_c',
+    '_cell_angle_alpha': '_cell.angle_alpha',
+    '_cell_angle_beta': '_cell.angle_beta',
+    '_cell_angle_gamma': '_cell.angle_gamma',
+    '_space_group_name_h-m_alt': '_space_group.name_h-m_alt',
+    '_symmetry_space_group_name_h-m': '_space_group.name_h-m_alt',
+    '_space_group_it_number': '_space_group.it_number',
+    '_symmetry_int_tables_number': '_space_group.it_number',
+    '_space_group_name_hall': '_space_group.name_hall',
+    '_symmetry_space_group_name_hall': '_space_group.name_hall',
+    '_diffrn_radiation_wavelength': '_diffrn_radiation_wavelength.value',
+    '_diffrn_radiation_wavelength_id': '_diffrn_radiation_wavelength.id',
+    '_diffrn_radiation_wavelength_wt': '_diffrn_radiation_wavelength.wt',
+    '_diffrn_radiation_probe': '_diffrn_radiation.probe',
+    '_audit_creation_date': '_audit.creation_date',
+    '_audit_creation_method': '_audit.creation_method',
+    '_refine_ls_goodness_of_fit_all': '_refine_ls.goodness_of_fit_all',
+
+    // ---- the point id. Four categories define one; PD_DATA holds the key,
+    //      the others link to it, so they all mean the same column here.
+    '_pd_data_point_id': '_pd_data.point_id',
+    '_pd_meas_point_id': '_pd_data.point_id',
+    '_pd_meas.point_id': '_pd_data.point_id',
+    '_pd_proc_point_id': '_pd_data.point_id',
+    '_pd_proc.point_id': '_pd_data.point_id',
+    '_pd_calc_point_id': '_pd_data.point_id',
+    '_pd_calc.point_id': '_pd_data.point_id',
+
+    // ---- the angle axis ---------------------------------------------------
+    '_pd_meas_2theta_scan': '_pd_meas.2theta_scan',
+    '_pd_meas_angle_2theta': '_pd_meas.2theta_scan',        // 2.5.0 alias
+    '_pd_proc_2theta_corrected': '_pd_proc.2theta_corrected',
+    '_pd_meas_2theta_corrected': '_pd_proc.2theta_corrected',  // not a data name
+    '_pd_meas_2theta_range_min': '_pd_meas.2theta_range_min',
+    '_pd_meas_2theta_range_max': '_pd_meas.2theta_range_max',
+    '_pd_meas_2theta_range_inc': '_pd_meas.2theta_range_inc',
+    '_pd_meas_number_of_points': '_pd_meas.number_of_points',
+
+    // ---- the intensity columns -------------------------------------------
+    '_pd_meas_intensity_total': '_pd_meas.intensity_total',
+    '_pd_meas_counts_total': '_pd_meas.counts_total',
+    '_pd_proc_intensity_total': '_pd_proc.intensity_total',
+    '_pd_proc_intensity_net': '_pd_proc.intensity_net',
+    '_pd_calc_intensity_total': '_pd_calc.intensity_total',
+    '_pd_proc_intensity_calc': '_pd_calc.intensity_total',     // not a data name
+    '_pd_calc_intensity_bkg': '_pd_calc.intensity_bkg',        // 2.5.0, no alias
+    '_pd_proc_intensity_bkg_calc': '_pd_proc.intensity_bkg_calc',
+    '_pd_proc_intensity_bkg': '_pd_proc.intensity_bkg_calc',   // not a data name
+
+    // ---- figures of merit -------------------------------------------------
+    '_pd_proc_ls_prof_wr_factor': '_pd_proc_ls.prof_wr_factor',
+    '_pd_proc_ls_prof_r_factor': '_pd_proc_ls.prof_r_factor',
+
+    // ---- deprecated in 2.5.0 ----------------------------------------------
+    '_pd_block_id': '_pd_diffractogram.id',
+    '_pd_block.id': '_pd_diffractogram.id',
+    '_pd_calib_2theta_offset': '_pd_calib.2theta_offset',
+    '_pd_calib_2theta_off_point': '_pd_calib_xcoord.nominal_2theta',
+    '_pd_calib.2theta_off_point': '_pd_calib_xcoord.nominal_2theta',
+
+    // ---- reflections ------------------------------------------------------
+    '_refln_index_h': '_refln.index_h',
+    '_refln_index_k': '_refln.index_k',
+    '_refln_index_l': '_refln.index_l',
+    '_refln_d_spacing': '_refln.d_spacing',
+    '_refln_f_squared_meas': '_refln.f_squared_meas',
+    '_refln_f_squared_sigma': '_refln.f_squared_su',
+    '_refln.f_squared_sigma': '_refln.f_squared_su',
+    '_refln_wavelength_id': '_refln.wavelength_id',
+    '_pd_refln_wavelength_id': '_refln.wavelength_id',         // deprecated
+    '_pd_refln.wavelength_id': '_refln.wavelength_id'           // deprecated
+};
+
+/**
+ * Fold a data name as it appears in a file onto the canonical name used
+ * throughout the reader. Anything not in the table comes back lower-cased and
+ * otherwise untouched, which is what the private _powder5_ tags need.
+ *
+ * @param {string} name  A raw data name, with or without its leading underscore
+ *                       already trimmed of surrounding whitespace.
+ * @returns {string}
+ */
+function cifTag(name) {
+    const t = String(name).trim().toLowerCase();
+    return PDCIF_TAG_ALIASES[t] || t;
+}
+
 /**
  * pdCIF.
  *
@@ -214,6 +350,10 @@ function writePdCIF(b) {
         const s = String(v == null ? '' : v);
         return (s === '') ? '?' : (/[\s'"]/.test(s) ? `'${s.replace(/'/g, "\\'")}'` : s);
     };
+    // One place that decides the tag/value column, so the DDLm names -- which
+    // are a different length from the DDL1 ones they replace -- stay aligned
+    // without every call site counting spaces.
+    const kv = (tag, v) => tag.padEnd(32) + v;
     const L = [
         '#',
         '# Powder diffraction data written by powder5',
@@ -221,24 +361,27 @@ function writePdCIF(b) {
         '#',
         `data_${(b.sourceName || 'powder5').replace(/[^A-Za-z0-9_]/g, '_')}`,
         '',
-        `_audit_creation_date            ${new Date().toISOString().slice(0, 10)}`,
-        "_audit_creation_method          'powder5'",
-        `_pd_block_id                    ${esc(b.sourceName || 'powder5')}`,
+        kv('_audit.creation_date', new Date().toISOString().slice(0, 10)),
+        kv('_audit.creation_method', "'powder5'"),
+        // _pd_block_id, which used to be here, is deprecated: PD_BLOCK went in
+        // cif_pd 2.5.0. _pd_diffractogram.id is the identifier the current
+        // categories are keyed on, and it is what names this pattern.
+        kv('_pd_diffractogram.id', esc(b.sourceName || 'powder5')),
         ''
     ];
 
     if (Number.isFinite(p.a)) {
-        L.push('_cell_length_a                  ' + ioNum(p.a, 5),
-               '_cell_length_b                  ' + ioNum(p.b, 5),
-               '_cell_length_c                  ' + ioNum(p.c, 5),
-               '_cell_angle_alpha               ' + ioNum(p.alpha, 4),
-               '_cell_angle_beta                ' + ioNum(p.beta, 4),
-               '_cell_angle_gamma               ' + ioNum(p.gamma, 4),
+        L.push(kv('_cell.length_a', ioNum(p.a, 5)),
+               kv('_cell.length_b', ioNum(p.b, 5)),
+               kv('_cell.length_c', ioNum(p.c, 5)),
+               kv('_cell.angle_alpha', ioNum(p.alpha, 4)),
+               kv('_cell.angle_beta', ioNum(p.beta, 4)),
+               kv('_cell.angle_gamma', ioNum(p.gamma, 4)),
                '');
     }
     if (sg.symbol || sg.number) {
-        L.push('_space_group_name_H-M_alt       ' + esc(sg.symbol || ''),
-               '_space_group_IT_number          ' + (sg.number || '?'));
+        L.push(kv('_space_group.name_H-M_alt', esc(sg.symbol || '')),
+               kv('_space_group.IT_number', (sg.number || '?')));
         // THE IT NUMBER ALONE DOES NOT SAY WHICH SETTING.
         //
         // Several monoclinic space groups -- 14 among them -- have multiple
@@ -246,7 +389,7 @@ function writePdCIF(b) {
         // up to three cell choices each, with DIFFERENT symmetry operators
         // and DIFFERENT reflection multiplicities. sg.symbol states which
         // one (e.g. "P121/a1" for #14 in the b3 setting), but a reader that
-        // trusts only _space_group_IT_number and maps it to its own table's
+        // trusts only _space_group.IT_number and maps it to its own table's
         // default representative -- some other setting of the same number --
         // silently applies the wrong operators. It will still produce a
         // space group, a cell and a symmetry-allowed reflection list; there
@@ -256,11 +399,11 @@ function writePdCIF(b) {
         // of generators, not a number shared by several. Writing it costs
         // nothing extra here and lets a Hall-aware reader resolve the exact
         // setting without depending on how it parses the H-M string.
-        if (sg.hall) L.push('_space_group_name_Hall          ' + esc(sg.hall));
+        if (sg.hall) L.push(kv('_space_group.name_Hall', esc(sg.hall)));
         L.push('');
     }
-    if (Number.isFinite(p.zeroShift)) {
-        // THE TWO ZERO TAGS CARRY OPPOSITE SIGNS, DELIBERATELY.
+    if (Number.isFinite(p.zeroShift) && b.tth.length) {
+        // THE ZERO POINT, AND WHY IT IS NOW A TABLE.
         //
         // powder5 places a calculated Bragg peak at (2theta_calc + zeroShift)
         // on the observed axis and never modifies the data, so its own
@@ -271,34 +414,52 @@ function writePdCIF(b) {
         // i.e. the instrument zero error: positive means the diffractometer
         // reads high.
         //
-        // The pdCIF dictionary defines its offset the other way round,
+        // _pd_calib_2theta_offset used to carry this. PD_CALIB_OFFSET was
+        // deprecated in cif_pd 2.5.0 in favour of PD_CALIB_XCOORD, which does
+        // not state an offset at all: it lists nominal 2theta against actual
+        // 2theta and lets the reader interpolate. That is strictly more
+        // general -- it can describe a calibration that varies along the axis,
+        // which an offset cannot -- and a constant offset is the special case
+        // where the table is a straight line.
         //
-        //     2theta_calibrated = 2theta_measured + 2theta_offset
+        // The sign is the same trap it always was. "Actual" is the true angle
+        // and "nominal" is what the diffractometer read, so
         //
-        // and "calibrated" is the true angle, so
+        //     actual = nominal + offset,   offset = -zeroShift
         //
-        //     _pd_calib_2theta_offset = 2theta_true - 2theta_measured
-        //                             = -zeroShift
+        // Two rows are enough and are not an approximation: the mapping is
+        // linear with unit gradient, so the endpoints determine every point
+        // between them exactly. They are placed at the ends of the measured
+        // range so that no data point needs extrapolation.
         //
-        // Writing powder5's value into the standard tag unchanged would export
-        // a zero point that every other program applies backwards -- a peak
-        // displaced by twice the offset, in a file that looks perfectly valid.
-        // The standard tag therefore gets the negated value, and the private
-        // tag keeps powder5's own so a round trip through this program is
-        // exact regardless.
+        // _powder5_2theta_zero_shift keeps powder5's own signed value so a
+        // round trip through this program is exact regardless of how the
+        // table is read back.
         const cifOffset = -p.zeroShift;
-        L.push('# Zero point.',
-               '#   _pd_calib_2theta_offset follows the dictionary:',
-               '#       2theta_calibrated = 2theta_measured + 2theta_offset',
+        const t0 = b.tth[0], t1 = b.tth[b.tth.length - 1];
+        L.push('# Zero point, as a PD_CALIB_XCOORD nominal -> actual table.',
+               '#   actual = nominal + (' + ioNum(cifOffset, 5) + ') over the whole range,',
+               '#   so the two rows below define it exactly by interpolation.',
                '#   _powder5_2theta_zero_shift is powder5\'s own convention:',
                '#       zeroShift = 2theta_observed - 2theta_calculated  (= -offset)',
-               '_pd_calib_2theta_offset         ' + ioNum(cifOffset, 5),
-               '_powder5_2theta_zero_shift      ' + ioNum(p.zeroShift, 5),
+               'loop_',
+               '    _pd_calib_xcoord.id',
+               '    _pd_calib_xcoord.nominal_2theta',
+               '    _pd_calib_xcoord.actual_2theta',
+               '  1  ' + ioNum(t0, 5) + '  ' + ioNum(t0 + cifOffset, 5),
+               '  2  ' + ioNum(t1, 5) + '  ' + ioNum(t1 + cifOffset, 5),
+               '',
+               kv('_powder5_2theta_zero_shift', ioNum(p.zeroShift, 5)),
                '');
+    } else if (Number.isFinite(p.zeroShift)) {
+        // No points, so there is no range to anchor a calibration table to.
+        // The refined value is still real and is still written; dropping it
+        // because the standard form needs two angles would lose it silently.
+        L.push(kv('_powder5_2theta_zero_shift', ioNum(p.zeroShift, 5)), '');
     }
     if (Number.isFinite(p.lambda)) {
         // THE LOOP FORM, ALWAYS -- because the reflection loop below writes
-        // _pd_refln_wavelength_id and that has to refer to something. With the
+        // _refln.wavelength_id and that has to refer to something. With the
         // scalar tag there was no wavelength list for the id to index, which
         // made the file quietly self-inconsistent.
         //
@@ -310,12 +471,12 @@ function writePdCIF(b) {
         const dbl = (p.ratio > 1e-6 && p.lambda2 > 1e-6 &&
                      Math.abs(p.lambda - p.lambda2) > 1e-6);
         L.push('loop_',
-               '    _diffrn_radiation_wavelength_id',
-               '    _diffrn_radiation_wavelength',
-               '    _diffrn_radiation_wavelength_wt',
+               '    _diffrn_radiation_wavelength.id',
+               '    _diffrn_radiation_wavelength.value',
+               '    _diffrn_radiation_wavelength.wt',
                '  1  ' + p.lambda.toFixed(6) + '  1.0');
         if (dbl) L.push('  2  ' + p.lambda2.toFixed(6) + '  ' + ioNum(p.ratio, 5));
-        L.push('', "_diffrn_radiation_probe         x-ray", '');
+        L.push('', kv('_diffrn_radiation.probe', 'x-ray'), '');
     }
 
     // ---- the profile model, in private tags -------------------------------
@@ -340,30 +501,33 @@ function writePdCIF(b) {
         if (p.profileType || keys.length) {
             L.push('# The profile model. Private tags: the dictionary has no items for these.');
             if (p.profileType) {
-                L.push('_powder5_profile_type           ' + esc(p.profileType));
+                L.push(kv('_powder5_profile_type', esc(p.profileType)));
             }
             // The polarisation model, which decides Lp and therefore every
             // |F|^2 in the reflection loop below. Taken from the three controls
             // verbatim rather than from params.polarization, whose internal key
             // names are not something this writer should have to know.
             const pol = b.polarisationUi || {};
-            if (pol.mode) L.push('_powder5_pol_mode               ' + esc(pol.mode));
+            if (pol.mode) L.push(kv('_powder5_pol_mode', esc(pol.mode)));
             if (Number.isFinite(pol.monoTth)) {
-                L.push('_powder5_pol_mono_2theta        ' + ioNum(pol.monoTth, 4));
+                L.push(kv('_powder5_pol_mono_2theta', ioNum(pol.monoTth, 4)));
             }
             if (Number.isFinite(pol.fraction)) {
-                L.push('_powder5_pol_fraction           ' + ioNum(pol.fraction, 4));
+                L.push(kv('_powder5_pol_fraction', ioNum(pol.fraction, 4)));
             }
             for (const k of keys) {
-                L.push(('_powder5_param_' + k).padEnd(32) + ioNum(p[k], 6));
+                L.push(kv('_powder5_param_' + k, ioNum(p[k], 6)));
             }
             L.push('');
         }
     }
     if (b.stats) {
-        if (Number.isFinite(b.stats.rwp))  L.push('_pd_proc_ls_prof_wR_factor      ' + (b.stats.rwp / 100).toFixed(5));
-        if (Number.isFinite(b.stats.r_p))  L.push('_pd_proc_ls_prof_R_factor       ' + (b.stats.r_p / 100).toFixed(5));
-        if (Number.isFinite(b.stats.chi2)) L.push('_refine_ls_goodness_of_fit_all  ' + b.stats.chi2.toFixed(4));
+        // Both R factors are fractions in the dictionary, not percentages --
+        // its own example gives R~wp~ of 15.432% as 0.15432 -- which is what
+        // the /100 is for.
+        if (Number.isFinite(b.stats.rwp))  L.push(kv('_pd_proc_ls.prof_wR_factor', (b.stats.rwp / 100).toFixed(5)));
+        if (Number.isFinite(b.stats.r_p))  L.push(kv('_pd_proc_ls.prof_R_factor', (b.stats.r_p / 100).toFixed(5)));
+        if (Number.isFinite(b.stats.chi2)) L.push(kv('_refine_ls.goodness_of_fit_all', b.stats.chi2.toFixed(4)));
         L.push('');
     }
 
@@ -378,7 +542,7 @@ function writePdCIF(b) {
     // the background from whatever polynomial/Chebyshev parameters happen to
     // be in the profile model; the anchors that were actually dragged into
     // place would be gone, and the reconstructed background would not match
-    // what was subtracted from this pattern. _pd_proc_intensity_bkg_calc
+    // what was subtracted from this pattern. _pd_calc.intensity_bkg
     // above is the resulting curve and is enough to redraw a plot that looks
     // right; it is not enough to keep editing the background from where this
     // file left off, because there is nothing there to drag.
@@ -415,20 +579,20 @@ function writePdCIF(b) {
     // chose. Both tags are legal; only one of them is what happened.
     if (Array.isArray(b.atoms) && b.atoms.length) {
         L.push('# The asymmetric unit the pattern was calculated from.',
-               '#   _atom_site_B_iso_or_equiv is B, not U:  B = 8 pi^2 U.',
-               '#   _atom_site_Wyckoff_symbol is DERIVED from the coordinates and the',
+               '#   _atom_site.B_iso_or_equiv is B, not U:  B = 8 pi^2 U.',
+               '#   _atom_site.Wyckoff_symbol is DERIVED from the coordinates and the',
                '#   space group, not asserted -- it is the multiplicity the structure',
                '#   factor actually summed over.',
                'loop_',
-               '    _atom_site_label',
-               '    _atom_site_type_symbol',
-               '    _atom_site_fract_x',
-               '    _atom_site_fract_y',
-               '    _atom_site_fract_z',
-               '    _atom_site_occupancy',
-               '    _atom_site_B_iso_or_equiv',
-               '    _atom_site_Wyckoff_symbol',
-               '    _atom_site_symmetry_multiplicity');
+               '    _atom_site.label',
+               '    _atom_site.type_symbol',
+               '    _atom_site.fract_x',
+               '    _atom_site.fract_y',
+               '    _atom_site.fract_z',
+               '    _atom_site.occupancy',
+               '    _atom_site.B_iso_or_equiv',
+               '    _atom_site.Wyckoff_symbol',
+               '    _atom_site.site_symmetry_multiplicity');
         b.atoms.forEach((at, i) => {
             const label = esc(at.siteLabel || `${String(at.label || 'X').replace(/[^A-Za-z]/g, '')}${i + 1}`);
             L.push('  ' + [
@@ -446,7 +610,7 @@ function writePdCIF(b) {
     // ---- the profile ------------------------------------------------------
     const haveCalc = !!(b.calc && b.calc.length === b.tth.length);
     const haveBkg = !!(b.bkg && b.bkg.length === b.tth.length);
-    // _pd_meas_2theta_scan, NOT _pd_proc_2theta_corrected.
+    // _pd_meas.2theta_scan, NOT _pd_proc.2theta_corrected.
     //
     // These are the angles as measured. powder5 applies the zero-point
     // correction to the CALCULATED peak positions, not to the data, so the
@@ -467,11 +631,11 @@ function writePdCIF(b) {
     // irregular one would misplace every point after the first gap.
     if (b.tth.length) {
         const ax = ioAxisStep(b.tth);
-        L.push('_pd_meas_2theta_range_min       ' + ioNum(b.tth[0], 5),
-               '_pd_meas_2theta_range_max       ' + ioNum(b.tth[b.tth.length - 1], 5));
-        if (ax.uniform) L.push('_pd_meas_2theta_range_inc       ' + ioNum(ax.step, 6));
-        L.push('_pd_meas_number_of_points       ' + b.tth.length, '');
-        // parsePdCifFile() reads the _pd_meas_2theta_range_* trio to rebuild an
+        L.push(kv('_pd_meas.2theta_range_min', ioNum(b.tth[0], 5)),
+               kv('_pd_meas.2theta_range_max', ioNum(b.tth[b.tth.length - 1], 5)));
+        if (ax.uniform) L.push(kv('_pd_meas.2theta_range_inc', ioNum(ax.step, 6)));
+        L.push(kv('_pd_meas.number_of_points', b.tth.length), '');
+        // parsePdCifFile() reads the _pd_meas.2theta_range_* trio to rebuild an
         // axis from a file whose loop has no angle column, so they are written
         // for a simulation too even though nothing was measured. They describe
         // the extent of the block, which is true either way.
@@ -479,7 +643,7 @@ function writePdCIF(b) {
 
     // A SIMULATION HAS NO MEASUREMENT, AND MUST NOT CLAIM ONE.
     //
-    // _pd_meas_2theta_scan and _pd_meas_intensity_total are measured
+    // _pd_meas.2theta_scan and _pd_meas.intensity_total are measured
     // quantities. A pattern computed from a structure with no data file open
     // has neither: the angles are calculated positions and there are no
     // counts. Writing the axis under a _meas_ tag with a column of "?" beside
@@ -502,16 +666,28 @@ function writePdCIF(b) {
     if (haveObs && b.syntheticObs) {
         L.push('# WARNING: the intensities below are SIMULATED, not measured.',
                '#   They were calculated from the structure in this block and then given',
-               '#   Poisson counting noise. _pd_calc_intensity_total is the same pattern',
+               '#   Poisson counting noise. _pd_calc.intensity_total is the same pattern',
                '#   without the noise. Do not cite these as experimental data.',
                '');
     }
+    // _pd_data.point_id, not _pd_proc.point_id. All four categories define a
+    // point id and the other three are declared as links to this one, so in a
+    // loop that mixes measured, calculated and processed columns -- which is
+    // exactly what the dictionary's own PD_CALIB_XCOORD example does -- the
+    // PD_DATA key is the one that belongs to the loop rather than to one of
+    // the columns in it.
+    //
+    // The background is _pd_calc.intensity_bkg, new in cif_pd 2.5.0. The
+    // definition of the older _pd_proc.intensity_bkg_calc now says to prefer
+    // it where the background carries no standard uncertainty, and powder5's
+    // spline background has none: it is interpolated through anchor points,
+    // not least-squares fitted, so there is no covariance entry to quote.
     L.push('loop_',
-           '    _pd_proc_point_id',
-           haveObs ? '    _pd_meas_2theta_scan' : '    _pd_proc_2theta_corrected');
-    if (haveObs) L.push('    _pd_meas_intensity_total');
-    if (haveCalc) L.push('    _pd_calc_intensity_total');
-    if (haveBkg)  L.push('    _pd_proc_intensity_bkg_calc');
+           '    _pd_data.point_id',
+           haveObs ? '    _pd_meas.2theta_scan' : '    _pd_proc.2theta_corrected');
+    if (haveObs) L.push('    _pd_meas.intensity_total');
+    if (haveCalc) L.push('    _pd_calc.intensity_total');
+    if (haveBkg)  L.push('    _pd_calc.intensity_bkg');
     // A MISSING VALUE IS "?", NOT ZERO.
     //
     // ioNum() turns a non-finite value into 0.000, which in a calculated
@@ -532,7 +708,7 @@ function writePdCIF(b) {
 
     // ---- the reflections --------------------------------------------------
     //
-    // _refln_F_squared_meas MEANS |F|^2, so it gets |F|^2.
+    // _refln.F_squared_meas MEANS |F|^2, so it gets |F|^2.
     //
     // This loop used to write ioNum(r.intensity, 3) -- the raw refined peak
     // height -- into that tag, and '?' into the esd for every reflection,
@@ -589,14 +765,18 @@ function writePdCIF(b) {
                '#   of a weak reflection can fall below zero when the background runs above',
                '#   the data. It is written with its esd so that it can be treated properly',
                '#   rather than silently replaced by nothing.',
+               '# _refln.wavelength_id, not _pd_refln.wavelength_id: the latter was',
+               '#   deprecated in 2021 and explicitly withdrawn in cif_pd 2.5.0. The core',
+               '#   item means the same thing and links to _diffrn_radiation_wavelength.id',
+               '#   in the loop above, which is what the "1" in this column refers to.',
                'loop_',
-               '    _refln_index_h',
-               '    _refln_index_k',
-               '    _refln_index_l',
-               '    _refln_d_spacing',
-               '    _pd_refln_wavelength_id',
-               '    _refln_F_squared_meas',
-               '    _refln_F_squared_sigma');
+               '    _refln.index_h',
+               '    _refln.index_k',
+               '    _refln.index_l',
+               '    _refln.d_spacing',
+               '    _refln.wavelength_id',
+               '    _refln.F_squared_meas',
+               '    _refln.F_squared_su');
         for (const r of sf) {
             // A reflection whose |F|^2 could not be formed at all (no Lp, no
             // profile area) is '?', which is different from a negative value
@@ -616,7 +796,7 @@ function writePdCIF(b) {
  *
  * THE ONLY PLACE THIS ARITHMETIC EXISTS. It used to live inline in
  * generateReportContent() while writePdCIF() wrote the raw refined parameter
- * into _refln_F_squared_meas, and the two disagreed by a factor that ranged
+ * into _refln.F_squared_meas, and the two disagreed by a factor that ranged
  * from 163 to 1562 across a single pattern. Four separate steps were missing
  * from the CIF, three of them reflection-dependent, so no scale factor could
  * have reconciled them:
@@ -639,7 +819,7 @@ function writePdCIF(b) {
  *
  * NEGATIVE VALUES ARE RETURNED, NOT CLAMPED. A weak reflection whose refined
  * intensity came out below zero is a real measurement -- the background ran
- * above the data there -- and CIF accepts a negative _refln_F_squared_meas.
+ * above the data there -- and CIF accepts a negative _refln.F_squared_meas.
  * Clamping to zero would assert a measurement nobody made, and dropping the
  * row would bias the set towards positive noise. The caller decides what to do
  * with it; the report has no square root to print, a CIF reader with the esd
@@ -810,8 +990,8 @@ function exportPattern(formatId, bundle) {
  * Read a powder profile out of a pdCIF.
  *
  * Deliberately tolerant about which tags carry the angle and the intensity:
- * different producers write _pd_proc_2theta_corrected, _pd_meas_2theta_scan or
- * _pd_meas_2theta_range_* and a file that uses the range form has no angle
+ * different producers write _pd_proc.2theta_corrected, _pd_meas.2theta_scan or
+ * _pd_meas.2theta_range_* and a file that uses the range form has no angle
  * column at all -- the axis is implied by min, max and the point count. A
  * reader that insists on one spelling rejects most real files.
  *
@@ -865,21 +1045,27 @@ function parsePdCifFile(content) {
     const polarisation = { mode: null, monoTth: NaN, fraction: NaN };
     // Quoted CIF strings arrive with their delimiters attached.
     const unq = (v) => v.replace(/^['"]|['"]$/g, '').trim();
+    // Keyed on canonical names -- cifTag() has already folded _cell_length_a
+    // onto _cell.length_a by the time this is consulted.
     const CELL_TAG = {
-        '_cell_length_a': 'a', '_cell_length_b': 'b', '_cell_length_c': 'c',
-        '_cell_angle_alpha': 'alpha', '_cell_angle_beta': 'beta', '_cell_angle_gamma': 'gamma'
+        '_cell.length_a': 'a', '_cell.length_b': 'b', '_cell.length_c': 'c',
+        '_cell.angle_alpha': 'alpha', '_cell.angle_beta': 'beta', '_cell.angle_gamma': 'gamma'
     };
     for (const raw of lines) {
         const s = raw.trim();
         const m = s.match(/^(_[\w.\-\[\]]+)\s+(.*)$/);
         if (!m) continue;
-        const tag = m[1].toLowerCase(), val = m[2].trim();
+        // ONE SPELLING FROM HERE ON. A file may use the DDLm names of cif_pd
+        // 2.5.0, the DDL1 aliases, or a deprecated item; cifTag() collapses
+        // all of them so the tests below name one thing each.
+        const tag = cifTag(m[1]), val = m[2].trim();
         if (CELL_TAG[tag] && Number.isFinite(num(val))) cell[CELL_TAG[tag]] = num(val);
-        // Both the modern and the deprecated spellings: files in the wild use
-        // either, and rejecting the old one would fail on most of them.
-        else if ((tag === '_space_group_name_h-m_alt' || tag === '_symmetry_space_group_name_h-m')
+        // The _symmetry_* spellings are deprecated but common in files in the
+        // wild; PDCIF_TAG_ALIASES folds them onto these two names, so both are
+        // still accepted without a second test here.
+        else if (tag === '_space_group.name_h-m_alt'
                  && unq(val) && unq(val) !== '?') sgIn.symbol = unq(val);
-        else if ((tag === '_space_group_it_number' || tag === '_symmetry_int_tables_number')
+        else if (tag === '_space_group.it_number'
                  && Number.isFinite(num(val))) sgIn.number = num(val);
         // THE ONE TAG THAT NAMES A SETTING, NOT JUST A NUMBER.
         //
@@ -887,8 +1073,8 @@ function parsePdCifFile(content) {
         // numbers cover more than one setting, and this is the tag that
         // resolves which one without depending on how the H-M string gets
         // parsed. '_symmetry_space_group_name_hall' is the deprecated
-        // spelling of the same tag.
-        else if ((tag === '_space_group_name_hall' || tag === '_symmetry_space_group_name_hall')
+        // spelling of the same tag and arrives here already folded onto it.
+        else if (tag === '_space_group.name_hall'
                  && unq(val) && unq(val) !== '?') sgIn.hall = unq(val);
         else if (tag === '_powder5_profile_type') profileType = unq(val) || null;
         else if (tag === '_powder5_pol_mode') polarisation.mode = unq(val) || null;
@@ -897,10 +1083,10 @@ function parsePdCifFile(content) {
         else if (tag.startsWith('_powder5_param_') && Number.isFinite(num(val))) {
             profileParams[m[1].slice('_powder5_param_'.length)] = num(val);
         }
-        else if (tag === '_diffrn_radiation_wavelength' && Number.isFinite(num(val))) wavelength = num(val);
-        else if (tag === '_pd_meas_2theta_range_min') rangeMin = num(val);
-        else if (tag === '_pd_meas_2theta_range_max') rangeMax = num(val);
-        else if (tag === '_pd_meas_2theta_range_inc') rangeInc = num(val);
+        else if (tag === '_diffrn_radiation_wavelength.value' && Number.isFinite(num(val))) wavelength = num(val);
+        else if (tag === '_pd_meas.2theta_range_min') rangeMin = num(val);
+        else if (tag === '_pd_meas.2theta_range_max') rangeMax = num(val);
+        else if (tag === '_pd_meas.2theta_range_inc') rangeInc = num(val);
         // The private tag wins where present -- it is already in powder5's
         // convention. The standard tag is NEGATED on the way in, because the
         // dictionary defines
@@ -908,8 +1094,63 @@ function parsePdCifFile(content) {
         // and powder5 wants 2theta_observed - 2theta_calculated, which is the
         // same quantity with the opposite sign.
         else if (tag === '_powder5_2theta_zero_shift' && Number.isFinite(num(val))) zeroShift = num(val);
-        else if (tag === '_pd_calib_2theta_offset' && Number.isFinite(num(val)) &&
+        // Deprecated as of cif_pd 2.5.0 and no longer written, but it is what
+        // every pdCIF produced before then carries, so it is still read.
+        else if (tag === '_pd_calib.2theta_offset' && Number.isFinite(num(val)) &&
                  cifOffset === null) cifOffset = num(val);
+    }
+
+    // ---- the 2-theta calibration table, if the file has one ---------------
+    //
+    // PD_CALIB_XCOORD replaced the single _pd_calib.2theta_offset in cif_pd
+    // 2.5.0: instead of one number it lists nominal 2-theta against actual
+    // 2-theta and expects the reader to interpolate. powder5's model is a
+    // single refinable zero, so the table is usable here only when it
+    // describes a constant shift -- which is the case for the two-row table
+    // this program writes, and for any calibration that really is a zero
+    // error.
+    //
+    // A table whose offset VARIES along the axis is deliberately ignored
+    // rather than averaged. Collapsing it to one number would be right at
+    // one angle and wrong everywhere else, and nothing downstream would show
+    // that it had happened; the pattern loads with no zero correction, which
+    // is visibly a missing correction rather than an invisible wrong one.
+    //
+    // Where a file carries both this and the deprecated scalar -- a writer
+    // covering both dictionary versions would -- the table wins, because it
+    // is the form the current dictionary defines.
+    {
+        let j = 0;
+        while (j < lines.length) {
+            if (lines[j].trim().toLowerCase() !== 'loop_') { j++; continue; }
+            j++;
+            const tags = [];
+            while (j < lines.length && lines[j].trim().startsWith('_')) {
+                tags.push(cifTag(lines[j].trim())); j++;
+            }
+            const iN = tags.indexOf('_pd_calib_xcoord.nominal_2theta');
+            const iA = tags.indexOf('_pd_calib_xcoord.actual_2theta');
+            if (iN < 0 || iA < 0) continue;
+            const offsets = [];
+            while (j < lines.length) {
+                const t = lines[j].trim();
+                if (t === '' || t.startsWith('_') || t.startsWith('#') ||
+                    t.toLowerCase() === 'loop_' || t.toLowerCase().startsWith('data_')) break;
+                const tok = t.split(/\s+/);
+                if (tok.length >= tags.length) {
+                    const nom = num(tok[iN]), act = num(tok[iA]);
+                    if (Number.isFinite(nom) && Number.isFinite(act)) offsets.push(act - nom);
+                }
+                j++;
+            }
+            if (!offsets.length) continue;
+            // A thousandth of a degree is far below anything a zero refinement
+            // resolves, so agreement at that level is a constant offset and
+            // not a coincidence.
+            const spread = Math.max(...offsets) - Math.min(...offsets);
+            if (spread <= 1e-3) cifOffset = offsets[0];
+            break;
+        }
     }
 
     // ---- the wavelength loop, if the file uses one ------------------------
@@ -925,12 +1166,12 @@ function parsePdCifFile(content) {
             j++;
             const tags = [];
             while (j < lines.length && lines[j].trim().startsWith('_')) {
-                tags.push(lines[j].trim().toLowerCase()); j++;
+                tags.push(cifTag(lines[j].trim())); j++;
             }
-            const iW = tags.indexOf('_diffrn_radiation_wavelength');
+            const iW = tags.indexOf('_diffrn_radiation_wavelength.value');
             if (iW < 0) continue;
-            const iId = tags.indexOf('_diffrn_radiation_wavelength_id');
-            const iWt = tags.indexOf('_diffrn_radiation_wavelength_wt');
+            const iId = tags.indexOf('_diffrn_radiation_wavelength.id');
+            const iWt = tags.indexOf('_diffrn_radiation_wavelength.wt');
             const rows = [];
             while (j < lines.length) {
                 const t = lines[j].trim();
@@ -978,16 +1219,19 @@ function parsePdCifFile(content) {
             j++;
             const tags = [];
             while (j < lines.length && lines[j].trim().startsWith('_')) {
-                tags.push(lines[j].trim().toLowerCase()); j++;
+                tags.push(cifTag(lines[j].trim())); j++;
             }
-            const iH = tags.indexOf('_refln_index_h');
-            const iK = tags.indexOf('_refln_index_k');
-            const iL = tags.indexOf('_refln_index_l');
+            const iH = tags.indexOf('_refln.index_h');
+            const iK = tags.indexOf('_refln.index_k');
+            const iL = tags.indexOf('_refln.index_l');
             if (iH < 0 || iK < 0 || iL < 0) continue;    // not the reflection loop
-            const iD  = tags.indexOf('_refln_d_spacing');
-            const iWl = tags.indexOf('_pd_refln_wavelength_id');
-            const iF  = tags.indexOf('_refln_f_squared_meas');
-            const iFs = tags.indexOf('_refln_f_squared_sigma');
+            const iD  = tags.indexOf('_refln.d_spacing');
+            // Covers _refln.wavelength_id and both spellings of the withdrawn
+            // _pd_refln.wavelength_id, which older files still use.
+            const iWl = tags.indexOf('_refln.wavelength_id');
+            const iF  = tags.indexOf('_refln.f_squared_meas');
+            // _su in DDLm, _sigma in the DDL1 files this program used to write.
+            const iFs = tags.indexOf('_refln.f_squared_su');
             const rows = [];
             while (j < lines.length) {
                 const s = lines[j].trim();
@@ -1027,7 +1271,7 @@ function parsePdCifFile(content) {
             j++;
             const tags = [];
             while (j < lines.length && lines[j].trim().startsWith('_')) {
-                tags.push(lines[j].trim().toLowerCase()); j++;
+                tags.push(cifTag(lines[j].trim())); j++;
             }
             const iT = tags.indexOf('_powder5_bkg_anchor_2theta');
             const iY = tags.indexOf('_powder5_bkg_anchor_intensity');
@@ -1049,17 +1293,23 @@ function parsePdCifFile(content) {
     }
 
     // ---- find the profile loop -------------------------------------------
-    const ANGLE = ['_pd_proc_2theta_corrected', '_pd_meas_2theta_scan',
-                   '_pd_meas_2theta_corrected'];
-    const INTEN = ['_pd_meas_intensity_total', '_pd_meas_counts_total',
-                   '_pd_proc_intensity_total', '_pd_proc_intensity_net'];
+    // Canonical names only: cifTag() has already folded the DDL1 aliases and
+    // the non-standard spellings other programs use onto these.
+    const ANGLE = ['_pd_proc.2theta_corrected', '_pd_meas.2theta_scan'];
+    const INTEN = ['_pd_meas.intensity_total', '_pd_meas.counts_total',
+                   '_pd_proc.intensity_total', '_pd_proc.intensity_net'];
     // Written by writePdCIF() only when a fit produced them (haveCalc /
     // haveBkg there). Their absence is exactly the signal used below to tell
     // a plain experimental scan from a file that carries a calculated
     // pattern -- so read them here, aligned 1:1 with tth/intensity, rather
     // than as a separate pass that would have to re-match rows by 2-theta.
-    const CALC = ['_pd_calc_intensity_total', '_pd_proc_intensity_calc'];
-    const BKG  = ['_pd_proc_intensity_bkg_calc', '_pd_calc_intensity_bkg', '_pd_proc_intensity_bkg'];
+    const CALC = ['_pd_calc.intensity_total'];
+    // Two names for the same column. _pd_calc.intensity_bkg is what this
+    // program now writes; _pd_proc.intensity_bkg_calc is what it used to, and
+    // what a background carrying standard uncertainties is written as. A file
+    // would not normally have both, and if it did, whichever column comes
+    // first is taken -- they describe the same curve.
+    const BKG  = ['_pd_calc.intensity_bkg', '_pd_proc.intensity_bkg_calc'];
 
     const tth = [], intensity = [], calc = [], bkg = [];
     let i = 0;
@@ -1068,7 +1318,7 @@ function parsePdCifFile(content) {
         i++;
         const tags = [];
         while (i < lines.length && lines[i].trim().startsWith('_')) {
-            tags.push(lines[i].trim().toLowerCase()); i++;
+            tags.push(cifTag(lines[i].trim())); i++;
         }
         const iA  = tags.findIndex(t => ANGLE.includes(t));
         const iM  = tags.findIndex(t => INTEN.includes(t));
@@ -1121,8 +1371,9 @@ function parsePdCifFile(content) {
 
     if (!intensity.length) {
         throw new Error('No powder profile loop found. The file needs a loop_ containing ' +
-                        '_pd_meas_intensity_total, _pd_proc_intensity_total or ' +
-                        '_pd_calc_intensity_total.');
+                        '_pd_meas.intensity_total, _pd_proc.intensity_total or ' +
+                        '_pd_calc.intensity_total (or their older _pd_meas_intensity_total ' +
+                        'spellings).');
     }
 
     // The range form: no angle column, the axis is implied.
@@ -1133,11 +1384,15 @@ function parsePdCifFile(content) {
         }
         if (!Number.isFinite(rangeMin) || !Number.isFinite(step)) {
             throw new Error('The profile loop has no 2-theta column, and the file does not ' +
-                            'give _pd_meas_2theta_range_min / _inc to reconstruct the axis.');
+                            'give _pd_meas.2theta_range_min / _inc to reconstruct the axis.');
         }
         for (let k = 0; k < intensity.length; k++) tth[k] = rangeMin + k * step;
     }
-    // The private tag has priority; otherwise convert the dictionary's offset.
+    // The private tag has priority -- it is already in powder5's convention.
+    // The standard value is NEGATED on the way in: the dictionary's offset,
+    // whether it came from the deprecated scalar or from a PD_CALIB_XCOORD
+    // table, is (actual - nominal), and powder5 wants (observed - calculated),
+    // which is the same quantity with the opposite sign.
     if (zeroShift === null && cifOffset !== null) zeroShift = -cifOffset;
 
     // ONLY SOME pdCIF FILES CARRY CALCULATED DATA.
