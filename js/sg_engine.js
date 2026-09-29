@@ -23,8 +23,20 @@
         '6':    '6/m',  '-6':   '6/m',  '6/m':  '6/m',
         '622':  '6/mmm','6mm':  '6/mmm','-62m': '6/mmm','6/mmm':'6/mmm',
         '23':   'm-3',  'm-3':  'm-3',
-        '432':  'm-3m', '-43m': 'm-3m', 'm-3m': 'm-3m'
+        '432':  'm-3m', '-43m': 'm-3m', 'm-3m': 'm-3m',
+        // Same classes under the other labels in use (cctbx writes -6m2 for
+        // 187-190). Without them the group has no Laue class and the HKL
+        // generator returns nothing at all.
+        '-4m2': '4/mmm', '-6m2': '6/mmm',
+        '312': '-3m', '321': '-3m', '31m': '-3m', '3m1': '-3m', '-31m': '-3m', '-3m1': '-3m'
     };
+    const LAUE_LABELS = new Set(Object.values(POINT_GROUP_TO_LAUE));
+
+    /** Laue class of a DB entry: the point-group map first, then the JSON's own field. */
+    function laueOf(sgEntry) {
+        return POINT_GROUP_TO_LAUE[sgEntry.point_group]
+            || (LAUE_LABELS.has(sgEntry.laue_class) ? sgEntry.laue_class : null);
+    }
 
     // The 'system' in the main thread's old code used 'rhombohedral' as a
     // distinct bucket; the cctbx JSON keeps them all under 'trigonal'. The
@@ -108,7 +120,7 @@
     }
 
     function buildRecord(sgEntry, setting) {
-        const laue = POINT_GROUP_TO_LAUE[sgEntry.point_group] || null;
+        const laue = laueOf(sgEntry);
         if (!laue) {
             // Should not happen for the 230 standard groups, but be defensive.
             console.warn('SG_ENGINE: unknown point group', sgEntry.point_group,
@@ -125,7 +137,10 @@
             point_group: sgEntry.point_group,
             centering: (setting.symbol || '').charAt(0).toUpperCase(),
             centrosymmetric: !!sgEntry.centrosymmetric,
-            reflection_conditions: setting.reflection_conditions || {}
+            reflection_conditions: setting.reflection_conditions || {},
+            // The operators decide absences exactly -- see isReflectionAllowed.
+            sym_ops: setting.sym_ops || null,
+            centring_translations: setting.centring_translations || null
         };
     }
 
@@ -198,7 +213,11 @@
             case 'h0l': return k === 0;
             case '0kl': return h === 0;
             case 'hk0': return l === 0;
-            case 'hhl': return Math.abs(h) === Math.abs(k);
+            // h === k, not |h| === |k|. The rules are now applied to every
+            // member of the orbit, which always contains the (h,h,l) form when
+            // the family is special; |h| === |k| also matched (h,-h,l), which in
+            // a hexagonal cell is a different family (h-h0l, not hh-2hl).
+            case 'hhl': return h === k;
             default:    return false;
         }
     }
@@ -281,8 +300,7 @@
         return out;
     }
 
-    function isReflectionAllowed(h, k, l, sg) {
-        if (!sg) return true;
+    function textConditionsAllow(h, k, l, sg) {
         const conds = compileConditions(sg);
         // For every family the hkl is a member of, ALL conditions must hold.
         for (const fam in conds) {
@@ -295,6 +313,74 @@
         }
         return true;
     }
+
+    // Operators with a non-zero translation, centring folded in. Cached on the
+    // record; null when the record carries no operators.
+    function tOf(o) {
+        if (Array.isArray(o.t_num) && Number(o.t_den)) return o.t_num.map(n => Number(n) / Number(o.t_den));
+        return Array.isArray(o.t) ? o.t.map(Number) : [0, 0, 0];
+    }
+    function compileOperators(sg) {
+        if (Object.prototype.hasOwnProperty.call(sg, '__compiled_ops')) return sg.__compiled_ops;
+        let out = null;
+        if (Array.isArray(sg.sym_ops) && sg.sym_ops.length) {
+            const cents = (Array.isArray(sg.centring_translations) && sg.centring_translations.length)
+                ? sg.centring_translations.map(tOf) : [[0, 0, 0]];
+            const seen = new Set();
+            out = [];
+            for (const op of sg.sym_ops) {
+                if (!op || !Array.isArray(op.r) || op.r.length !== 9) continue;
+                const r = op.r.map(Number), t0 = tOf(op);
+                for (const c of cents) {
+                    const t = t0.map((v, i) => {
+                        let w = v + c[i]; w -= Math.floor(w);
+                        return Math.abs(w - 1) < 1e-9 ? 0 : w;
+                    });
+                    if (t.every(v => Math.abs(v) < 1e-9)) continue;   // cannot cause an absence
+                    const key = r.join(',') + '|' + t.map(v => Math.round(v * 5040)).join(',');
+                    if (!seen.has(key)) { seen.add(key); out.push({ r, t }); }
+                }
+            }
+        }
+        Object.defineProperty(sg, '__compiled_ops', { value: out, enumerable: false, writable: false });
+        return out;
+    }
+
+    // SYSTEMATIC ABSENCES FROM THE OPERATORS. h is extinct iff some (R, t) has
+    // hR = h and h.t non-integral. This is exact, needs no parser, and is an
+    // orbit invariant by construction, so testing any one member of an orbit
+    // is enough.
+    //
+    // The condition TABLE is not: International Tables lists each condition on
+    // one representative family (0kl, hhl, hh-2hl ...), and the generator
+    // tests only the orbit's canonical member, which is often in a different
+    // family -- (4,2,0) in Fd-3m, (4,1,1) in Ia-3d, (1,0,l) in P4/mbm,
+    // (2,-1,l) in P63/mmc were all let through. So the table is now a fallback
+    // for records without operators, and then it is applied to every member.
+    function isReflectionAllowed(h, k, l, sg) {
+        if (!sg) return true;
+        const ops = compileOperators(sg);
+        if (ops) {
+            for (const { r, t } of ops) {
+                if (h * r[0] + k * r[3] + l * r[6] !== h) continue;
+                if (h * r[1] + k * r[4] + l * r[7] !== k) continue;
+                if (h * r[2] + k * r[5] + l * r[8] !== l) continue;
+                const p = h * t[0] + k * t[1] + l * t[2];
+                if (Math.abs(p - Math.round(p)) > 1e-6) return false;
+            }
+            return true;
+        }
+        const laueOps = laueGroup(laueKey(sg.laue_class, sg));
+        if (!laueOps) return textConditionsAllow(h, k, l, sg);
+        for (const r of laueOps) {
+            const H = h * r[0] + k * r[3] + l * r[6];
+            const K = h * r[1] + k * r[4] + l * r[7];
+            const L = h * r[2] + k * r[5] + l * r[8];
+            if (!textConditionsAllow(H, K, L, sg)) return false;
+        }
+        return true;
+    }
+
 
     //   Multiplicities from Laue orbits (replaces the hand-written table).
     //
@@ -441,13 +527,15 @@
         system: deriveSystem(sg),   // FIX: was raw crystal_system; R groups need 'rhombohedral'
 
         point_group: sg.point_group,
-        laue_class: POINT_GROUP_TO_LAUE[sg.point_group] || sg.point_group,
+        laue_class: laueOf(sg) || sg.point_group,
         centrosymmetric: sg.centrosymmetric,
         symbol: setting.symbol,
         setting_description: setting.description,
         hall: setting.hall,
         centering: setting.symbol.charAt(0),
-        reflection_conditions: setting.reflection_conditions
+        reflection_conditions: setting.reflection_conditions,
+        sym_ops: setting.sym_ops || null,
+        centring_translations: setting.centring_translations || null
     }));
 }
 

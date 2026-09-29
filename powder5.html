@@ -25,6 +25,7 @@
     <script src="js/spacegroup_ui.js"></script>
     <script src="js/profile_presets.js"></script>
     <script src="js/charting.js"></script>
+    <script src="js/plot_styles.js"></script>
     <script src="js/spline_background.js"></script>
     <script src="js/excluded.js"></script>
     <script src="js/refinement_controller.js"></script>
@@ -1394,7 +1395,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 177, 1O sept 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 178, 29 sept 2026";
 
 // ===========================================================================
 //  LAST-RESORT ERROR REPORTING
@@ -2206,7 +2207,14 @@ function intensityOverlapClusters(fr, finalParams, covResultIn = null) {
         for (const members of groups.values()) {
             let sumI = 0, varSum = 0;
             for (const m of members) sumI += m.area;
-            for (const a of members) for (const b of members) varSum += covArea(a, b);
+            if (typeof covResult.quad === 'function') {
+                // Exact, including pairs outside the envelope (see quad()).
+                const u = new Float64Array(P);
+                for (const m of members) u[m.pi] += m.scale * m.wf;
+                varSum = covResult.quad(u) * chi2;
+            } else {
+                for (const a of members) for (const b of members) varSum += covArea(a, b);
+            }
             const sigmaSum = varSum > 0 ? Math.sqrt(varSum) : NaN;
 
             const detail = members.map(m => {
@@ -5885,7 +5893,38 @@ function exportChargeFlipMap() {
                 cov[i][i] = -1;
             }
 
-            return { cov, undetermined };
+            // u^T (J^T J)^-1 u from the factor, for sums of parameters.
+            //
+            // `cov` holds only the entries inside the envelope of J^T J (the
+            // Takahashi recurrence never computes the rest), so any sum over
+            // parameters that do not overlap pairwise -- a chained overlap
+            // cluster -- read zeros where the true covariance is not zero and
+            // came out wrong, often negative. With A = D^-1 JtJ D^-1 = L L^T,
+            // u^T JtJ^-1 u = |L^-1 D^-1 u|^2: one forward solve on the
+            // envelope, O(n * band). Undetermined parameters are held fixed,
+            // exactly as they are in `cov`.
+            const ptr = new Int32Array(n + 1);
+            for (let i = 0; i < n; i++) ptr[i + 1] = ptr[i] + (i - firstNonZero[i] + 1);
+            const Lp = new Float64Array(ptr[n]);
+            for (let i = 0; i < n; i++) {
+                const f = firstNonZero[i];
+                for (let j = f; j <= i; j++) Lp[ptr[i] + j - f] = L[i * n + j];
+            }
+            const quad = (u) => {
+                const y = new Float64Array(n);
+                let q = 0;
+                for (let i = 0; i < n; i++) {
+                    if (dropped.has(i)) continue;
+                    const f = firstNonZero[i], p = ptr[i];
+                    let s = (u[i] || 0) / d[i];
+                    for (let k = f; k < i; k++) s -= Lp[p + k - f] * y[k];
+                    y[i] = s / Lp[p + i - f];
+                    q += y[i] * y[i];
+                }
+                return q;
+            };
+
+            return { cov, undetermined, quad };
         }
 
 
@@ -5952,6 +5991,12 @@ if (tooltipContainer && tooltipContent) {
 // Expose hoisted math functions required by reporting.js
         window.calculateTotalBackground = calculateTotalBackground;
         window.calculatePattern = calculatePattern;
+        // Called from reporting.js / simulation.js behind typeof guards, which
+        // silently skipped them because they live inside this handler.
+        window.cfMetricTensor = cfMetricTensor;
+        window.cfFracDistance = cfFracDistance;
+        window.describeDistanceConstraint = describeDistanceConstraint;
+        window.rpSwitchTab = rpSwitchTab;
         window.calculateWilliamsonHall = calculateWilliamsonHall;
         window.calculateAllObservedIntensities = calculateAllObservedIntensities;
         window.polarizationFromParams = polarizationFromParams;
