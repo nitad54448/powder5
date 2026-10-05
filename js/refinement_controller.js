@@ -1,3 +1,4 @@
+// Updated for Powder 5 version 179, 5 October 2026.
 // FIX: previously there was no timeout and no way to recover. If the
 // worker wedged (or died without firing onerror) the UI sat on
 // "Refining..." forever, and any onerror permanently nulled the worker
@@ -27,12 +28,22 @@ let fitObservedGapMs = 0;
 // nothing in the cycle ever failed loudly enough to stop it -- the tab simply
 // spawned workers until it was closed.
 //
-// The budget is refilled the moment a worker posts ANY message, because that is
-// proof the script loaded and is running. So a worker that dies once mid-fit
+// The budget is refilled when a worker posts a non-error message, because that
+// proves it can run. An initialization error must not refill its own retries.
+// So a worker that dies once mid-fit
 // still gets its three retries back on the next successful run, and only a
 // worker that never manages to speak at all exhausts the budget.
 const FIT_WORKER_MAX_REBUILDS = 3;
 let fitWorkerRebuilds = 0;
+
+/** Failure callbacks may run before DOMContentLoaded has exposed the UI. */
+function resetRefinementUIAfterFailure() {
+    isFitting = false;
+    try {
+        if (typeof window.setUIState === 'function') window.setUIState(false);
+    } catch (err) { console.error('Could not reset refinement UI:', err); }
+    if (controls.progressBar) controls.progressBar.style.width = '0%';
+}
 
 /** Replace a worker that has failed, unless it has already failed too often. */
 function rebuildRefinementWorker() {
@@ -77,9 +88,10 @@ function armFitWatchdog() {
         console.error("Refinement watchdog fired: no progress from the worker.");
         try { if (refinementWorker) refinementWorker.terminate(); } catch (err) { /* already gone */ }
         refinementWorker = null;
-        window.setUIState(false);
-        controls.progressBar.style.width = '0%';
-        showToast("Refinement stopped responding and was cancelled.", "error");
+        resetRefinementUIAfterFailure();
+        if (typeof window.showToast === 'function') {
+            window.showToast("Refinement stopped responding and was cancelled.", "error");
+        }
         rebuildRefinementWorker();   // rebuild so the next fit can still run
     }, budget);
 }
@@ -91,15 +103,12 @@ function createRefinementWorker() {
 
         //   Worker Message Handler
         refinementWorker.onmessage = function(e) {
-            // Any message at all proves the script loaded and is executing, so
-            // the rebuild budget is refilled. See FIT_WORKER_MAX_REBUILDS.
-            fitWorkerRebuilds = 0;
-
             const { type, value, message, results } = e.data;
+            if (type !== 'error') fitWorkerRebuilds = 0;
 
             if (type === 'warning') {
                 console.warn("Worker warning:", message);
-                showToast(message, 'error');
+                if (typeof window.showToast === 'function') window.showToast(message, 'error');
                 return;
             }
 
@@ -201,10 +210,11 @@ function createRefinementWorker() {
                 disarmFitWatchdog();
                 console.error("Worker reported error:", message);
                 if (window.showToast) window.showToast(`Refinement Error: ${message}`, 'error');
-                window.setUIState(false); 
-                controls.progressBar.style.width = '0%'; 
+                resetRefinementUIAfterFailure();
                 if (message && message.indexOf('initialization failed') !== -1) {
+                    try { if (refinementWorker) refinementWorker.terminate(); } catch (_) { /* already gone */ }
                     refinementWorker = null;
+                    rebuildRefinementWorker();
                 }
             }
         };
@@ -213,9 +223,9 @@ function createRefinementWorker() {
             console.error("Error initializing or communicating with worker:", e.message, e);
             if (window.showToast) window.showToast(`Worker Error: ${e.message}`, 'error');
             disarmFitWatchdog();
-            window.setUIState(false);
             try { if (refinementWorker) refinementWorker.terminate(); } catch (err) { /* already gone */ }
             refinementWorker = null;
+            resetRefinementUIAfterFailure();
             // REBUILT, exactly as the watchdog path already does.
             //
             // The comment at the top of this file says the factory exists

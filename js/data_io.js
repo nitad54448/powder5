@@ -1,3 +1,4 @@
+// Updated for Powder 5 version 179, 5 October 2026.
 // data_io.js
 // Writing patterns out, and reading pdCIF back in.
 // A bug exists in version 157 and before. patched in version 163 and above, 18 aug 2026.
@@ -179,16 +180,20 @@ function writeXRA(b) {
     const perLine = 10;
     const nRec = Math.ceil(n / perLine);
     // GSAS counts 2-theta in centidegrees.
-    const start100 = Math.round(ax.start * 100);
-    const step100 = Math.round(ax.step * 100);
+    const start100 = Number((ax.start * 100).toPrecision(15));
+    const step100 = Number((ax.step * 100).toPrecision(15));
     const out = [
         (b.sourceName || 'powder5 export').slice(0, 80),
         `BANK 1 ${n} ${nRec} CONST ${start100} ${step100} 0 0 STD`
     ];
     for (let i = 0; i < n; i += perLine) {
         let line = '';
-        for (let k = i; k < Math.min(i + perLine, n); k++) {
-            line += String(Math.max(0, Math.round(b.obs[k]))).padStart(8);
+        for (let k = i; k < i + perLine; k++) {
+            const value = k < n ? Math.max(0, Math.round(b.obs[k])) : 0;
+            if (!Number.isFinite(value) || value > 99999999) {
+                throw new Error('GSAS STD intensities must fit an eight-character integer field. Use the two-column format for this pattern.');
+            }
+            line += String(value).padStart(8);
         }
         out.push(line);
     }
@@ -1125,8 +1130,11 @@ function parsePdCifFile(content) {
             if (lines[j].trim().toLowerCase() !== 'loop_') { j++; continue; }
             j++;
             const tags = [];
-            while (j < lines.length && lines[j].trim().startsWith('_')) {
-                tags.push(cifTag(lines[j].trim())); j++;
+            while (j < lines.length) {
+                const tagLine = lines[j].trim();
+                if (!tagLine || tagLine.startsWith('#')) { j++; continue; }
+                if (!tagLine.startsWith('_')) break;
+                tags.push(cifTag(tagLine)); j++;
             }
             const iN = tags.indexOf('_pd_calib_xcoord.nominal_2theta');
             const iA = tags.indexOf('_pd_calib_xcoord.actual_2theta');
@@ -1134,8 +1142,8 @@ function parsePdCifFile(content) {
             const offsets = [];
             while (j < lines.length) {
                 const t = lines[j].trim();
-                if (t === '' || t.startsWith('_') || t.startsWith('#') ||
-                    t.toLowerCase() === 'loop_' || t.toLowerCase().startsWith('data_')) break;
+                if (t === '' || t.startsWith('#')) { j++; continue; }
+                if (t.startsWith('_') || /^(?:loop_|stop_|data_|save_)/i.test(t)) break;
                 const tok = t.split(/\s+/);
                 if (tok.length >= tags.length) {
                     const nom = num(tok[iN]), act = num(tok[iA]);
@@ -1165,8 +1173,11 @@ function parsePdCifFile(content) {
             if (lines[j].trim().toLowerCase() !== 'loop_') { j++; continue; }
             j++;
             const tags = [];
-            while (j < lines.length && lines[j].trim().startsWith('_')) {
-                tags.push(cifTag(lines[j].trim())); j++;
+            while (j < lines.length) {
+                const tagLine = lines[j].trim();
+                if (!tagLine || tagLine.startsWith('#')) { j++; continue; }
+                if (!tagLine.startsWith('_')) break;
+                tags.push(cifTag(tagLine)); j++;
             }
             const iW = tags.indexOf('_diffrn_radiation_wavelength.value');
             if (iW < 0) continue;
@@ -1175,8 +1186,8 @@ function parsePdCifFile(content) {
             const rows = [];
             while (j < lines.length) {
                 const t = lines[j].trim();
-                if (t === '' || t.startsWith('_') || t.startsWith('#') ||
-                    t.toLowerCase() === 'loop_' || t.toLowerCase().startsWith('data_')) break;
+                if (t === '' || t.startsWith('#')) { j++; continue; }
+                if (t.startsWith('_') || /^(?:loop_|stop_|data_|save_)/i.test(t)) break;
                 const tok = t.split(/\s+/);
                 if (tok.length >= tags.length) {
                     rows.push({ id: iId >= 0 ? String(tok[iId]) : String(rows.length + 1),
@@ -1218,8 +1229,11 @@ function parsePdCifFile(content) {
             if (lines[j].trim().toLowerCase() !== 'loop_') { j++; continue; }
             j++;
             const tags = [];
-            while (j < lines.length && lines[j].trim().startsWith('_')) {
-                tags.push(cifTag(lines[j].trim())); j++;
+            while (j < lines.length) {
+                const tagLine = lines[j].trim();
+                if (!tagLine || tagLine.startsWith('#')) { j++; continue; }
+                if (!tagLine.startsWith('_')) break;
+                tags.push(cifTag(tagLine)); j++;
             }
             const iH = tags.indexOf('_refln.index_h');
             const iK = tags.indexOf('_refln.index_k');
@@ -1235,8 +1249,8 @@ function parsePdCifFile(content) {
             const rows = [];
             while (j < lines.length) {
                 const s = lines[j].trim();
-                if (s === '' || s.startsWith('_') || s.startsWith('#') ||
-                    s.toLowerCase() === 'loop_' || s.toLowerCase().startsWith('data_')) break;
+                if (s === '' || s.startsWith('#')) { j++; continue; }
+                if (s.startsWith('_') || /^(?:loop_|stop_|data_|save_)/i.test(s)) break;
                 const tok = s.split(/\s+/);
                 if (tok.length >= tags.length) {
                     const h = num(tok[iH]), k = num(tok[iK]), l = num(tok[iL]);
@@ -1270,8 +1284,11 @@ function parsePdCifFile(content) {
             if (lines[j].trim().toLowerCase() !== 'loop_') { j++; continue; }
             j++;
             const tags = [];
-            while (j < lines.length && lines[j].trim().startsWith('_')) {
-                tags.push(cifTag(lines[j].trim())); j++;
+            while (j < lines.length) {
+                const tagLine = lines[j].trim();
+                if (!tagLine || tagLine.startsWith('#')) { j++; continue; }
+                if (!tagLine.startsWith('_')) break;
+                tags.push(cifTag(tagLine)); j++;
             }
             const iT = tags.indexOf('_powder5_bkg_anchor_2theta');
             const iY = tags.indexOf('_powder5_bkg_anchor_intensity');
@@ -1279,8 +1296,8 @@ function parsePdCifFile(content) {
             const rows = [];
             while (j < lines.length) {
                 const s = lines[j].trim();
-                if (s === '' || s.startsWith('_') || s.startsWith('#') ||
-                    s.toLowerCase() === 'loop_' || s.toLowerCase().startsWith('data_')) break;
+                if (s === '' || s.startsWith('#')) { j++; continue; }
+                if (s.startsWith('_') || /^(?:loop_|stop_|data_|save_)/i.test(s)) break;
                 const tok = s.split(/\s+/);
                 if (tok.length >= tags.length) {
                     const t = num(tok[iT]), y = num(tok[iY]);
@@ -1317,8 +1334,11 @@ function parsePdCifFile(content) {
         if (lines[i].trim().toLowerCase() !== 'loop_') { i++; continue; }
         i++;
         const tags = [];
-        while (i < lines.length && lines[i].trim().startsWith('_')) {
-            tags.push(cifTag(lines[i].trim())); i++;
+        while (i < lines.length) {
+            const tagLine = lines[i].trim();
+            if (!tagLine || tagLine.startsWith('#')) { i++; continue; }
+            if (!tagLine.startsWith('_')) break;
+            tags.push(cifTag(tagLine)); i++;
         }
         const iA  = tags.findIndex(t => ANGLE.includes(t));
         const iM  = tags.findIndex(t => INTEN.includes(t));
@@ -1344,8 +1364,8 @@ function parsePdCifFile(content) {
 
         while (i < lines.length) {
             const s = lines[i].trim();
-            if (s === '' || s.startsWith('_') || s.startsWith('#') ||
-                s.toLowerCase() === 'loop_' || s.toLowerCase().startsWith('data_')) break;
+            if (s === '' || s.startsWith('#')) { i++; continue; }
+                if (s.startsWith('_') || /^(?:loop_|stop_|data_|save_)/i.test(s)) break;
             const tok = s.split(/\s+/);
             if (tok.length >= tags.length) {
                 const y = num(tok[iI]);

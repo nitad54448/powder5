@@ -1,3 +1,6 @@
+// Updated for Powder 5 version 179, 5 October 2026.
+const SHARKO_OBSERVATIONS_VERSION = '1.1.1';
+
 /* ------------------------------------------------------------------
    Observation preparation for the Wyckoff structure search.
 

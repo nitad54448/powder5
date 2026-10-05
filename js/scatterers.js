@@ -1,3 +1,6 @@
+// Updated for Powder 5 version 179, 5 October 2026.
+const SHARKO_SCATTERERS_VERSION = '1.1.1';
+
 /* ------------------------------------------------------------------
    Scattering factors for sHarko.
 

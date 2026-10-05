@@ -1,3 +1,6 @@
+// Updated for Powder 5 version 179, 5 October 2026.
+const SHARKO_COORD_REFINE_VERSION = '1.1.1';
+
 /* ------------------------------------------------------------------
    coord_refine.js - the last step: Wyckoff-constrained coordinate
    refinement of a proposed structure against the Pawley intensities.

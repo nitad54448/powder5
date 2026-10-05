@@ -1,5 +1,7 @@
 # powder5
 
+Version 179 — 5 October 2026.
+
 Whole-pattern analysis of powder X-ray diffraction data, in a browser.
 [Launch it](https://nitad54448.github.io/powder5/powder5.html) — there is
 nothing to install, and your data never leaves your machine.

@@ -1,3 +1,6 @@
+// Updated for Powder 5 version 179, 5 October 2026.
+const SHARKO_SWARM_WYCKOFF_VERSION = '1.1.1';
+
 /* ------------------------------------------------------------------
    swarm_wyckoff.js - the whole Wyckoff-constrained structure search.
 
