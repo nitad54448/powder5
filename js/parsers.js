@@ -207,9 +207,18 @@ const detectAndParseBuffer = async (fileName, buffer) => {
                 { // pdCIF -- must be tested BEFORE the generic fallback, and
                   // before the XML tests, since a CIF is neither XML nor two
                   // columns and the fallback would read its loop headers as data.
+                    // [._], not _: cif_pd 2.5.0 names are _pd_meas.2theta_scan,
+                    // which is what writePdCIF() emits, so the old /_pd_(meas|proc)_/
+                    // did not recognise this program's own output once the file
+                    // lost its .cif extension. _pd_calc covers a simulation, which
+                    // has no measured column. Case-insensitive: CIF names are.
                     test: (name, content) => name.endsWith('.cif') ||
-                                             /\bdata_/.test(content) &&
-                                             /_pd_(meas|proc)_/.test(content),
+                                             /\bdata_/i.test(content) &&
+                                             /_pd_(meas|proc|calc)[._]/i.test(content),
+                    // A .cif that is not a powder profile (a structure CIF, say)
+                    // must report the reader's error. Falling through let the
+                    // two-column fallback read atom coordinates as a pattern.
+                    fatal: (name) => name.endsWith('.cif'),
                     // RETURNED WHOLE, NOT WHITELISTED.
                     //
                     // This used to rebuild the result as
@@ -290,6 +299,7 @@ const detectAndParseBuffer = async (fileName, buffer) => {
                         return rule.parser(fileContent);
                     }
                 } catch (e) {
+                    if (rule.fatal && rule.fatal(name)) throw e;
                     console.warn(`Parser ${rule.parser.name} failed, trying next...`, e.message);
                 }
             }
@@ -326,7 +336,9 @@ const detectAndParseBuffer = async (fileName, buffer) => {
             let dropped = 0;
             for (let i = 0; i < n; i++) {
                 const x = parsed.tth[i], y = parsed.intensity[i];
-                if (isFinite(x) && isFinite(y)) pts.push({ x, y }); else dropped++;
+                // i is kept so the per-point companion columns below follow the
+                // point through the drop / sort / dedup steps.
+                if (isFinite(x) && isFinite(y)) pts.push({ x, y, i }); else dropped++;
             }
             if (dropped > 0) {
                 console.warn(`Data File (${fileName}) Warning: discarded ${dropped} non-finite point(s).`);
@@ -346,11 +358,11 @@ const detectAndParseBuffer = async (fileName, buffer) => {
 
             // Collapse exact duplicate 2-theta values: they give a zero-width
             // interval that the spline interpolator cannot handle.
-            const outX = [], outY = [];
+            const outX = [], outY = [], keep = [];
             let duplicates = 0;
             for (let i = 0; i < pts.length; i++) {
                 if (i > 0 && pts[i].x === pts[i - 1].x) { duplicates++; continue; }
-                outX.push(pts[i].x); outY.push(pts[i].y);
+                outX.push(pts[i].x); outY.push(pts[i].y); keep.push(pts[i].i);
             }
             if (duplicates > 0) {
                 console.warn(`Data File (${fileName}) Notice: removed ${duplicates} duplicate 2-theta point(s).`);
@@ -359,7 +371,18 @@ const detectAndParseBuffer = async (fileName, buffer) => {
                 throw new Error(`Only ${outX.length} usable data point(s) in ${fileName}; at least two are required.`);
             }
 
-            return { ...parsed, tth: outX, intensity: outY };
+            // COMPANION COLUMNS MOVE WITH THEIR POINTS.
+            //
+            // A pdCIF also hands back calc and bkg, aligned 1:1 with the raw
+            // tth. Rebuilding tth/intensity and spreading calc/bkg unchanged left
+            // them shifted by every dropped, re-sorted or duplicate point -- a
+            // calculated curve offset from the data it was fitted to.
+            const out = { ...parsed, tth: outX, intensity: outY };
+            for (const col of ['calc', 'bkg']) {
+                const src = parsed[col];
+                if (src && src.length === parsed.tth.length) out[col] = keep.map(k => src[k]);
+            }
+            return out;
         };
 
         /**
@@ -511,4 +534,4 @@ const detectAndParseBuffer = async (fileName, buffer) => {
         const parseGsasXraFile = (text) => parseGsasBankFile(text, 'STD');
 
         const parseUxdFile = (text) => { const lines = text.trim().split(/\r?\n/); const intensity = []; let startTth, stepSize, wavelength; let inDataSection = false; for (const line of lines) { const trimmedLine = line.trim(); if (inDataSection) { const parts = trimmedLine.split(/\s+/); parts.forEach(part => { const val = parseFloat(part); if (!isNaN(val)) intensity.push(val); }); } else { if (trimmedLine.toUpperCase().startsWith('_START=')) startTth = parseFloat(trimmedLine.substring(7)); else if (trimmedLine.toUpperCase().startsWith('_STEPSIZE=')) stepSize = parseFloat(trimmedLine.substring(10)); else if (trimmedLine.toUpperCase().startsWith('_WL1=')) wavelength = parseFloat(trimmedLine.substring(5)); else if (trimmedLine.toUpperCase() === '_COUNTS') inDataSection = true; } } if (!isFinite(startTth) || !isFinite(stepSize) || stepSize === 0) throw new Error("Could not find valid _START and _STEPSIZE in UXD file."); if (intensity.length === 0) throw new Error("No intensity data found after _COUNTS in UXD file."); const tth = Array.from({ length: intensity.length }, (_, i) => startTth + i * stepSize); return { tth, intensity, wavelength }; };
-        const parsePhilipsUdfFile = (text) => { const lines = text.trim().split(/\r?\n/); const tth = [], intensity = []; let inDataSection = false; let wavelength = null; for (const line of lines) { const trimmedLine = line.trim(); if (trimmedLine.toUpperCase().startsWith('LAMBDA')) { const parts = trimmedLine.split('='); if (parts.length > 1) wavelength = parseFloat(parts[1]); } if (trimmedLine.toUpperCase() === '[DATA]') { inDataSection = true; continue; } if (trimmedLine.startsWith('[') && trimmedLine.toUpperCase() !== '[DATA]') inDataSection = false; if (inDataSection) { const parts = trimmedLine.split(/,/).map(p => p.trim()); if(parts.length >= 2) { const x = parseFloat(parts[0]); const y = parseFloat(parts[1]); if (!isNaN(x) && !isNaN(y)) { tth.push(x); intensity.push(y); } } } } if (tth.length === 0) throw new Error("No [Data] section found in UDF file."); return { tth, intensity, wavelength }; };
+        const parsePhilipsUdfFile = (text) => { const lines = text.trim().split(/\r?\n/); const tth = [], intensity = []; let inDataSection = false; let wavelength = null; for (const line of lines) { const trimmedLine = line.trim(); if (trimmedLine.toUpperCase().startsWith('LAMBDA')) { const parts = trimmedLine.split('='); if (parts.length > 1) wavelength = parseFloat(parts[1]); } if (trimmedLine.toUpperCase() === '[DATA]') { inDataSection = true; continue; } if (trimmedLine.startsWith('[') && trimmedLine.toUpperCase() !== '[DATA]') inDataSection = false; if (inDataSection) { const parts = trimmedLine.split(/,/).map(p => p.trim()); if(parts.length >= 2) { const x = parseFloat(parts[0]); const y = parseFloat(parts[1]); if (!isNaN(x) && !isNaN(y)) { tth.push(x); intensity.push(y); } } } } if (tth.length === 0) throw new Error("No [Data] section found in UDF file."); return { tth, intensity, wavelength }; };

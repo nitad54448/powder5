@@ -838,8 +838,10 @@ setTimeout(() => {
                     try {
                         const have = new Set(refl.map(r => `${r.h},${r.k},${r.l}`));
                         const loTth = refl[0].tth, hiTth = refl[n - 1].tth;
-                        const full = generateAndCacheHklIndices(
-                            openRec, hiTth, fitResults.params) || [];
+                        // Copied: the generator returns its CACHED array, and
+                        // updateHklPositions() below writes tth/d into it.
+                        const full = (generateAndCacheHklIndices(
+                            openRec, hiTth, fitResults.params) || []).map(r => ({ ...r }));
                         // Give them 2-theta values so the comparison is limited
                         // to the range that was actually fitted.
                         updateHklPositions(full, fitResults.params, openRec.system);

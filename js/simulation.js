@@ -1942,6 +1942,13 @@ function simParseStructureCif(text) {
     const tags = {};
     const atoms = [];
     let blocks = 0, blockName = '';
+    // DDLm names (_cell.length_a, _atom_site.fract_x) folded onto the DDL1
+    // spelling every lookup below uses. Only the DDL1 form was recognised, and
+    // powder5's own pdCIF writer emits DDLm -- so a structure exported from
+    // the simulation could not be read back into it ("no _atom_site_fract_x
+    // loop"). For every tag read here the category/object split is the first
+    // '.', so one replace is exact.
+    const canonTag = (s) => String(s).toLowerCase().replace('.', '_');
     let stop = false;
 
     for (let i = 0; i < lines.length && !stop; i++) {
@@ -1963,14 +1970,14 @@ function simParseStructureCif(text) {
             for (; j < lines.length; j++) {
                 const h = lines[j].trim();
                 if (!h || h.startsWith('#')) continue;
-                if (h.startsWith('_')) { headers.push(h.split(/\s+/)[0].toLowerCase()); continue; }
+                if (h.startsWith('_')) { headers.push(canonTag(h.split(/\s+/)[0])); continue; }
                 break;
             }
             const rows = [];
             for (; j < lines.length; j++) {
                 const r = lines[j].trim();
                 if (!r || r.startsWith('#')) continue;
-                if (r.startsWith('_') || /^loop_$/i.test(r) || /^data_/i.test(r)) break;
+                if (r.startsWith('_') || /^(?:loop_|stop_|save_)/i.test(r) || /^data_/i.test(r)) break;
                 const toks = simCifTokens(r);
                 if (toks.length) rows.push(toks);
             }
@@ -2009,7 +2016,7 @@ function simParseStructureCif(text) {
 
         if (t.startsWith('_')) {
             const toks = simCifTokens(t);
-            if (toks.length >= 2) tags[toks[0].toLowerCase()] = toks.slice(1).join(' ');
+            if (toks.length >= 2) tags[canonTag(toks[0])] = toks.slice(1).join(' ');
             continue;
         }
     }
@@ -2030,9 +2037,12 @@ function simParseStructureCif(text) {
 
     const sgName = g('_space_group_name_h-m_alt', '_symmetry_space_group_name_h-m',
                      '_space_group_name_hall', '_symmetry_space_group_name_hall') || null;
+    // Kept separately: the Hall symbol names one setting exactly, so it is the
+    // first thing the resolver tries, not just a fallback for a missing H-M.
+    const sgHall = g('_space_group_name_hall', '_symmetry_space_group_name_hall') || null;
     const sgNum = simCifNum(g('_space_group_it_number', '_symmetry_int_tables_number'));
 
-    return { atoms, cell, sgName, sgNumber: Number.isFinite(sgNum) ? sgNum : null,
+    return { atoms, cell, sgName, sgHall, sgNumber: Number.isFinite(sgNum) ? sgNum : null,
              blocks, blockName };
 }
 
@@ -2136,7 +2146,19 @@ function simLoadCifText(text, fileName) {
         try {
             const want = String(parsed.sgName || '').replace(/\s+/g, '');
             let rec = null;
-            if (parsed.sgNumber) {
+            if (typeof root.resolveFileSpaceGroup === 'function') {
+                // The shared resolver (powder5.html): Hall first, works with
+                // or without a number, and picks the monoclinic unique axis
+                // from the cell instead of taking whichever setting the
+                // database lists first.
+                const hm = (parsed.sgName && parsed.sgName !== parsed.sgHall) ? parsed.sgName : null;
+                const r = root.resolveFileSpaceGroup(
+                    { symbol: hm, hall: parsed.sgHall, number: parsed.sgNumber }, parsed.cell);
+                rec = r.rec;
+                if (rec && r.how !== 'exact' && (hm || parsed.sgHall)) {
+                    said.push(`the file's symbol "${parsed.sgName}" did not match a known setting exactly; used ${rec.symbol}`);
+                }
+            } else if (parsed.sgNumber) {
                 const settings = SG_ENGINE.listSettings(parsed.sgNumber) || [];
                 // A NUMBER DOES NOT NAME A SETTING. Space group 14 has six of
                 // them, with different operators and different absences from

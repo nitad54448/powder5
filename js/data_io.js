@@ -351,9 +351,21 @@ function cifTag(name) {
 function writePdCIF(b) {
     const p = b.params || {};
     const sg = b.spaceGroup || {};
+    // CIF HAS NO BACKSLASH ESCAPE. "\'" inside a quoted value is two literal
+    // characters, and the "'" followed by a space ends the string early, so
+    // a file name like "O'Brien sample" produced a broken value. Pick a
+    // delimiter the value does not contain; a text field is the last resort.
+    // Values that merely START like CIF syntax (_tag, #comment, $frame, [ ],
+    // ;text) or are a reserved word must be quoted even without spaces.
     const esc = (v) => {
         const s = String(v == null ? '' : v);
-        return (s === '') ? '?' : (/[\s'"]/.test(s) ? `'${s.replace(/'/g, "\\'")}'` : s);
+        if (s === '') return '?';
+        const needs = /[\s'"]/.test(s) || /^[_#$\[\];]/.test(s) ||
+                      /^(?:data|loop|save|global|stop)_/i.test(s) || s === '?' || s === '.';
+        if (!needs) return s;
+        if (!s.includes("'")) return `'${s}'`;
+        if (!s.includes('"')) return `"${s}"`;
+        return `\n;${s}\n;`;
     };
     // One place that decides the tag/value column, so the DDLm names -- which
     // are a different length from the DDL1 ones they replace -- stay aligned

@@ -2290,6 +2290,82 @@ function monoclinicUniqueAxis(sg) {
     return axis;
 }
 
+/**
+ * Resolve the space-group SETTING a file names, for the pdCIF and structure-CIF
+ * loaders alike.
+ *
+ * Both loaders used to do this inline, differently, and both ended in
+ * `|| settings[0]`. For a monoclinic group settings[0] is whatever the
+ * database lists first, which need not be unique axis b -- so a file that
+ * said "P 2" or "P 21/c" (short symbols, which match no setting's full symbol)
+ * loaded a unique-axis-c or -a setting, the lattice panel grew a gamma or
+ * alpha box, and the file's beta had nowhere to go. And the pdCIF loader only
+ * looked anything up when the file carried an IT number, so a file with only
+ * an H-M or Hall symbol (common from other programs) fell through to P 1.
+ *
+ * Order: Hall symbol (exact, names one generator set) -> full H-M symbol ->
+ * among settings sharing the short symbol (or all of them, if the file named
+ * only the number or the standard symbol), the one whose unique axis matches
+ * the file's oblique cell angle -> the engine's primary setting (unique axis
+ * b for monoclinic) -> the first.
+ *
+ * @param {{symbol?: string, hall?: string, number?: number}} sgIn
+ * @param {object} [cell]  {alpha, beta, gamma} from the same file, if any.
+ * @returns {{rec: object|null, how: string}}
+ */
+function resolveFileSpaceGroup(sgIn, cell) {
+    const E = globalThis.SG_ENGINE;
+    if (!E || !sgIn) return { rec: null, how: 'no engine' };
+    const norm = (s) => String(s || '').replace(/\s+/g, '').toUpperCase();
+    // Short form: drop stand-alone "1" positions after the lattice letter, as
+    // sg_engine does. A symbol with no spaces cannot be split safely and is
+    // compared as written.
+    const shortOf = (s) => {
+        const t = String(s || '').trim();
+        if (!/\s/.test(t)) return norm(t);
+        const parts = t.split(/\s+/);
+        return [parts[0], ...parts.slice(1).filter(p => p !== '1')].join('').toUpperCase();
+    };
+    const wantSym = norm(sgIn.symbol), wantHall = norm(sgIn.hall);
+    const symOk = wantSym && wantSym !== '?';
+    const hallOk = wantHall && wantHall !== '?';
+
+    let number = Number.isFinite(sgIn.number) ? sgIn.number : null;
+    if (number === null) {
+        // No number: let the engine find the group from either symbol.
+        const r = (hallOk && E.resolve(sgIn.hall)) || (symOk && E.resolve(sgIn.symbol)) || null;
+        if (r) number = r.number;
+    }
+    if (number === null) return { rec: null, how: 'not found' };
+
+    const settings = E.listSettings(number) || [];
+    if (!settings.length) return { rec: null, how: 'not found' };
+
+    let rec = (hallOk && settings.find(r => norm(r.hall) === wantHall))
+           || (symOk && settings.find(r => norm(r.symbol) === wantSym));
+    if (rec) return { rec, how: 'exact' };
+
+    let cands = symOk ? settings.filter(r => shortOf(r.symbol) === shortOf(sgIn.symbol)) : [];
+    if (!cands.length) cands = settings;
+
+    // The cell decides between monoclinic unique axes when the symbol cannot.
+    const obliqueAxis = (() => {
+        if (!cell) return null;
+        const off = ['alpha', 'beta', 'gamma'].filter(
+            k => Number.isFinite(cell[k]) && Math.abs(cell[k] - 90) > 1e-3);
+        return off.length === 1 ? { alpha: 'a', beta: 'b', gamma: 'c' }[off[0]] : null;
+    })();
+    const primary = E.resolve(number);
+    const isPrimary = (r) => primary && norm(r.hall) === norm(primary.hall);
+    if (cands.length > 1 && cands[0].system === 'monoclinic') {
+        const axis = obliqueAxis || 'b';
+        const onAxis = cands.filter(r => monoclinicUniqueAxis(r) === axis);
+        if (onAxis.length) cands = onAxis;
+    }
+    rec = cands.find(isPrimary) || cands[0];
+    return { rec, how: (symOk || hallOk) ? 'approximate' : 'number only' };
+}
+
 function fullCellFromParams(p, system) {
     if (!p) return null;
     const s = String(system || '').toLowerCase();
@@ -5650,7 +5726,17 @@ function exportStructureCIF(which) {
         const ref = st.refinement ||
                     (st.wyckoffResult && st.wyckoffResult.refinement) || null;
         if (ref && Number.isFinite(ref.R)) {
-            L.push(`_refine_ls_wR_factor_gt       ${ref.R.toFixed(5)}`);
+            // _ref, not _gt. coord_refine.js computes
+            //     wR = sqrt( sum w (Iobs - s Ical)^2 / sum w Iobs^2 )
+            // over EVERY overlap group in the refinement, with no significance
+            // cut. _gt is defined for reflections above a threshold only, so
+            // writing this value there claimed a selection that never happened.
+            // The observations are Pawley intensities summed over overlap
+            // groups, which the comment says, since no standard tag can.
+            L.push('# wR is on Pawley intensities (|F|^2 x multiplicity, summed over');
+            L.push('#   overlapping reflections), weighted, over all groups refined.');
+            L.push(`_refine_ls_wR_factor_ref      ${ref.R.toFixed(5)}`);
+            L.push(`_refine_ls_structure_factor_coef  Fsqd`);
         }
         L.push('');
         L.push('# Direct-space Wyckoff search against Pawley-extracted intensities.');
@@ -6015,6 +6101,8 @@ if (tooltipContainer && tooltipContent) {
         // and it was reachable only from inside this closure.
         window.getSymopsForSetting = getSymopsForSetting;
         window.handleSpaceGroupApplied = handleSpaceGroupApplied;
+        // One setting resolver for every file loader -- see its comment.
+        window.resolveFileSpaceGroup = resolveFileSpaceGroup;
         window.showToast = showToast;
 
         // Expose helper functions required by profile_presets.js
@@ -6178,6 +6266,12 @@ const base =
         function updateLatticeParamUI() {
             const currentValues = {}; const container = controls.latticeParamsContainer;
             container.querySelectorAll('input[type="number"]').forEach(input => { const name = input.id.replace('lattice-param-', ''); if (input.value) currentValues[name] = input.value; });
+            // The fit checkboxes are rebuilt with the boxes. They used to come
+            // back "checked" on every rebuild, so a file load (which rebuilds
+            // twice) or a setting change silently re-enabled refinement of a
+            // parameter the user had fixed.
+            const currentFit = {};
+            container.querySelectorAll('input[type="checkbox"][id^="fit-lattice-"]').forEach(cb => { currentFit[cb.id.replace('fit-lattice-', '')] = cb.checked; });
             const { system } = getSystemAndCentering(); container.innerHTML = '';
             if (!system) return;
             const createInput = (name, label, defaultValue, step, isAngle = false) => {
@@ -6187,7 +6281,7 @@ const base =
                 // past the minimum; a separate JS guard at read time
                 // (see getAllParams) refuses hand-typed bad values.
                 const minMaxAttrs = isAngle ? 'min="1" max="179"' : 'min="0.001"';
-                const row = document.createElement('div'); row.className = 'parameter-grid-3col'; row.innerHTML = `<label for="${id_base}" class="control-label">${label} (${unit})</label><input type="number" id="${id_base}" value="${valueToUse}" step="${step}" class="control-input" ${minMaxAttrs}><input type="checkbox" id="fit-lattice-${name}" class="fit-checkbox" title="Fit this parameter" checked>`; container.appendChild(row);
+                const row = document.createElement('div'); row.className = 'parameter-grid-3col'; row.innerHTML = `<label for="${id_base}" class="control-label">${label} (${unit})</label><input type="number" id="${id_base}" value="${valueToUse}" step="${step}" class="control-input" ${minMaxAttrs}><input type="checkbox" id="fit-lattice-${name}" class="fit-checkbox" title="Fit this parameter" ${currentFit[name] === false ? '' : 'checked'}>`; container.appendChild(row);
             };
             const params = {
                 triclinic:   [{ name: 'a', label: 'a', value: 5.0, step: 0.001 }, { name: 'b', label: 'b', value: 6.0, step: 0.001 }, { name: 'c', label: 'c', value: 7.0, step: 0.001 }, { name: 'alpha', label: 'α', value: 90.0, step: 0.01, isAngle: true }, { name: 'beta', label: 'β', value: 95.0, step: 0.01, isAngle: true }, { name: 'gamma', label: 'γ', value: 100.0, step: 0.01, isAngle: true }],
@@ -6206,9 +6300,23 @@ const base =
             if (system === 'monoclinic') {
                 const monoAngle = MONOCLINIC_ANGLE_FOR_AXIS[monoclinicUniqueAxis(currentSG)];
                 const LABEL = { alpha: 'α', beta: 'β', gamma: 'γ' };
-                const carried = ['alpha', 'beta', 'gamma']
-                    .map(k => currentValues[k])
-                    .find(v => v !== undefined && parseFloat(v) !== 90);
+                // THE BOX'S OWN VALUE FIRST, EVEN WHEN IT IS EXACTLY 90.
+                //
+                // This used to take the first of alpha/beta/gamma that was not
+                // 90, which threw away a legitimate unique angle of 90.000 (a
+                // pseudo-orthorhombic monoclinic cell) and put 105 in its
+                // place. A pdCIF load hit it every time: the cell is written
+                // into the boxes, then the loader rebuilds them, and beta = 90
+                // read from the file became 105. The "first non-90" search is
+                // only right when the box did not exist before (a switch from
+                // another setting or system), so it is now only the fallback.
+                const own = currentValues[monoAngle];
+                const carried = (own !== undefined && Number.isFinite(parseFloat(own)))
+                    ? own
+                    : ['alpha', 'beta', 'gamma']
+                        .filter(k => k !== monoAngle)
+                        .map(k => currentValues[k])
+                        .find(v => v !== undefined && Number.isFinite(parseFloat(v)) && parseFloat(v) !== 90);
                 params.monoclinic = [
                     { name: 'a', label: 'a', value: 4.0, step: 0.001 },
                     { name: 'b', label: 'b', value: 5.0, step: 0.001 },
@@ -6799,7 +6907,11 @@ function generateAndCacheHklIndices(spaceGroup, maxTth, params) {
     // can never be reused after a parameter change.
     let cacheKey = null;
 if (spaceGroup && typeof spaceGroup.number === 'number' && params) {
-        cacheKey = `${spaceGroup.number}|${params.a}|${params.b}|${params.c}|${params.alpha}|${params.beta}|${params.gamma}|${params.lambda}|${maxTth}`;
+        // The SETTING, not just the number: P 1 21/c 1 and P 1 21/n 1 (both
+        // No. 14) on the same cell have different absences, and P 1 2 1 and
+        // P 1 1 2 (both No. 3) have different multiplicities -- with every
+        // angle at 90 nothing else in this key tells them apart.
+        cacheKey = `${spaceGroup.number}|${spaceGroup.hall || spaceGroup.symbol || ''}|${params.a}|${params.b}|${params.c}|${params.alpha}|${params.beta}|${params.gamma}|${params.lambda}|${maxTth}`;
         if (typeof self !== 'undefined' && hklIndexCache[cacheKey]) {
              return hklIndexCache[cacheKey];
         }
@@ -8550,28 +8662,19 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
             if (pd.spaceGroup && globalThis.SG_ENGINE) {
                 try {
                     const want = String(pd.spaceGroup.symbol || '').replace(/\s+/g, '');
-                    const wantHall = String(pd.spaceGroup.hall || '').replace(/\s+/g, '');
-                    let rec = null;
-                    if (Number.isFinite(pd.spaceGroup.number)) {
-                        const settings = SG_ENGINE.listSettings(pd.spaceGroup.number) || [];
-                        // Match the SETTING, not just the number: 62 also returns
-                        // Pmnb, Pbnm, Pcmn, Pmcn and Pnam, and picking the wrong
-                        // one gives a different set of absences from the same cell.
-                        //
-                        // Hall symbol first, when the file has one: it names one
-                        // specific set of generators, so there is nothing to get
-                        // wrong the way an H-M string comparison can (whitespace,
-                        // a symbol that happens to match a DIFFERENT setting's
-                        // spelling). writePdCIF() writes it for exactly this.
-                        rec = (wantHall && settings.find(r => String(r.hall || '').replace(/\s+/g, '') === wantHall))
-                           || settings.find(r => String(r.symbol || '').replace(/\s+/g, '') === want)
-                           || settings.find(r => String(r.standard_symbol || '').replace(/\s+/g, '') === want)
-                           || settings[0] || null;
-                    }
+                    // Match the SETTING, not just the number: 62 also returns
+                    // Pmnb, Pbnm, Pcmn, Pmcn and Pnam, and picking the wrong
+                    // one gives a different set of absences from the same cell.
+                    // resolveFileSpaceGroup() tries the Hall symbol first (which
+                    // writePdCIF() writes for exactly this), works without an IT
+                    // number, and uses the cell to pick the monoclinic unique
+                    // axis when the symbol alone does not.
+                    const { rec, how } = resolveFileSpaceGroup(pd.spaceGroup, pd.cell);
                     if (rec) {
                         handleSpaceGroupApplied(rec);
                         sgApplied = true;
-                        said.push(`space group ${rec.symbol} (No. ${rec.number})`);
+                        said.push(`space group ${rec.symbol} (No. ${rec.number})` +
+                                  (how === 'exact' ? '' : ` — the file's "${pd.spaceGroup.symbol || pd.spaceGroup.hall || pd.spaceGroup.number}" did not name a setting exactly; check it`));
                     } else if (want && want !== '?') {
                         said.push(`space group "${pd.spaceGroup.symbol}" not found in the database`);
                     }
@@ -8609,11 +8712,24 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                         if (!input.id.startsWith('lattice-param-')) return;
                         const name = input.id.replace('lattice-param-', '');
                         if (Number.isFinite(pd.cell[name])) {
-                            input.value = pd.cell[name].toFixed(5); n++;
+                            input.value = String(pd.cell[name]); n++;
                         }
                     });
                 if (n) {
                     said.push(`${n} lattice parameter(s)`);
+                    // An angle the active setting fixes, but the file gives a
+                    // different value for, has just been discarded. That is a
+                    // cell/setting mismatch (e.g. beta = 105 under a unique-axis-c
+                    // setting) and the next fit would run on a different cell.
+                    const fixed = getAllParams();
+                    const lost = ['alpha', 'beta', 'gamma'].filter(k =>
+                        Number.isFinite(pd.cell[k]) && Number.isFinite(fixed[k]) &&
+                        !document.getElementById('lattice-param-' + k) &&
+                        Math.abs(pd.cell[k] - fixed[k]) > 1e-3);
+                    if (lost.length) {
+                        said.push('WARNING: the file\'s ' + lost.map(k => `${k} = ${pd.cell[k]}`).join(', ') +
+                                  ` is fixed to ${lost.map(k => fixed[k]).join(', ')} by ${currentSG ? currentSG.symbol : 'the active setting'}`);
+                    }
                 } else {
                     // The file had a cell and none of it landed. That should now
                     // be unreachable -- the P 1 fallback above guarantees boxes
@@ -8629,20 +8745,22 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
             //    not "keep the previous sample's doublet", which would apply a
             //    Ka2 component to data that has none.
             if (Number.isFinite(pd.wavelength) && controls.wavelength) {
-                controls.wavelength.value = pd.wavelength.toFixed(5);
+                // Full precision: the file has six decimals and toFixed(5)
+                // rounded 1.540598 to 1.54060 on every round trip.
+                controls.wavelength.value = String(pd.wavelength);
                 clearExact(controls.wavelength);   // value now comes from the file, not from a fit
-                said.push(`lambda1 = ${pd.wavelength.toFixed(5)} A`);
+                said.push(`lambda1 = ${pd.wavelength} A`);
             }
             if (controls.wavelength2 && controls.ratio21) {
                 if (Number.isFinite(pd.wavelength2) && Number.isFinite(pd.ratio21)) {
-                    controls.wavelength2.value = pd.wavelength2.toFixed(5);
+                    controls.wavelength2.value = String(pd.wavelength2);
                     clearExact(controls.wavelength2);   // value now comes from the file, not from a fit
                     controls.ratio21.value = String(+pd.ratio21.toFixed(5));
                     clearExact(controls.ratio21);   // value now comes from the file, not from a fit
                     said.push(`lambda2 = ${pd.wavelength2.toFixed(5)} A, I2/I1 = ${+pd.ratio21.toFixed(5)}`);
                 } else if (pd.cell || Number.isFinite(pd.wavelength)) {
                     controls.wavelength2.value = Number.isFinite(pd.wavelength)
-                        ? pd.wavelength.toFixed(5) : controls.wavelength.value;
+                        ? String(pd.wavelength) : controls.wavelength.value;
                     controls.ratio21.value = '0';
                     clearExact(controls.ratio21);   // value now comes from the file, not from a fit
                     said.push('no Ka2 component (ratio set to 0)');
@@ -8797,7 +8915,9 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                     // so its offset is the negative of
                     //     zeroShift = 2theta_observed - 2theta_calculated.
                     if (Number.isFinite(parsedData.zeroShift) && controls.zeroShift) {
-                        controls.zeroShift.value = parsedData.zeroShift.toFixed(4);
+                        // Not toFixed(4): the writer keeps five decimals and the
+                        // private tag exists so the round trip is exact.
+                        controls.zeroShift.value = String(parsedData.zeroShift);
                         clearExact(controls.zeroShift);   // value now comes from the file, not from a fit
                         logEvent(`Zero point read from file: ${parsedData.zeroShift.toFixed(4)}\u00b0`);
                     } else if (controls.zeroShift) {
