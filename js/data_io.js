@@ -1,4 +1,4 @@
-// Updated for Powder 5 version 179, 5 October 2026.
+// Updated for Powder 5 version 180, 16 October 2026.
 // data_io.js
 // Writing patterns out, and reading pdCIF back in.
 // A bug exists in version 157 and before. patched in version 163 and above, 18 aug 2026.
@@ -43,7 +43,7 @@
  * @property {object} [esds]                    Parameter esds, keyed as the
  *                                              report keys them ("I_(h,k,l)").
  *                                              Without it the reflection esds
- *                                              in a Pawley pdCIF are "?".
+ *                                              in a WPPF pdCIF are "?".
  * @property {number} [scaleFactor]             Intensity scale of the fit.
  * @property {object} [polarisationUi]           { mode, monoTth, fraction } as
  *                                              set in the control panel.
@@ -737,7 +737,7 @@ function writePdCIF(b) {
     const refl = (b.hklList || []).filter(
         r => r && Number.isFinite(r.h_orig) && Number.isFinite(r.intensity));
     if (refl.length) {
-        // The esd of the fitted HEIGHT. Pawley heights are least-squares
+        // The esd of the fitted HEIGHT. WPPF heights are least-squares
         // parameters and carry a covariance entry; Le Bail heights are not, but
         // the extraction propagates counting statistics into hkl.I_sigma.
         // reflectionStructureFactors() converts height -> area -> |F|^2.
@@ -759,7 +759,7 @@ function writePdCIF(b) {
             //
             // integratedPeakArea() returns the UNTRUNCATED area, so pairing it
             // with the truncated sigma puts the numerator and the denominator
-            // of every Le Bail I/sigma on different bases. The Pawley route
+            // of every Le Bail I/sigma on different bases. The WPPF route
             // cannot make this mistake: its sigma is the height ESD multiplied
             // by widthFactor = area/height, so it tracks whatever basis the
             // area uses automatically. The Le Bail route stores an absolute

@@ -719,7 +719,7 @@ function getExpansionOperators(setting) {
  * setting's operators (rotation parts only - reflection indices don't
  * transform by translation) plus the Friedel pair (-h,-k,-l).
  *
- * The Pawley/Le Bail intensity of a powder reflection is the sum over its
+ * The WPPF/Le Bail intensity of a powder reflection is the sum over its
  * whole orbit, so it is divided by the orbit size and spread over the orbit;
  * the total is conserved exactly.
  *

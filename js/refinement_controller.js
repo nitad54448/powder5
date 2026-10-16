@@ -1,4 +1,4 @@
-// Updated for Powder 5 version 179, 5 October 2026.
+// Updated for Powder 5 version 180, 16 October 2026.
 // FIX: previously there was no timeout and no way to recover. If the
 // worker wedged (or died without firing onerror) the UI sat on
 // "Refining..." forever, and any onerror permanently nulled the worker
@@ -170,7 +170,7 @@ function createRefinementWorker() {
                 }
 
                 try {
-                    const histMode = (fitResults.refinementMode === 'pawley') ? 'pawley' : 'lebail';
+                    const histMode = (fitResults.refinementMode === 'wppf') ? 'wppf' : 'lebail';
                     // The clone above, not the live object: rpSnapshotFit no
                     // longer needs to make its own.
                     window.rpSnapshotFit(histMode, lastFitResultsCache);
@@ -262,7 +262,7 @@ window.resetFitWatchdogTimings = resetFitWatchdogTimings;
 //
 //  powder5.html defines its own copy of each, inside the DOMContentLoaded
 //  callback near the top of its inline script. Everything from there down
-//  shares one function scope, the Le Bail and Pawley button handlers live in
+//  shares one function scope, the Le Bail and WPPF button handlers live in
 //  it, and a function declared in that scope shadows the global of the same
 //  name for every caller inside it. These two were therefore never reached.
 //

@@ -1,4 +1,4 @@
-// Updated for Powder 5 version 179, 5 October 2026.
+// Updated for Powder 5 version 180, 16 October 2026.
 const SHARKO_SWARM_WYCKOFF_VERSION = '1.1.1';
 
 /* ------------------------------------------------------------------
@@ -317,7 +317,7 @@ function swBuffer(device, data, usage) {
 /**
  * Groups reflections a powder pattern cannot resolve, and packs for the kernel.
  *
- * Pawley's split of intensity between overlapped lines is a fitting artefact,
+ * WPPF's split of intensity between overlapped lines is a fitting artefact,
  * not a measurement, so lines closer in d than the overlap tolerance are summed
  * and compared as one observation. Groups come out sorted by d* ascending,
  * which makes the resolution ramp a single bound on the group index.
@@ -340,7 +340,7 @@ function swPackReflections(rows, options = {}) {
     //  are separable is a statement about the PATTERN: it depends on the peak
     //  width at that angle, which is the instrument and the sample, not the
     //  cell. The two disagree badly. On a real LaCoO3 Pnma dataset this rule
-    //  produced 42 independent observations while the Pawley covariance
+    //  produced 42 independent observations while the WPPF covariance
     //  analysis -- the one the report prints, using the real profile widths
     //  and the off-diagonal terms -- found ONE cluster spanning the whole
     //  pattern with 36 of 64 reflections carrying a sigma larger than their
@@ -442,7 +442,7 @@ if (Math.abs(r.h) > 511 || Math.abs(r.k) > 511 || Math.abs(r.l) > 511) {
             io += r.mult * r.Fo2;
             // The group is a SUM, so its variance is the sum of the members'.
             // Treating them as independent is an approximation -- reflections
-            // this close in d are correlated in the Pawley fit, and the true
+            // this close in d are correlated in the WPPF fit, and the true
             // covariance is what the report's overlap clusters use -- but the
             // off-diagonals are not carried this far, and summing variances is
             // conservative rather than optimistic.
@@ -465,7 +465,7 @@ if (Math.abs(r.h) > 511 || Math.abs(r.k) > 511 || Math.abs(r.l) > 511) {
         // thing entirely: it hands a group the decomposition could not
         // determine the same influence as one it measured well.
         //
-        // A sigma of exactly zero out of a Pawley refinement means the
+        // A sigma of exactly zero out of a WPPF refinement means the
         // parameter was fixed or the normal matrix was singular there, which
         // is the extraction saying it learned nothing about that intensity.
         // Such reflections cluster at high angle where they are also densely
@@ -539,7 +539,7 @@ if (Math.abs(r.h) > 511 || Math.abs(r.k) > 511 || Math.abs(r.l) > 511) {
  * influence is its share of the weighted variance, w_i * (I_i - Ibar)^2, not
  * its presence in the list. Those shares are wildly uneven: 1/sigma^2 rewards
  * the sharp low-angle reflections, whose sigma is small, and all but erases
- * the high-angle overlaps a Pawley fit could not partition, whose sigma can
+ * the high-angle overlaps a WPPF fit could not partition, whose sigma can
  * exceed their own value. A list of 35 groups can be three groups wearing a
  * disguise.
  *

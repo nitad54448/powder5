@@ -6,7 +6,7 @@
 //
 //  This route was living inside charge_flipping_worker.js. Nothing about it
 //  needed to be: it takes a space group, a cell, a composition and |Fobs|^2
-//  from the Pawley fit, and it never touches an electron-density map. The only
+//  from the WPPF fit, and it never touches an electron-density map. The only
 //  thing the two shared was the file, which is why a Wyckoff failure reported
 //  itself from a charge-flipping stack ("charge_flipping_worker.js:2782") and
 //  read as a coupling that no longer exists.
@@ -131,7 +131,7 @@ const WY_ATOM_DATA = {
  * that angle -- the instrument and the sample -- not about the lattice. The
  * packer's fallback rule, a fixed fraction of d, answers the wrong question:
  * on a real Pnma dataset it declared 42 independent observations where the
- * Pawley covariance analysis found one cluster spanning the whole pattern with
+ * WPPF covariance analysis found one cluster spanning the whole pattern with
  * 36 of 64 reflections carrying an ESD larger than their own intensity. The
  * report told the user to use the cluster totals downstream; the search was
  * the downstream consumer that did not.
@@ -174,7 +174,7 @@ function wyRawObservationRows(job) {
         const I = Number(peak.intensity);
         const h = peak.h_orig, k = peak.k_orig, l = peak.l_orig;
         // COUNTED, not just skipped. A negative intensity is a real outcome of
-        // an unconstrained Pawley refinement, and dropping it silently tells
+        // an unconstrained WPPF refinement, and dropping it silently tells
         // the search the reflection was never measured -- leaving the model
         // free to put anything there -- while leaving no trace that a
         // reflection went missing. The count is reported by the caller.
@@ -202,7 +202,7 @@ function wyRawObservationRows(job) {
         // it is unmeasured, and the search should not be asked to explain it.
         wySay(`${negative} reflection(s) with a NEGATIVE extracted intensity` +
               (nonFinite ? ` and ${nonFinite} non-numeric` : '') +
-              ` were dropped from the search. A Pawley intensity is a free ` +
+              ` were dropped from the search. A WPPF intensity is a free ` +
               `parameter with no non-negativity constraint, so weak or ` +
               `overlapped reflections can refine below zero; |F| is undefined ` +
               `for them. Applying a French-Wilson correction before the search ` +
@@ -223,7 +223,7 @@ function wyObservationsFromHkl(job, symops) {
         const I = Number(peak.intensity);
         const h = peak.h_orig, k = peak.k_orig, l = peak.l_orig;
         // COUNTED, not just skipped. A negative intensity is a real outcome of
-        // an unconstrained Pawley refinement, and dropping it silently tells
+        // an unconstrained WPPF refinement, and dropping it silently tells
         // the search the reflection was never measured -- leaving the model
         // free to put anything there -- while leaving no trace that a
         // reflection went missing. The count is reported by the caller.
@@ -240,7 +240,7 @@ function wyObservationsFromHkl(job, symops) {
         // 86.5% sitting beside a refinement wR of 35.7%.
         //
         // It also made the report untrue: it states the coordinates were
-        // "weighted on 1/sigma^2 from the Pawley decomposition", and with the
+        // "weighted on 1/sigma^2 from the WPPF decomposition", and with the
         // field absent they were weighted on 1/I.
         //
         // wyRawObservationRows, three functions up, carries it. These two
@@ -274,7 +274,7 @@ function wyObservationsFromHkl(job, symops) {
         }
         src.push(row);
     }
-    if (!src.length) return { rows: [], route: null, warnings: [], errors: ['No usable Pawley intensities.'] };
+    if (!src.length) return { rows: [], route: null, warnings: [], errors: ['No usable WPPF intensities.'] };
 
     return normaliseObservations(src, {
         rotations: (symops || []).map(op => op.r),
@@ -483,7 +483,10 @@ function wyZFeasible(Z, job, symops) {
         // line per candidate. The full message is still what a failed RUN
         // reports.
         const why = (en.error || 'no assignment matches the composition').split('. ')[0];
-        return { ok: false, why, nAtoms };
+        // The full message is kept for the one case where it IS the answer:
+        // every candidate Z failing on a fixed-point clash (see the caller).
+        return { ok: false, why, nAtoms,
+                 clash: !!en.fixedPointClash, detail: en.error || '' };
     }
     return { ok: true, why: '', nAtoms };
 }
@@ -617,7 +620,7 @@ function wyAutoZ(cell, symops, job, bounds) {
         const rho = mass ? wyDensity(Z, mass, vol) : NaN;
         const vpa = vol / (Z * perFormulaAtoms);
         const f = wyZFeasible(Z, job, symops);
-        tried.push({ Z, rho, vpa, ok: f.ok, why: f.why });
+        tried.push({ Z, rho, vpa, ok: f.ok, why: f.why, clash: !!f.clash, detail: f.detail || '' });
         if (!f.ok) continue;
         // Plausibility. Volume per atom is the transferable quantity -- a
         // density of 6.6 is unremarkable for a pyrochlore and impossible for a
@@ -705,7 +708,7 @@ async function runWyckoffFromIntensities(cell, symops, job) {
  */
 async function wyRunWithDevice(device, cell, symops, job, formula) {
 
-    // ONE OBJECTIVE: |Fcalc|^2 against the Pawley intensities. There is no
+    // ONE OBJECTIVE: |Fcalc|^2 against the WPPF intensities. There is no
     // density alternative: scoring a trial by point-sampling a map is both the
     // coupling this method must not have and a biased functional in its own
     // right, since a Z-weighted point sample ranks a heavy atom BELOW a light
@@ -746,7 +749,7 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
     {
         rawRows = wyRawObservationRows(job);
         if (!rawRows.length) {
-            return { sites: [], error: 'No usable Pawley intensities for the Wyckoff search.' };
+            return { sites: [], error: 'No usable WPPF intensities for the Wyckoff search.' };
         }
     }
 
@@ -915,6 +918,22 @@ async function wyRunWithDevice(device, cell, symops, job, formula) {
                     `every candidate from ${scan.zLo} to ${scan.zHi} failed for the same ` +
                     `kind of reason: ${other.slice(0, 2).join(' / ')}` +
                     (other.length > 2 ? ` (and ${other.length - 2} more like it).` : '') };
+            }
+            // EVERY Z FAILED BECAUSE ELEMENTS COMPETE FOR THE SAME FIXED
+            // POINTS. That is a statement about ordered models in this group,
+            // not about the formula, Z or the density window, and the generic
+            // message below would send the user to check all three -- for
+            // LaSrCoO4 in I4/mmm, where the density at Z = 2 is exactly right.
+            const failed = scan.tried.filter(t => !t.ok);
+            if (failed.length && failed.every(t => t.clash)) {
+                const zs = failed.map(t => t.Z).join(', ');
+                return { sites: [], error:
+                    (failed.length > 1
+                        ? `Z = ${zs} are the values the density window and the space ` +
+                          `group allow, and each fails for the same reason. `
+                        : `Z = ${zs} is the only value the density window and the space ` +
+                          `group allow, and it fails for this reason. `) +
+                    failed[failed.length - 1].detail };
             }
             return { sites: [], error:
                 `No value of Z between ${scan.zLo} and ${scan.zHi} -- the whole range that ` +
@@ -1147,7 +1166,7 @@ if (contactRejects.length) {
         // ------------------------------------------------------------------
         // FINAL COORDINATE REFINEMENT.
         //
-        // The search above scores |Fcalc|^2 against the Pawley intensities as
+        // The search above scores |Fcalc|^2 against the WPPF intensities as
         // a correlation, which is scale-free and insensitive to a uniform
         // error but says nothing about how well any INDIVIDUAL reflection is
         // reproduced. This step refines the free coordinates against |Fo|^2 by
@@ -1202,7 +1221,7 @@ if (contactRejects.length) {
                     // counts as one observation. Grouping them differently is
                     // what left a search wR2 of 88% beside a refinement wR of
                     // 32% on identical coordinates.
-                    const r = refineCoordinatesAgainstPawley({
+                    const r = refineCoordinatesAgainstWppf({
                         sites: seed, symOps: symops, obsRows,
                         overallB: refB, formFactor: job.formFactor || refineFormFactor,
                         fwhmAt: wyMakeFwhmAt(job)
@@ -1281,7 +1300,7 @@ if (constraintBreak) {
                 }
             } else {
                 refinement = { skipped: (obs.errors && obs.errors[0]) ||
-                                        'No usable Pawley intensities were supplied.' };
+                                        'No usable WPPF intensities were supplied.' };
             }
         } catch (err) {
             refinement = { skipped: (err && err.message) || String(err) };

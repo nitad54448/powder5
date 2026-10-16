@@ -21,7 +21,7 @@
 //  powder5.html -- now has exactly one definition. See the header of
 //  constants.js for why that is a correctness issue and not a tidiness one.
 // ---------------------------------------------------------------------------
-importScripts('constants.js', 'crystal.js', 'profile.js', 'pawley_linear.js');
+importScripts('constants.js', 'crystal.js', 'profile.js', 'wppf_linear.js');
 
 
 const initPromise = fetch('../sg/all.json')
@@ -83,7 +83,7 @@ initPromise.catch(() => {});
 //      CPU. Two users with the same data and the same version could get
 //      different numbers and nothing in the report would say why.
 //    * Its reason for existing was the finite-difference Jacobian, which
-//      called it once per parameter per iteration. The Pawley intensities are
+//      called it once per parameter per iteration. The WPPF intensities are
 //      now analytic, so the call count collapsed and with it most of the
 //      benefit.
 //
@@ -608,7 +608,7 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
     //  FIX: the extracted Le Bail intensities are FREE PARAMETERS and are now
     //  counted.
     //
-    //  Only Pawley mode used to add them, because only Pawley puts them in the
+    //  Only WPPF mode used to add them, because only WPPF puts them in the
     //  parameter mapping. But a Le Bail fit also determines one intensity per
     //  reflection from the same data -- they simply come from the decomposition
     //  instead of from the normal equations. Leaving them out made N - P far too
@@ -620,7 +620,7 @@ function calculateStatistics(localWorkingData, netCalcPattern, fitFlags, finalBa
     //  the window is determined by nothing and costs no degree of freedom.
     // ---------------------------------------------------------------------
     let nIntensities = 0;
-    if ((refinementMode === 'pawley' || refinementMode === 'le-bail') &&
+    if ((refinementMode === 'wppf' || refinementMode === 'le-bail') &&
         hklList && localWorkingData && localWorkingData.tth && localWorkingData.tth.length > 0) {
         const tthMin = localWorkingData.tth[0];
         const tthMax = localWorkingData.tth[localWorkingData.tth.length - 1];
@@ -705,9 +705,9 @@ function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, r
     const cloneParams = (p) => ({ ...p });
     const cloneHkl = (list) => list.map(h => (h ? { ...h } : null));
 
-    const separable = (refinementMode === 'pawley');
+    const separable = (refinementMode === 'wppf');
 
-    // The LM search space. In Pawley mode the intensities are excluded here
+    // The LM search space. In WPPF mode the intensities are excluded here
     // and solved exactly instead; the FULL mapping (including them) is rebuilt
     // once at the end, because the report's ESDs and the charge-flipping
     // hand-off both read the intensity block of J^T J.
@@ -789,7 +789,7 @@ function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, r
     };
 
     /**
-     * Solve the Pawley intensities exactly at the current parameters.
+     * Solve the WPPF intensities exactly at the current parameters.
      *
      * FIX 1 -- crystal.js signals "this reflection has no position" by writing
      * peak.tth = null, NOT NaN, and it does so for three distinct situations:
@@ -822,7 +822,7 @@ function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, r
             lastBuckets = bucketContributionsByPeak(contributions, n_peaks);
             lastWindows = peakWindows(lastBuckets, n_peaks);
         }
-        const sol = solvePawleyIntensities(tthAxis, lastBuckets, lastWindows,
+        const sol = solveWppfIntensities(tthAxis, lastBuckets, lastWindows,
                                            sqrt_weights, scratch_net, linCache);
         if (!sol) { lastNetValid = false; return null; }
         lastCols = sol.cols;
@@ -1056,7 +1056,7 @@ function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, r
                 const actual_h = mapping.get(params, workingHklList) - originalValue;
 
                 if (actual_h !== 0) {
-                    if (separable && PAWLEY_VARPRO_EXACT_JACOBIAN) {
+                    if (separable && WPPF_VARPRO_EXACT_JACOBIAN) {
                         // Exact variable-projection column: the intensities
                         // re-optimise with the probe, so this measures the
                         // derivative of the REDUCED cost surface LM is on.
@@ -1087,7 +1087,7 @@ function refineParametersLM(initialParams, fitFlags, maxIter, hklList, system, r
             // cloned into bestParams and returned, and the worker's own note
             // at line 1412 records this exact inconsistency escaping once
             // already (a = 8.13000 reported next to b = c = 8.13081).
-            if (isStructural || (separable && PAWLEY_VARPRO_EXACT_JACOBIAN)) {
+            if (isStructural || (separable && WPPF_VARPRO_EXACT_JACOBIAN)) {
                 enforceSymmetryConstraintsWorker(params, system);
                 updateHklPositions(workingHklList, params, system);
                 touchProfile();
@@ -1444,7 +1444,7 @@ function buildFullNormalEquations(mapping, params, hklList, system, refinementMo
 
 function refineParametersPT(initialParams, fitFlags, maxIter, hklList, system, refinementMode,
                             leBailCycle = 0, totalLeBailCycles = 1, progressWindow = null) {
-    const separable = (refinementMode === 'pawley');
+    const separable = (refinementMode === 'wppf');
     const { paramMapping } = getParameterMapping(fitFlags, initialParams, hklList,
                                                  refinementMode, system, false,
                                                  { excludeIntensities: separable });
@@ -1487,7 +1487,7 @@ function refineParametersPT(initialParams, fitFlags, maxIter, hklList, system, r
     const caches = Array.from({ length: PT_NUM_REPLICAS + 1 }, () => ({}));
 
     /**
-     * Cost at a replica's parameters. In Pawley mode the intensities are the
+     * Cost at a replica's parameters. In WPPF mode the intensities are the
      * exact linear solution at those parameters -- i.e. this is the REDUCED
      * objective, the one whose minimiser in theta is the true minimiser.
      */
@@ -1503,7 +1503,7 @@ function refineParametersPT(initialParams, fitFlags, maxIter, hklList, system, r
                 const contributions = buildPeakContributions(tthAxis, hkl_list_obj, p_obj);
                 const buckets = bucketContributionsByPeak(contributions, n_peaks);
                 const win = peakWindows(buckets, n_peaks);
-                const sol = solvePawleyIntensities(tthAxis, buckets, win, sqrtW, scratch_net, cache);
+                const sol = solveWppfIntensities(tthAxis, buckets, win, sqrtW, scratch_net, cache);
                 if (!sol) return 1e12;
                 for (let j = 0; j < n_peaks; j++) if (hkl_list_obj[j]) hkl_list_obj[j].intensity = sol.I[j];
                 const c = weightedCostFromColumns(sol.I, sol.cols, win, sqrtW, scratch_net, scratch_cost);
@@ -1712,11 +1712,11 @@ function polishWithLM(ptResults, fitFlags, hklList, system, refinementMode, maxI
  * @param {object} fitFlags
  * @param {ProfileParams} initialParams
  * @param {Reflection[]} hklList
- * @param {string} refinementMode  'pawley' | 'le-bail'
+ * @param {string} refinementMode  'wppf' | 'le-bail'
  * @param {string} system
  * @param {boolean} [quiet=false]  Suppress the postMessage warnings.
  * @param {{excludeIntensities?: boolean}} [opts={}]  excludeIntensities omits
- *        the Pawley intensity parameters; they are solved exactly instead.
+ *        the WPPF intensity parameters; they are solved exactly instead.
  *        calculateStatistics calls this purely to COUNT parameters, at the end
  *        of a fit that has already run. Without this flag the user was shown
  *        the whole "parameter X is fixed by symmetry / has no valid value"
@@ -1837,19 +1837,19 @@ function getParameterMapping(fitFlags, initialParams, hklList, refinementMode, s
     };
 
 
-    //   Pawley Intensity Parameters  
+    //   WPPF Intensity Parameters  
     // Raw-space (see NOTE above createMapping).
      // opts.excludeIntensities: the separable (variable-projection) path in
      // refineParametersLM / refineParametersPT solves the intensities exactly
      // instead of iterating them, so they must not appear in the LM search
      // space. Every other caller leaves opts empty and is unaffected.
-     if (refinementMode === 'pawley' && !opts.excludeIntensities &&
+     if (refinementMode === 'wppf' && !opts.excludeIntensities &&
          hklList && workerWorkingData && workerWorkingData.tth && workerWorkingData.tth.length > 0) {
           const tthMin = workerWorkingData.tth[0];
           const tthMax = workerWorkingData.tth[workerWorkingData.tth.length - 1];
 
           // -----------------------------------------------------------------
-          //  A PAWLEY INTENSITY IS NOT BOUNDED BELOW BY ZERO.
+          //  A WPPF INTENSITY IS NOT BOUNDED BELOW BY ZERO.
           //
           //  It used to be (minVal: 0, plus a Math.max(0, .) in set()), and
           //  that quietly reintroduced exactly the bias the Le Bail extraction
@@ -2108,9 +2108,9 @@ self.onmessage = async function(e) {
                 throw new Error(`Refinement algorithm (${algorithm}) failed during Le Bail fit. ${finalResults?.error ? 'See previous error.' : ''}`);
             }
         }
-        //   Pawley Mode  
+        //   WPPF Mode  
         else { 
-             postMessage({ type: 'progress', value: 0.05, message: 'Initializing Pawley intensities...' });
+             postMessage({ type: 'progress', value: 0.05, message: 'Initializing WPPF intensities...' });
              try {
                 updateHklPositions(currentHklList, currentParams, system);
                 const backgroundForInit = calculateTotalBackground(workerWorkingData.tth, currentParams, workerBackgroundAnchors);
@@ -2122,7 +2122,7 @@ self.onmessage = async function(e) {
                 };
                  leBailIntensityExtraction(expDataForInit, currentHklList, currentParams);
              } catch (initError) {
-                  console.warn("Could not initialize Pawley intensities using Le Bail extraction:", initError);
+                  console.warn("Could not initialize WPPF intensities using Le Bail extraction:", initError);
                   currentHklList.forEach(peak => { if (peak) peak.intensity = 1000.0; });
              }
             
@@ -2141,7 +2141,7 @@ self.onmessage = async function(e) {
             }
 
              if (!finalResults || finalResults.error) {
-                  throw new Error(`Refinement algorithm (${algorithm}) failed during Pawley fit. ${finalResults?.error ? 'See previous error.' : ''}`);
+                  throw new Error(`Refinement algorithm (${algorithm}) failed during WPPF fit. ${finalResults?.error ? 'See previous error.' : ''}`);
              }
         }
 

@@ -467,7 +467,7 @@ fn main(@builtin(workgroup_id) wgId: vec3<u32>,
     //  so the comparison is made where the measurement actually exists --
     //  summing the calculated intensities the same way. This is the same
     //  reason the report prints overlap clusters rather than trusting the
-    //  individual Pawley intensities of a heavily overlapped block.
+    //  individual WPPF intensities of a heavily overlapped block.
     //
     //  Iobs is packed as sum(mult * Fo^2) over the group, so Icalc is
     //  accumulated as sum(mult * |F|^2) to match it term for term.

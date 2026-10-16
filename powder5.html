@@ -17,7 +17,7 @@
     <script src="js/wyckoff_report.js"></script>
     <script src="js/polarization.js"></script>
     <script src="js/profile.js"></script>
-    <script src="js/pawley_linear.js"></script>
+    <script src="js/wppf_linear.js"></script>
     <script src="js/density3d.js"></script>
     <script src="js/data_io.js"></script>
     <script src="js/parsers.js"></script>
@@ -284,9 +284,9 @@
                 <button class="tab-btn" id="tab-btn-atoms" data-tab="atoms" style="display:none;"
                         title="Build a structure and simulate its powder pattern.">Atoms</button>
                 <button class="tab-btn" id="tab-btn-charge-flipping" data-tab="charge-flipping"
-                        title="Solve the structure ab initio from the Pawley intensities.">Charge</button>
+                        title="Solve the structure ab initio from the WPPF intensities.">Charge</button>
                 <button class="tab-btn" id="tab-btn-wyckoff" data-tab="wyckoff"
-                        title="Fit atoms on Wyckoff positions directly to the Pawley intensities.">Wyckoff</button>
+                        title="Fit atoms on Wyckoff positions directly to the WPPF intensities.">Wyckoff</button>
             </div>
 
             <div class="tab-content-panels" id="main-tab-panels">
@@ -343,8 +343,8 @@
                             Group unspecified
                         </div>
                         <button type="button" id="sg-test-button" disabled
-                                aria-label="Test this space group against the Pawley intensities"
-                                title="Needs a completed Pawley refinement with a normal-equations matrix.">?</button>
+                                aria-label="Test this space group against the WPPF intensities"
+                                title="Needs a completed WPPF refinement with a normal-equations matrix.">?</button>
                     </div>
 
                     <div id="lattice-parameters-container">
@@ -610,7 +610,7 @@
                     </div>
 
                     <!--   Polarisation model for the Lorentz-polarisation factor.
-                           Lp never enters the Le Bail / Pawley profile (the
+                           Lp never enters the Le Bail / WPPF profile (the
                            intensities are free parameters and absorb it); it is
                            what converts an extracted intensity into |F|, so it
                            has to be declared, applied and REPORTED. -->
@@ -643,7 +643,7 @@
                 <div class="control-group">
                     
                     <p style="font-size: 12px; color: var(--system-secondary-label); margin-bottom: 12px;">
-                        Solves the structure from the Pawley-extracted intensities by dual-space Charge Flipping.
+                        Solves the structure from the WPPF-extracted intensities by dual-space Charge Flipping.
                         The selected space group is applied inside the iteration: orbits are generated from its real
                         symmetry operators, systematic absences are held at zero, and symmetry equivalents are
                         constrained to equal |F|. Only reflections that genuinely overlap in 2θ share their intensity.
@@ -687,7 +687,7 @@
 </select>
 
 <label class="control-label" for="cf-weak-grouping"
-       title="Choose whether the weakest fraction is ranked from individual Pawley reflections or from measured unresolved peak clusters. Cluster mode avoids treating an arbitrary overlap partition as an independent measurement.">Weak classification</label>
+       title="Choose whether the weakest fraction is ranked from individual WPPF reflections or from measured unresolved peak clusters. Cluster mode avoids treating an arbitrary overlap partition as an independent measurement.">Weak classification</label>
 <select id="cf-weak-grouping" class="control-select">
     <option value="cluster" selected>Unresolved clusters</option>
     <option value="individual">Individual reflections</option>
@@ -870,7 +870,7 @@
                  WYCKOFF SEARCH
                  A PEER OF CHARGE FLIPPING, NOT A STEP INSIDE IT.
                  It consumes the space group, the cell, the composition and the
-                 Pawley intensities. Not one of those comes from charge
+                 WPPF intensities. Not one of those comes from charge
                  flipping. It only ever lived in the CF panel because the
                  objective happened to sample the CF density map; with an
                  intensity objective that dependency is gone entirely.
@@ -881,7 +881,7 @@
                         <div id="cf-wyckoff-inputs">
                     <p style="font-size: 12px; color: var(--system-secondary-label); margin-bottom: 12px;">
                         Fits atoms on Wyckoff positions of the given composition directly to the
-                        Pawley intensities. The objective is
+                        WPPF intensities. The objective is
                         |F<sub>calc</sub>|&sup2; against the observed intensities, weighted by
                         1/&sigma;&sup2;.
                     </p>
@@ -1158,10 +1158,10 @@
             <div id="action-button-bar">
     <div style="display: flex; gap: 10px;">
         <button id="le-bail-button" class="btn btn-primary" style="flex: 1;" disabled>Run Le Bail</button>
-        <button id="pawley-button" class="btn btn-primary" style="flex: 1;" disabled>Run Pawley</button>
+        <button id="wppf-button" class="btn btn-primary" style="flex: 1;" disabled>Run WPPF</button>
     </div>
 
-    <!-- Save Report / Generate PDF moved to the Le Bail and Pawley results
+    <!-- Save Report / Generate PDF moved to the Le Bail and WPPF results
          tabs (right panel). Hidden stubs remain so legacy references to
          controls.saveDataButton / controls.reportButton stay valid. -->
     <div style="display:none;">
@@ -1219,7 +1219,7 @@
 
             <div class="tooltip-content">
                 <h4>Powder 5 Fit</h4>
-                <p>Analyze powder diffraction data by using LeBail or Pawley method. <a href="powder5_help.html" target="_blank" style="color: #6495ED;">Method Guide</a></p>
+                <p>Analyze powder diffraction data by using LeBail or WPPF method. <a href="powder5_help.html" target="_blank" style="color: #6495ED;">Method Guide</a></p>
                 <hr>
                 <h4>Supported File Formats:</h4>
                 <p>Generic 2-column (2θ intensity), .xrdml, .brml, .ras, .uxd, .udf, GSAS .esd/.xra</p>
@@ -1244,7 +1244,7 @@
     <div id="rp-tabbar" class="rp-tabbar">
         <button class="rp-tab active" data-rptab="plot">Plot</button>
         <button class="rp-tab" data-rptab="lebail">Le Bail results</button>
-        <button class="rp-tab" data-rptab="pawley">Pawley results</button>
+        <button class="rp-tab" data-rptab="wppf">WPPF results</button>
         <button class="rp-tab" data-rptab="cf">Charge Flipping</button>
         <button class="rp-tab" data-rptab="wyckoff">Wyckoff</button>
         <button class="rp-tab" data-rptab="log">Log</button>
@@ -1285,21 +1285,21 @@
         </div>
     </div>
 
-    <div id="rp-panel-pawley" class="rp-panel">
+    <div id="rp-panel-wppf" class="rp-panel">
         <div class="rp-results-head">
-            <h2>Pawley run history</h2>
+            <h2>WPPF run history</h2>
             <div class="rp-results-actions">
                 <div class="rp-run-picker">
                     <span class="rp-run-label">Run:</span>
-                    <select id="pawley-run-select" class="control-select rp-run-select"></select>
+                    <select id="wppf-run-select" class="control-select rp-run-select"></select>
                 </div>
                 <div class="rp-action-row">
-                    <button id="pawley-save-report" class="btn btn-primary rp-action-btn" disabled>Save Report</button>
+                    <button id="wppf-save-report" class="btn btn-primary rp-action-btn" disabled>Save Report</button>
                 </div>
             </div>
         </div>
-        <div id="pawley-run-body" class="rp-run-body">
-            <p class="rp-empty">No Pawley run yet. Results appear here after each fit.</p>
+        <div id="wppf-run-body" class="rp-run-body">
+            <p class="rp-empty">No WPPF run yet. Results appear here after each fit.</p>
         </div>
     </div>
 
@@ -1395,7 +1395,7 @@
 </div><!-- /#app-container -->
 
 <script>
-    const APP_VERSION_TEXT = "Powder 5, version 179, 5 October 2026";
+    const APP_VERSION_TEXT = "Powder 5, version 180, 16 October 2026";
 
 // ===========================================================================
 //  LAST-RESORT ERROR REPORTING
@@ -1454,7 +1454,7 @@
     //20 aug, added background fit
     //22 aug, wyckoff search is now Z-aware
     //removed the cctbx dependencies, all data is in /sg and /scatter
-    //28 aug, changed JtJ in the PAwley fit
+    //28 aug, changed JtJ in the WPPF fit
     // v 170, reporting changed to print esd
     //v 171, added a Simulate function
 
@@ -1926,7 +1926,7 @@ document.getElementById('run-wyckoff-btn').addEventListener('click', () => {
 // setting is never used here.
 //
 // Returns null if `a` (or a genuinely free b/c) is missing or non-positive.
-// The refined Pawley/Le Bail parameter is a peak HEIGHT: the profile functions
+// The refined WPPF/Le Bail parameter is a peak HEIGHT: the profile functions
 // are unit-height, not unit-area (see getPseudoVoigtArea, which returns the
 // area of the untruncated unit-height mixture). The integrated intensity --
 // the quantity proportional to m*LP*|F|^2, and therefore the only thing a
@@ -2029,7 +2029,7 @@ function integratedPeakArea(hkl, params, scaleFactor) {
 // The intensity ESDs, taken from the same normal-equations matrix the report
 // uses. Returns a plain object keyed by the parameter name, or null when the
 // matrix is unavailable or singular -- which is common, because exactly
-// overlapping reflections (330/411 in a cubic cell, say) make the Pawley
+// overlapping reflections (330/411 in a cubic cell, say) make the WPPF
 // normal matrix genuinely rank-deficient.
 function intensityEsdsFromCovariance(fr, covResultIn = null) {
     try {
@@ -2072,10 +2072,10 @@ function intensityEsdsFromCovariance(fr, covResultIn = null) {
 }
 
 /**
- * Group the refined Pawley intensities into OVERLAP CLUSTERS and report, for
+ * Group the refined WPPF intensities into OVERLAP CLUSTERS and report, for
  * each cluster, the quantity that is actually determined.
  *
- *  A Pawley fit can show a beautifully fitted peak and still return an
+ *  A WPPF fit can show a beautifully fitted peak and still return an
  *  intensity with an ESD seventeen times its own value. That is not a broken
  *  fit and not a broken ESD -- it is the correct answer to a question that has
  *  no unique solution.
@@ -2409,13 +2409,13 @@ function fullCellFromParams(p, system) {
 
 function cfReadinessProblem() {
     if (isFitting) return 'A refinement is running.';
-    if (!fitResults) return 'Run a Pawley refinement first.';
-    if (fitResults.refinementMode !== 'pawley')
-        return 'Charge flipping needs individual reflection intensities, which only a Pawley refinement produces. Le Bail extraction does not give them.';
+    if (!fitResults) return 'Run a WPPF refinement first.';
+    if (fitResults.refinementMode !== 'wppf')
+        return 'Charge flipping needs individual reflection intensities, which only a WPPF refinement produces. Le Bail extraction does not give them.';
     if (!fitResults.JtJ)
-        return 'The Pawley fit did not converge through Levenberg-Marquardt. Re-run with LM, or with Parallel Tempering (its LM polish provides the normal matrix).';
+        return 'The WPPF fit did not converge through Levenberg-Marquardt. Re-run with LM, or with Parallel Tempering (its LM polish provides the normal matrix).';
     if (!Array.isArray(fitResults.hklList) || fitResults.hklList.length === 0)
-        return 'The Pawley fit produced no reflections.';
+        return 'The WPPF fit produced no reflections.';
     return null;
 }
 
@@ -2423,9 +2423,9 @@ function cfReadinessProblem() {
  * Enable/disable the Wyckoff tab and the CF-seed checkbox.
  *
  * The readiness condition is the SAME as charge flipping's -- a converged
- * Pawley fit with reflections -- because both consume the same intensities.
+ * WPPF fit with reflections -- because both consume the same intensities.
  * It deliberately does NOT require a charge-flipping run: the search fits
- * |Fcalc|^2 to the Pawley intensities and never needs a map.
+ * |Fcalc|^2 to the WPPF intensities and never needs a map.
  */
 /**
  * Status line inside the Wyckoff tab.
@@ -2495,7 +2495,7 @@ function updateWyckoffHint() {
             const sg = sgUsedForFit || currentSG;
             if (!sg) { msg = 'Select a space group first.'; blocked = true; }
             else msg = `Fits ${formula} on Wyckoff positions of ${sg.symbol || sg.number} ` +
-                       `directly to the Pawley intensities.`;
+                       `directly to the WPPF intensities.`;
         }
     }
     hint.textContent = msg;
@@ -3126,7 +3126,7 @@ function updateWyckoffTabState() {
     const btn = document.getElementById('tab-btn-wyckoff');
     if (!btn) return;
     btn.disabled = false;
-    btn.title = 'Fit atoms on Wyckoff positions directly to the Pawley intensities.';
+    btn.title = 'Fit atoms on Wyckoff positions directly to the WPPF intensities.';
 }
 
 function updateChargeFlippingTabState() {
@@ -3138,7 +3138,7 @@ function updateChargeFlippingTabState() {
     const problem = cfReadinessProblem();
     
     btn.disabled = false;
-    btn.title = 'Solve the structure ab initio from the Pawley intensities.';
+    btn.title = 'Solve the structure ab initio from the WPPF intensities.';
 
     const runBtn = document.getElementById('run-charge-flip-btn');
     if (runBtn) {
@@ -3365,9 +3365,9 @@ function buildExportBundle(opts) {
                 .map(a => ({ tth: a.tth, y: a.y }))
             : null,
         stats: fr.statistics || fr.stats || null,
-        // WITHOUT THESE TWO THE REFLECTION ESDS IN A PAWLEY pdCIF ARE ALL "?".
+        // WITHOUT THESE TWO THE REFLECTION ESDS IN A WPPF pdCIF ARE ALL "?".
         //
-        // A Pawley intensity is a least-squares parameter, so its uncertainty
+        // A WPPF intensity is a least-squares parameter, so its uncertainty
         // lives in the covariance matrix rather than on the reflection, and the
         // scale factor is what turns a fitted height into the area the esd
         // belongs to. Both are on fitResults already; the bundle just never
@@ -3923,7 +3923,7 @@ function cfPrepareIntensities() {
     const p = fitResults.params || {};
     // First choice is the covariance matrix, which is what the report uses.
     // It is often unavailable here -- exactly overlapping reflections make the
-    // Pawley normal matrix rank-deficient, and then the inversion fails
+    // WPPF normal matrix rank-deficient, and then the inversion fails
     // outright -- so fall back to propagating counting statistics through the
     // profile partition, which is well conditioned whatever the overlaps do.
     const cfEsds = intensityEsdsFromCovariance(fitResults);
@@ -3949,7 +3949,7 @@ function cfPrepareIntensities() {
             //  Three sources, in order of how directly each one measures the
             //  quantity actually being used:
             //
-            //   1. PAWLEY: the height is a least-squares parameter, so it has
+            //   1. WPPF: the height is a least-squares parameter, so it has
             //      a covariance entry. Scaling it by widthFactor = area/height
             //      makes the uncertainty follow whatever basis the area is on,
             //      automatically and for free.
@@ -3968,7 +3968,7 @@ function cfPrepareIntensities() {
             //      previously used for every Le Bail reflection, which meant
             //      two implementations of one quantity were in service at once
             //      and the one being used was the cruder of the two. It is
-            //      kept only for the case that has nothing better: a Pawley
+            //      kept only for the case that has nothing better: a WPPF
             //      run whose normal matrix was singular, which exactly
             //      overlapping reflections make common.
             // ------------------------------------------------------------
@@ -4026,7 +4026,7 @@ function cfPrepareIntensities() {
         if (!(I > 0)) { I = 0; clampedToZero++; }
         return { h_orig: r.h, k_orig: r.k, l_orig: r.l,
          intensity: I, multiplicity: r.multiplicity,
-         // Preserve the pre-French-Wilson Pawley result for deciding
+         // Preserve the pre-French-Wilson WPPF result for deciding
          // whether intensity on a forbidden reflection is significant.
          rawIntensity: r.rawArea,
          // sigma was computed a few lines above and then dropped here,
@@ -4051,7 +4051,7 @@ function cfPrepareIntensities() {
 
     // Structured, so the report does not have to parse the prose. This is the
     // ONLY record that the amplitudes handed to charge flipping are not the
-    // raw Pawley intensities: French-Wilson replaces every weak reflection
+    // raw WPPF intensities: French-Wilson replaces every weak reflection
     // with a Bayesian posterior mean. A map solved from corrected amplitudes
     // and one solved from raw amplitudes are different results, and which one
     // you have must not depend on a console line nobody kept.
@@ -4137,7 +4137,7 @@ const p = fitResults.params;
     // the crystal system, so params.b and params.c simply do not exist after a
     // cubic refinement, and params.b does not exist after a tetragonal,
     // hexagonal, trigonal or rhombohedral one. The guard below used to test
-    // Number.isFinite on all three, so every high-symmetry Pawley fit was
+    // Number.isFinite on all three, so every high-symmetry WPPF fit was
     // rejected with "the refined cell is not usable" even though the fit was
     // perfectly good -- the dependent parameters were never missing from the
     // refinement, only from the parameter object. Rebuild them here, using the
@@ -4188,7 +4188,7 @@ const p = fitResults.params;
     // Strip the reflections down to what the worker needs -- the full objects
     // carry profile state that would only bloat the structured clone. `tth`
     // and `d` are new: the first is required for the Lorentz-polarisation
-    // correction (a Pawley intensity is a peak AREA, i.e. m·LP·|F|², so
+    // correction (a WPPF intensity is a peak AREA, i.e. m·LP·|F|², so
     // without dividing by LP the low-angle reflections dominate the map), the
     // second is the fallback key for detecting 2θ overlaps.
     // Standard uncertainties, needed for the French-Wilson correction below.
@@ -4196,7 +4196,7 @@ const p = fitResults.params;
              `${document.getElementById('cf-trials').value} trial(s), ` +
              `${cfIterationsValue()} iteration(s))`);
     if (!cfPrepareIntensities()) {
-        showToast('The Pawley fit produced no usable intensities.', 'error');
+        showToast('The WPPF fit produced no usable intensities.', 'error');
         return;
     }
     const hklList = cfMapInputs.hklList;
@@ -4439,7 +4439,7 @@ if (ref.absentButObserved > 0) {
                   `for the allowed orbit(s)`
                 : ''
         ) +
-        `. ${ref.significantAbsent || 0} were isolated raw Pawley ` +
+        `. ${ref.significantAbsent || 0} were isolated raw WPPF ` +
         `observations at or above 3 sigma` +
         (
             ref.absentExample
@@ -5138,7 +5138,7 @@ function runWyckoffStandalone() {
     // does, so a run with a map and a run without one see identical data.
     if (!cfMapInputs) { cfPrepareIntensities(); }
     if (!cfMapInputs || !cfMapInputs.hklList || !cfMapInputs.hklList.length) {
-        const m = 'The Pawley fit produced no usable intensities.';
+        const m = 'The WPPF fit produced no usable intensities.';
         setWyckoffStatus(m, 'warn'); showToast(m, 'error'); return;
     }
 
@@ -5216,7 +5216,7 @@ function runWyckoffStandalone() {
         }
     }
 
-    setWyckoffStatus('Running Wyckoff search against the Pawley intensities\u2026');
+    setWyckoffStatus('Running Wyckoff search against the WPPF intensities\u2026');
     {
         const zBox = document.getElementById('cf-wyckoff-z');
         const zTyped = zBox && String(zBox.value).trim() !== '';
@@ -5603,7 +5603,7 @@ function renderStructure(st, got) {
     //
     // What answers the real question -- does this structure explain the
     // measurement -- is a GLOBAL R factor over |Fobs|^2, computed by
-    // refineCoordinatesAgainstPawley from the Pawley intensities and the
+    // refineCoordinatesAgainstWppf from the WPPF intensities and the
     // tabulated scattering factors. It is a property of the structure, not of
     // a site, so it belongs in the summary above the table.
     //
@@ -5644,7 +5644,7 @@ function renderStructure(st, got) {
                     `${ref.nParams} free coordinate(s) after the Wyckoff constraints` +
                     (Number.isFinite(ref.Rstart) ? `, from ${pct(ref.Rstart)} before refinement` : '') +
                     (ref.converged === false ? ' \u2014 <b>not converged</b>' : '') +
-                    `.<br>Fitted to the Pawley intensities and tabulated scattering factors` +
+                    `.<br>Fitted to the WPPF intensities and tabulated scattering factors` +
                     (ref.lpApplied ? ', Lp removed' : '') + `.`;
             } else if (ref.skipped) {
                 // Say something only when there is something to say. A plain
@@ -5731,15 +5731,15 @@ function exportStructureCIF(which) {
             // over EVERY overlap group in the refinement, with no significance
             // cut. _gt is defined for reflections above a threshold only, so
             // writing this value there claimed a selection that never happened.
-            // The observations are Pawley intensities summed over overlap
+            // The observations are WPPF intensities summed over overlap
             // groups, which the comment says, since no standard tag can.
-            L.push('# wR is on Pawley intensities (|F|^2 x multiplicity, summed over');
+            L.push('# wR is on WPPF intensities (|F|^2 x multiplicity, summed over');
             L.push('#   overlapping reflections), weighted, over all groups refined.');
             L.push(`_refine_ls_wR_factor_ref      ${ref.R.toFixed(5)}`);
             L.push(`_refine_ls_structure_factor_coef  Fsqd`);
         }
         L.push('');
-        L.push('# Direct-space Wyckoff search against Pawley-extracted intensities.');
+        L.push('# Direct-space Wyckoff search against WPPF-extracted intensities.');
         L.push('# Element types are an INPUT to this method, not inferred from density.');
         L.push('# Coordinates are constrained to their Wyckoff positions; occupancies');
         L.push('# are 1.0 throughout and are NOT refined.');
@@ -6383,7 +6383,7 @@ const base =
             //  EXCLUDED REGIONS, APPLIED HERE AND NOWHERE ELSE.
             //
             //  One place, before anything reads workingData, so the refinement,
-            //  the Le Bail / Pawley decomposition, the statistics and the
+            //  the Le Bail / WPPF decomposition, the statistics and the
             //  degrees of freedom all see the same set of observations without
             //  a single change in refinement_worker.js. Zero-weighting the
             //  points instead would have left Rp and the dof counting them --
@@ -7536,7 +7536,7 @@ const minTth = parseFloat(controls.tthMinSlider.value);
                 profileType: profileType,
                 // Carried through the refinement so a snapshot reports the
                 // polarisation model that was actually in force when it ran.
-                // It plays no part in the profile: in Le Bail and Pawley the
+                // It plays no part in the profile: in Le Bail and WPPF the
                 // intensity is a free parameter and absorbs Lp entirely.
                 polarization: getPolarizationSettings()
             };
@@ -7851,7 +7851,7 @@ function debounce(func, wait) {
                 L.push(`Data        : ${fullExperimentalData.tth.length} points, `
                      + `${tthLo.toFixed(3)} - ${tthHi.toFixed(3)} deg`);
                 L.push('Reflections are calculated from the cell and space group below;');
-                L.push('no refinement has been applied. Run Le Bail or Pawley, and report');
+                L.push('no refinement has been applied. Run Le Bail or WPPF, and report');
                 L.push('from that tab, for fitted parameters and their uncertainties.');
             } else {
                 L.push('(no experimental data loaded)');
@@ -7880,7 +7880,8 @@ function debounce(func, wait) {
             L.push(`Wavelength 1: ${fmtNum(p.lambda, 6)} A`);
             if (doublet) L.push(`Wavelength 2: ${fmtNum(p.lambda2, 6)} A   `
                               + `(ratio I2/I1 = ${fmtNum(p.ratio, 4)})`);
-            L.push(`Zero shift  : ${fmtNum(z, 5)} deg`);
+            L.push(`Zero shift  : ${fmtNum(z, 5)} deg   `
+                 + `(= 2theta_obs - 2theta_calc; opposite sign to the CIF offset)`);
             L.push(`2-theta range: ${THEO_TTH_MIN} - ${THEO_TTH_MAX} deg`);
             L.push(`Reflections : ${list.length}`);
             const theoPol = polarizationFromParams(p);
@@ -7920,49 +7921,49 @@ function debounce(func, wait) {
 
 
         // Enable the "?" next to the space-group line only when there is a
-        // Pawley result carrying a usable normal matrix behind it.
+        // WPPF result carrying a usable normal matrix behind it.
         function updateSgTestButtonState() {
             const btn = document.getElementById('sg-test-button');
             if (!btn) return;
             const ok = !!(fitResults
                 && !isFitting
-                && fitResults.refinementMode === 'pawley'
+                && fitResults.refinementMode === 'wppf'
                 && fitResults.JtJ
                 && fitResults.parameterInfo);
             btn.disabled = !ok;
             btn.title = ok
-                ? 'Test the space group against the Pawley intensities (Markvardsen et al., 2001)'
+                ? 'Test the space group against the WPPF intensities (Markvardsen et al., 2001)'
                 : (isFitting
                     ? 'Refinement in progress.'
-                    : 'Needs a completed Pawley refinement with a normal-equations matrix.');
+                    : 'Needs a completed WPPF refinement with a normal-equations matrix.');
         }
 
-        function updatePawleyButtonState() {
+        function updateWppfButtonState() {
     // Safety check to ensure DOM elements exist before accessing them
-    if (!controls || !controls.algorithmSelect || !document.getElementById('pawley-button')) {
-         console.error("Cannot update Pawley button: Controls not ready.");
+    if (!controls || !controls.algorithmSelect || !document.getElementById('wppf-button')) {
+         console.error("Cannot update WPPF button: Controls not ready.");
          return; 
     }
 
     const selectedAlgorithm = controls.algorithmSelect.value;
-    const pawleyButton = document.getElementById('pawley-button');
+    const wppfButton = document.getElementById('wppf-button');
     // Check if we actually have data loaded
     const fileLoaded = fullExperimentalData && fullExperimentalData.tth.length > 0;
 
     // 1. If no file is loaded OR a fit is currently running, always disable the button.
     if (!fileLoaded || isFitting) {
-        pawleyButton.disabled = true;
-        pawleyButton.title = ""; 
+        wppfButton.disabled = true;
+        wppfButton.title = ""; 
     } 
     // 2. Enable if Levenberg-Marquardt (lm) is selected
     else if (selectedAlgorithm === 'lm') {
-        pawleyButton.disabled = false;
-        pawleyButton.title = "Run Pawley refinement with Levenberg-Marquardt.";
+        wppfButton.disabled = false;
+        wppfButton.title = "Run WPPF refinement with Levenberg-Marquardt.";
     } 
-    // 3. Enable if Parallel Tempering (pt) is selected (This enables PT for Pawley)
+    // 3. Enable if Parallel Tempering (pt) is selected (This enables PT for WPPF)
     else if (selectedAlgorithm === 'pt') {
-        pawleyButton.disabled = false;
-        pawleyButton.title = "Run Pawley refinement with Parallel Tempering, converged with Levenberg-Marquardt.";
+        wppfButton.disabled = false;
+        wppfButton.title = "Run WPPF refinement with Parallel Tempering, converged with Levenberg-Marquardt.";
     } 
     // 4. Simulation is not a refinement. The run bar is hidden in that mode,
     //    so this is only reachable in the instant between the selector
@@ -7970,13 +7971,13 @@ function debounce(func, wait) {
     //    algorithm" would be wrong even for that instant: the selection is
     //    perfectly valid, it just does not fit anything.
     else if (selectedAlgorithm === 'sim') {
-        pawleyButton.disabled = true;
-        pawleyButton.title = "Simulation calculates a pattern from a structure; it does not fit one. Choose Levenberg-Marquardt or Parallel Tempering to refine.";
+        wppfButton.disabled = true;
+        wppfButton.title = "Simulation calculates a pattern from a structure; it does not fit one. Choose Levenberg-Marquardt or Parallel Tempering to refine.";
     }
     // 5. Disable for any other unknown state
     else {
-        pawleyButton.disabled = true;
-        pawleyButton.title = "Select a valid algorithm.";
+        wppfButton.disabled = true;
+        wppfButton.title = "Select a valid algorithm.";
     }
 }
 
@@ -7985,7 +7986,7 @@ function debounce(func, wait) {
         function setUIState(fitting) {
         isFitting = fitting;
         const leBailButton = document.getElementById('le-bail-button');
-        // const pawleyButton = document.getElementById('pawley-button'); // We handle this in updatePawleyButtonState
+        // const wppfButton = document.getElementById('wppf-button'); // We handle this in updateWppfButtonState
 
         // Disable Le Bail if fitting OR no file loaded
         leBailButton.disabled = fitting || (fullExperimentalData && fullExperimentalData.tth.length === 0);
@@ -7999,15 +8000,15 @@ function debounce(func, wait) {
         // Update text content during refinement
         if (fitting) {
             leBailButton.textContent = 'Refining...';
-            // Update Pawley button text too, even if disabled
-            document.getElementById('pawley-button').textContent = 'Refining...';
+            // Update WPPF button text too, even if disabled
+            document.getElementById('wppf-button').textContent = 'Refining...';
             controls.rpResult.textContent = '...';
             controls.rwpResult.textContent = '...';
             controls.chi2Result.textContent = '...';
         } else {
             // Restore button text when not fitting
             leBailButton.textContent = 'Run Le Bail';
-            document.getElementById('pawley-button').textContent = 'Run Pawley';
+            document.getElementById('wppf-button').textContent = 'Run WPPF';
             if(fitResults) {
                  // Report/Save enabled state handled above based on !fitting and fitResults
             }
@@ -8026,7 +8027,7 @@ function debounce(func, wait) {
         }
 
    
-        updatePawleyButtonState();
+        updateWppfButtonState();
         updateSgTestButtonState();
         updateChargeFlippingTabState();
     }
@@ -8133,7 +8134,7 @@ function debounce(func, wait) {
         /**
          * Calculates the observed integrated intensity for all peaks by partitioning the net
          * experimental intensity at each point according to the *full calculated (Ka1+Ka2) profile*.
-         * This correctly handles overlapping reflections for Pawley reports.
+         * This correctly handles overlapping reflections for WPPF reports.
          * @param {Array<object>} hklList - The list of HKL reflections (with .intensity as Height).
          * @param {object} params - The final refined parameters object.
          * @param {object} expData - The working experimental data {tth, intensity}.
@@ -8218,7 +8219,7 @@ function debounce(func, wait) {
 
             // Pass 2: partition the observed net intensity over each peak's window.
             // NOTE: in Le Bail mode this reproduces the extraction exactly (it is
-            // the same integral), so the report only shows it for Pawley, where
+            // the same integral), so the report only shows it for WPPF, where
             // the intensity is an independently refined parameter.
             hklList.forEach((peak, j) => {
                 const hkl_string = peak.hkl_list[0];
@@ -8299,7 +8300,7 @@ function debounce(func, wait) {
         //   EVENT LISTENERS, 8 oct, version 1.0.3; updated le 24 oct v 111
 
         document.getElementById('le-bail-button').addEventListener('click', () => runFit('le-bail'));
-        document.getElementById('pawley-button').addEventListener('click', () => runFit('pawley'));
+        document.getElementById('wppf-button').addEventListener('click', () => runFit('wppf'));
 
         // Helper function to handle a full HKL list recalculation, including cache invalidation.
         const handleFullHklRecalculation = () => {
@@ -8383,7 +8384,7 @@ function debounce(func, wait) {
 
         //   Polarisation model.
         //
-        // Lp is NOT a refinement parameter: in Le Bail and Pawley the peak
+        // Lp is NOT a refinement parameter: in Le Bail and WPPF the peak
         // intensity is free and absorbs it entirely, so changing the model
         // cannot change a single fitted number. It changes what those numbers
         // MEAN -- every |Fo| in the report, the Wilson prior behind the
@@ -8971,7 +8972,7 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                     controls.resultsContainer.style.display = 'flex';
                     
                     document.getElementById('le-bail-button').disabled = false;
-                    updatePawleyButtonState();
+                    updateWppfButtonState();
                     updateSgTestButtonState();
                     updateChargeFlippingTabState();
                     // Fresh data, no fit yet: revert Save Report to its
@@ -9058,7 +9059,7 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
                     alert(`Error reading file: ${error.message}`);
                     console.error(error);
                     document.getElementById('le-bail-button').disabled = true;
-                    updatePawleyButtonState();
+                    updateWppfButtonState();
                 }
             };
             reader.onerror = () => alert('Error reading file.');
@@ -9069,21 +9070,21 @@ controlsPanel.querySelectorAll('#profile-simple-pvoigt-container input, #profile
 // ===========================================================================
 //  RIGHT-PANEL RESULTS HISTORY
 //
-//  Every completed run (Le Bail, Pawley, Charge Flipping) is snapshotted into
+//  Every completed run (Le Bail, WPPF, Charge Flipping) is snapshotted into
 //  a growing, timestamped history and rendered in its own tab. The Plot tab is
-//  unchanged. Save Report / Generate PDF in the Le Bail and Pawley tabs export
+//  unchanged. Save Report / Generate PDF in the Le Bail and WPPF tabs export
 //  whichever run is selected in that tab's dropdown -- not necessarily the
 //  latest -- by handing the stored snapshot to the existing exporters.
 // ===========================================================================
-const rpHistory = { lebail: [], pawley: [], cf: [], wyckoff: [] };
+const rpHistory = { lebail: [], wppf: [], cf: [], wyckoff: [] };
 // How many charge-flipping runs the history keeps. Only the CF bucket is
-// capped: its entries carry a full density map, where a Le Bail or Pawley entry
+// capped: its entries carry a full density map, where a Le Bail or WPPF entry
 // carries a data slice a couple of orders of magnitude smaller. Ten is roughly
 // what the run dropdown can show without scrolling, and at the largest grid
 // still bounds the history at about 80 MB.
 const RP_MAX_CF_RUNS = 10;
 window.rpHistory = rpHistory;
-const rpSelected = { lebail: null, pawley: null, cf: null, wyckoff: null };
+const rpSelected = { lebail: null, wppf: null, cf: null, wyckoff: null };
 let rpRunCounter = 0;
 
 function rpTimestamp(d) {
@@ -9154,14 +9155,14 @@ function rpSnapshotFit(mode, results) {
         const bits = [];
         if (Number.isFinite(st.rwp)) bits.push(`Rwp = ${st.rwp.toFixed(3)}%`);
         if (Number.isFinite(st.chi2)) bits.push(`\u03C7\u00b2 = ${st.chi2.toFixed(3)}`);
-        logEvent(`${mode === 'pawley' ? 'Pawley' : 'Le Bail'} run #${entry.id}` +
+        logEvent(`${mode === 'wppf' ? 'WPPF' : 'Le Bail'} run #${entry.id}` +
                  (entry.algorithm ? ` (${entry.algorithm})` : '') +
                  (bits.length ? ' \u2014 ' + bits.join(', ') : ''));
 
         // ------------------------------------------------------------------
         //  NEGATIVE EXTRACTED INTENSITIES.
         //
-        //  A Pawley intensity is a free least-squares parameter with no
+        //  A WPPF intensity is a free least-squares parameter with no
         //  non-negativity constraint, so a weak or heavily overlapped
         //  reflection can refine below zero. That is not a bug in the fit --
         //  the pattern really is consistent with a negative value there once
@@ -9176,7 +9177,7 @@ function rpSnapshotFit(mode, results) {
         //  a French-Wilson correction and clamp what survives to zero, which
         //  is the statistically right treatment. What was missing is any
         //  notice at the point the negatives are CREATED, so a user reading a
-        //  Pawley report has no idea how much of it is below zero.
+        //  WPPF report has no idea how much of it is below zero.
         // ------------------------------------------------------------------
         try {
             const refl = (entry.results && entry.results.hklList) || [];
@@ -9219,7 +9220,7 @@ function rpClearAllRuns() {
     cfCancelled = false;
 
     // ALL FOUR MODES. rpHistory is declared with a wyckoff bucket and this list
-    // did not name it, so loading a new pattern cleared the Le Bail, Pawley and
+    // did not name it, so loading a new pattern cleared the Le Bail, WPPF and
     // charge-flipping histories and left the Wyckoff one standing -- a solved
     // structure from the previous sample, still selectable, still rendered, and
     // still exportable to CIF against a cell that no longer applied.
@@ -9233,14 +9234,14 @@ function rpClearAllRuns() {
     });
     rpRunCounter = 0;
 
-    // The Le Bail and Pawley bodies are plain markup and can be replaced. The
+    // The Le Bail and WPPF bodies are plain markup and can be replaced. The
     // charge-flipping body is not: it hosts the relocated #cf-results-group,
     // so rewriting its innerHTML would delete the whole results block and
     // every element the render functions look up by id. rpRenderCFRun with an
     // empty history hides the group and restores the placeholder instead.
     const bodies = {
         lebail: 'No Le Bail run yet. Results appear here after each fit.',
-        pawley: 'No Pawley run yet. Results appear here after each fit.'
+        wppf: 'No WPPF run yet. Results appear here after each fit.'
     };
     Object.entries(bodies).forEach(([mode, text]) => {
         const body = document.getElementById(`${mode}-run-body`);
@@ -9394,7 +9395,7 @@ function rpRenderRun(mode) {
     const r = entry.results, st = r.stats || {};
     const p = r.params || {};
     const num = (v, d = 4) => (v === undefined || v === null || Number.isNaN(v)) ? '–' : Number(v).toFixed(d);
-    const modeName = r.refinementMode === 'pawley' ? 'Pawley' : 'Le Bail';
+    const modeName = r.refinementMode === 'wppf' ? 'WPPF' : 'Le Bail';
 
     // Derive R_exp if the worker didn't explicitly send it: chi^2 = (Rwp / Rexp)^2
     const rexp = st.r_exp ?? st.rexp ?? ((st.rwp && st.chi2) ? (st.rwp / Math.sqrt(st.chi2)) : undefined);
@@ -9440,7 +9441,7 @@ function escapeHtml(s) {
 // The refinement is a separate worker message ('build-structure') posted much
 // later, from a different function, and it was never given the intensities --
 // so cfObservationsFromHkl found an empty hklList and every run ended with
-// "[CF refine] No usable Pawley intensities." in the console. The failure is
+// "[CF refine] No usable WPPF intensities." in the console. The failure is
 // caught and non-fatal, so the pipeline carried on and reported the UNREFINED
 // coordinates, which are quantised to the grid: 0.26 A at N = 32. The whole
 // point of that last step is to remove exactly that quantisation, and it was
@@ -9457,7 +9458,7 @@ function rpExportReport(mode) {
     window.__activeReportResults = entry.results;
     try {
         const text = generateReportContent('full', entry.results);
-        const tag = mode === 'pawley' ? 'Pawley' : 'LeBail';
+        const tag = mode === 'wppf' ? 'WPPF' : 'LeBail';
         downloadTextFile(text, `${tag}-Run${entry.id}-${rpTimestamp(entry.when).replace(/[: ]/g, '_')}.txt`);
         showToast('Report saved.', 'success');
     } catch (e) {
@@ -9489,7 +9490,7 @@ function rpExportReport(mode) {
  * answer "what does this run say"; neither substitutes for the other, and the
  * session log on its own is a list of timestamps with no numbers attached.
  *
- * Only the LAST run of each history is included. A session with thirty Pawley
+ * Only the LAST run of each history is included. A session with thirty WPPF
  * attempts would otherwise produce a document nobody reads, and the earlier
  * ones are still reachable one at a time from their own tab.
  */
@@ -9513,7 +9514,7 @@ async function printSessionSummary() {
     // The last run of each history, in the order the work is normally done.
     const order = [
         ['lebail',  'Le Bail Refinement'],
-        ['pawley',  'Pawley Refinement'],
+        ['wppf',    'WPPF Refinement'],
         ['cf',      'Charge Flipping'],
         ['wyckoff', 'Wyckoff Search'],
     ];
@@ -9578,9 +9579,9 @@ async function printActiveTab() {
         return SIM.exportPdCif();
     }
 
-    if (tab === 'lebail' || tab === 'pawley' || tab === 'cf' || tab === 'wyckoff') {
+    if (tab === 'lebail' || tab === 'wppf' || tab === 'cf' || tab === 'wyckoff') {
         if (!rpGetSelected(tab)) {
-            const what = { lebail: 'Le Bail refinement', pawley: 'Pawley refinement',
+            const what = { lebail: 'Le Bail refinement', wppf: 'WPPF refinement',
                            cf: 'charge-flipping run', wyckoff: 'Wyckoff search' }[tab];
             say(`No ${what} to report yet. Run one first, or switch to the Plot tab to report the pattern.`);
             return;
@@ -9594,8 +9595,8 @@ async function printActiveTab() {
     //
     // It used to report the live fit when one existed, which made the button
     // mean different things on the same tab: run Le Bail and it produced a Le
-    // Bail report; run Pawley afterwards and the same button on the same tab
-    // silently produced a Pawley one. A refinement is reported from its own
+    // Bail report; run WPPF afterwards and the same button on the same tab
+    // silently produced a WPPF one. A refinement is reported from its own
     // tab, where the history selector says which run is being reported.
     //
     // With no data loaded there is nothing to plot, so the chart page is
@@ -9629,15 +9630,15 @@ async function rpExportPDF(mode) {
     window.__activeReportResults = runData;
     
     try {
-        const modeLabel = mode === 'pawley' ? 'Pawley'
+        const modeLabel = mode === 'wppf' ? 'WPPF'
                         : mode === 'lebail' ? 'LeBail'
                         : mode === 'wyckoff' ? 'Wyckoff' : 'ChargeFlipping';
         // Charge flipping and Wyckoff report a structure, not a fit to the
         // pattern. The powder plot behind them is the same picture the Plot
         // tab exports, and a page of it at the back of a structure report is
-        // noise. Le Bail and Pawley keep it: there, the fit to the pattern IS
+        // noise. Le Bail and WPPF keep it: there, the fit to the pattern IS
         // the result.
-        const withChart = (mode === 'lebail' || mode === 'pawley');
+        const withChart = (mode === 'lebail' || mode === 'wppf');
         await generatePdfReport(runData, modeLabel, withChart);
     } catch (e) {
         alert('An error occurred while generating the report: ' + (e.message || e));
@@ -9713,7 +9714,7 @@ function rpSnapshotCF(result, opts) {
  * Deliberately NOT a peak list. A Wyckoff solution is a set of ELEMENTS on
  * named Wyckoff positions, and the question it has to answer is whether it
  * explains the measured intensities -- so the figure of merit is R(F^2) over
- * the Pawley data, stated once, and the per-site number is the shift the
+ * the WPPF data, stated once, and the per-site number is the shift the
  * coordinate refinement applied. Peak height is a property of the map that
  * seeded the search, not of the structure it produced, and it does not even
  * rank atoms by atomic number.
@@ -10118,7 +10119,7 @@ function rpRenderWyckoffRun() {
                   `(the running value during a search is on a reduced set of reflections and reads lower).<br>`)
             : '') +
         `<b>Refinement:</b> ${fom}<br>` +
-        `Weighted on 1/sigma&sup2; from the Pawley decomposition, with tabulated scattering factors` +
+        `Weighted on 1/sigma&sup2; from the WPPF decomposition, with tabulated scattering factors` +
         (ref.lpApplied ? ', Lp removed' : '') + `.</p>` +
         // Same classes and scroll wrapper the charge-flipping site table uses,
         // so the two panels read as the same product.
@@ -10252,7 +10253,7 @@ function rpRenderCFRun() {
         // action bars belong to the fitting tabs and would be misleading here.
         const isSolutionTab = (tabName === 'charge-flipping' || tabName === 'wyckoff');
         document.querySelector('.bottom-actions').style.display = isSolutionTab ? 'none' : '';
-        // Run Le Bail / Run Pawley. Hidden on the solution tabs because they
+        // Run Le Bail / Run WPPF. Hidden on the solution tabs because they
         // have their own run controls, and hidden under Simulation because
         // there is nothing to run. Without the second test this line would
         // undo simApplyMode() every time the user touched a tab: the Atoms tab
@@ -10312,7 +10313,7 @@ function rpRenderCFRun() {
 
         // EVERY run selector needs a change handler, and only the Wyckoff one
         // had ever been given one. Picking an older run from the Le Bail,
-        // Pawley or Charge Flipping dropdown updated the <select> and nothing
+        // WPPF or Charge Flipping dropdown updated the <select> and nothing
         // else: rpSelected stayed on whatever was snapshotted last, so the
         // label changed while the body kept showing the most recent result.
         // That reads as "every new run overwrites the old ones", which is what
@@ -10342,10 +10343,10 @@ function rpRenderCFRun() {
 
         // Right-panel results tabs
 const lbSave = document.getElementById('lebail-save-report');
-        const pwSave = document.getElementById('pawley-save-report');
+        const pwSave = document.getElementById('wppf-save-report');
 
         if (lbSave) lbSave.addEventListener('click', () => rpExportReport('lebail'));
-        if (pwSave) pwSave.addEventListener('click', () => rpExportReport('pawley'));
+        if (pwSave) pwSave.addEventListener('click', () => rpExportReport('wppf'));
 
         // The four per-tab PDF buttons are gone; one header button reports
         // whichever tab is in front. See printActiveTab().
@@ -10531,7 +10532,7 @@ controls.tthMaxSlider.addEventListener('change', () => {
 
         if (fitResults) {
             const textContent = generateReportContent('full');
-            const modeName = fitResults.refinementMode === 'pawley' ? 'Pawley' : 'LeBail';
+            const modeName = fitResults.refinementMode === 'wppf' ? 'WPPF' : 'LeBail';
             downloadTextFile(textContent, `${modeName}-Data-${timestamp}.txt`);
             showToast("Report saved successfully!", 'success');
         } else {
@@ -10565,8 +10566,8 @@ document.getElementById('show-spline-points-checkbox').addEventListener('change'
 });
 
 
-        controls.algorithmSelect.addEventListener('change', updatePawleyButtonState);
-        updatePawleyButtonState();
+        controls.algorithmSelect.addEventListener('change', updateWppfButtonState);
+        updateWppfButtonState();
         updateSgTestButtonState();
         updateChargeFlippingTabState();
 

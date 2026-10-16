@@ -1,9 +1,9 @@
-// Updated for Powder 5 version 179, 5 October 2026.
+// Updated for Powder 5 version 180, 16 October 2026.
 const SHARKO_COORD_REFINE_VERSION = '1.1.1';
 
 /* ------------------------------------------------------------------
    coord_refine.js - the last step: Wyckoff-constrained coordinate
-   refinement of a proposed structure against the Pawley intensities.
+   refinement of a proposed structure against the WPPF intensities.
 
    WHY THIS EXISTS, AND WHY THE MAP FIT CANNOT DO IT.
 
@@ -27,7 +27,7 @@ const SHARKO_COORD_REFINE_VERSION = '1.1.1';
 
    The fix is not a finer grid. It is to stop refining against the map at all.
    The map is an intermediate - a device for finding the right basin out of
-   the phase problem - and the DATA is the Pawley intensity list. So the last
+   the phase problem - and the DATA is the WPPF intensity list. So the last
    step re-refines the proposed coordinates against |Fo|^2 directly, by
    least squares, with no grid anywhere in the objective. The map fit gets the
    structure into the right basin; this gets it to the bottom of one.
@@ -38,7 +38,7 @@ const SHARKO_COORD_REFINE_VERSION = '1.1.1';
    its Wyckoff position after every step, so a site on 4c stays on (x, 1/4, z)
    exactly rather than drifting off it by a least-squares residual, and a site
    on a fixed point such as 4a does not move at all. Cell, profile and
-   background belong to the Pawley/Rietveld refinement in refinement_worker.js
+   background belong to the WPPF/Rietveld refinement in refinement_worker.js
    and are not touched here.
 
    Requires, already loaded: wyckoff_assign.js (projectOnto, wyckoffFreedom).
@@ -62,7 +62,7 @@ const CR_DEFAULTS = Object.freeze({
     tolChi: 1e-9,
     // Reflections closer in d than this are one observation, exactly as
     // swPackReflections does it. A powder cannot resolve them and pretending
-    // otherwise refines against Pawley's arbitrary split of a shared peak.
+    // otherwise refines against WPPF's arbitrary split of a shared peak.
     overlapTol: 0.002,
     // Trust region on one step, fractional. A least-squares step from a bad
     // start can be enormous; capping it keeps the projection meaningful and
@@ -125,7 +125,7 @@ function crGroupReflections(obsRows, overlapTol, fwhmAt, sepFrac) {
         //
         // The group is a sum, so its members' variances add. Treating them as
         // independent understates the true covariance -- reflections this
-        // close in d are correlated in the Pawley decomposition -- but the
+        // close in d are correlated in the WPPF decomposition -- but the
         // off-diagonal terms are not carried this far, and summing variances
         // is conservative rather than optimistic.
         //
@@ -265,7 +265,7 @@ function crStructureFactor(h, k, l, atoms, fOf, nSites, grad) {
  *              below; w is the Wyckoff position object from the space-group
  *              JSON, as carried by the search results
  *   symOps     [{ r:[9], t:[3] }]
- *   obsRows    [{ h, k, l, d, mult, Fo2 }]   Pawley observations
+ *   obsRows    [{ h, k, l, d, mult, Fo2 }]   WPPF observations
  *   formFactor (element, s) -> f, optional; falls back to the atomic number,
  *              i.e. point atoms, which is honest rather than silently wrong
  *   overallB   isotropic B, applied on the MODEL side as exp(-B s^2 / 4)
@@ -274,7 +274,7 @@ function crStructureFactor(h, k, l, atoms, fOf, nSites, grad) {
  * @returns { sites, R, Rstart, chi2, chi2Start, iterations, converged, scale,
  *            shifts }  shifts is the fractional distance each site moved.
  */
-function refineCoordinatesAgainstPawley(o) {
+function refineCoordinatesAgainstWppf(o) {
     const opt = { ...CR_DEFAULTS, ...o };
     const symOps = o.symOps || [];
     const nSites = o.sites.length;
@@ -345,7 +345,7 @@ function refineCoordinatesAgainstPawley(o) {
 // WEIGHTS: use exactly the same mixed-ESD policy as swPackReflections.
 //
 // 1/I is counting statistics, and counting statistics are the wrong model
-// for a Pawley intensity. The uncertainty on one of these numbers comes
+// for a WPPF intensity. The uncertainty on one of these numbers comes
 // from the DECOMPOSITION, not from how many photons arrived, and for a
 // heavily overlapped reflection it is far larger than sqrt(I). A measured
 // 200 with an ESD of 500 gets weight 1/200 = 5e-3 under counting
@@ -702,6 +702,6 @@ function crSolve(A, b, n) {
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = { SHARKO_COORD_REFINE_VERSION, CR_DEFAULTS,
-                       refineCoordinatesAgainstPawley,
+                       refineCoordinatesAgainstWppf,
                        crGroupReflections, crExpand, crStructureFactor, crSolve };
 }

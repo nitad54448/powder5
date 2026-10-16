@@ -5,7 +5,7 @@
    WHAT THIS IS
 
    Every other mode in powder5 starts from a measured pattern and works
-   backwards: Le Bail and Pawley extract intensities from it, charge flipping
+   backwards: Le Bail and WPPF extract intensities from it, charge flipping
    and the Wyckoff search turn those intensities into a structure. This module
    runs the same physics FORWARDS -- atoms in, pattern out -- and needs no data
    file at all.
@@ -224,7 +224,7 @@ function simActive() {
    to place anchors against, and anchors set during a fit stay in force and
    stay correct without the tab being open. */
 const SIM_FIT_ONLY_LEFT_TABS  = ['charge-flipping', 'wyckoff'];
-const SIM_FIT_ONLY_RIGHT_TABS = ['lebail', 'pawley', 'cf', 'wyckoff'];
+const SIM_FIT_ONLY_RIGHT_TABS = ['lebail', 'wppf', 'cf', 'wyckoff'];
 
 /* Background moved DOWN A LEVEL, into the Data tab's sub-tab strip, and is
    listed here instead of above. It is still fit-only for the reason given in

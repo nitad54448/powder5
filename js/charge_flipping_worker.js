@@ -3,7 +3,7 @@
 // space group applied inside the iteration.
 //
 // Dual-space charge flipping (Oszlanyi & Suto, Acta Cryst A60 (2004) 134)
-// run on Pawley-extracted integrated intensities. The modified code by Oszlany in 2005 is implemented since v 161
+// run on WPPF-extracted integrated intensities. The modified code by Oszlany in 2005 is implemented since v 161
 // via a slider in the CF panlel, default 15%
 // ---------------------------------------------------------------------------
 //  Everything below is shared by the GPU and CPU paths: the reflection model
@@ -415,7 +415,7 @@ function findSystematicAbsences(N, symops, centring) {
 // ---------------------------------------------------------------------------
 //  Lorentz-polarisation for a powder scan.
 //
-//  A Pawley intensity is the peak AREA, which carries m * LP * |F|^2. The
+//  A WPPF intensity is the peak AREA, which carries m * LP * |F|^2. The
 //  multiplicity m is absorbed by spreading the intensity over the m grid
 //  points of the orbit, but LP has to be divided out explicitly or the
 //  low-angle reflections dominate the map.
@@ -737,7 +737,7 @@ const systematicallyAbsent = members.some(p => {
         }
 nClusters++;
 
-// Diagnose forbidden observations using their raw Pawley values.
+// Diagnose forbidden observations using their raw WPPF values.
 // A French-Wilson posterior is positive by construction and is not
 // evidence that a forbidden reflection was significantly observed.
 const clusterHasAllowed = new Array(nClusters).fill(false);
@@ -789,7 +789,7 @@ if (symops && requestedLambda >= 0.999 && significantAbsent > 0) {
         error: 'significant-systematic-absence',
         errorMessage:
             `${significantAbsent} isolated systematically absent ` +
-            `reflection(s) have raw Pawley I/sigma >= 3` +
+            `reflection(s) have raw WPPF I/sigma >= 3` +
             (
                 absentExample
                     ? `; for example ${absentExample}`
@@ -1984,7 +1984,7 @@ const lambda = model.haveTranslations ? requestedLambda : 0;
     //  stagnation the pure 2004 iteration falls into.
     //
     //  It matters more on powder data than on single-crystal data: the weak
-    //  reflections are exactly the ones whose intensity the Pawley fit split
+    //  reflections are exactly the ones whose intensity the WPPF fit split
     //  most arbitrarily between overlapping lines, so forcing the map to
     //  reproduce them is forcing it to reproduce an artefact.
     //
@@ -2798,7 +2798,7 @@ async function buildStructure(job) {
     //  evidence only if neither saw the other's answer; a Wyckoff search fed
     //  the charge-flipping map is not an independent check on charge flipping,
     //  it is a refinement of it. Post a "wyckoff-search" job for the other
-    //  method - it reads |Fobs|^2 from the Pawley fit and never sees a map.
+    //  method - it reads |Fobs|^2 from the WPPF fit and never sees a map.
     // ------------------------------------------------------------------
     if (job.targetComposition) {
         return { error: 'build-structure does not run a Wyckoff search. Charge flipping and ' +

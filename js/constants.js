@@ -642,12 +642,12 @@ const PT_COST_SCALE_FLOOR = 1e-9;
 const PT_RESCALE_THRESHOLD = 0.5;
 
 // ===========================================================================
-//  8b. Separable (variable-projection) Pawley
+//  8b. Separable (variable-projection) WPPF
 // ===========================================================================
-//  A Pawley model is linear in every intensity, so for any set of non-linear
+//  A WPPF model is linear in every intensity, so for any set of non-linear
 //  parameters the intensities are the exact solution of a banded linear
 //  least-squares problem rather than something to iterate towards. LM and PT
-//  therefore search only the non-linear parameters. See pawley_linear.js.
+//  therefore search only the non-linear parameters. See wppf_linear.js.
 // ---------------------------------------------------------------------------
 
 /**
@@ -666,7 +666,7 @@ const PT_RESCALE_THRESHOLD = 0.5;
  * Set true if a fit converges slowly on a strongly correlated cell.
  * @type {boolean}
  */
-const PAWLEY_VARPRO_EXACT_JACOBIAN = false;
+const WPPF_VARPRO_EXACT_JACOBIAN = false;
 
 /**
  * Relative pivot repair applied by the modified Cholesky when a direction in
@@ -684,7 +684,7 @@ const PAWLEY_VARPRO_EXACT_JACOBIAN = false;
  * split within a group is arbitrary and reported as such.
  * @type {number}
  */
-const PAWLEY_PIVOT_REPAIR = 1e-8;
+const WPPF_PIVOT_REPAIR = 1e-8;
 
 /**
  * Normalised column correlation above which two reflections are treated as
@@ -696,7 +696,7 @@ const PAWLEY_PIVOT_REPAIR = 1e-8;
  * where it belongs, in the overlap-cluster table, with a sigma that says so.
  * @type {number}
  */
-const PAWLEY_DEGENERACY_CORRELATION = 0.9999;
+const WPPF_DEGENERACY_CORRELATION = 0.9999;
 
 
 
@@ -744,8 +744,8 @@ if (typeof module !== 'undefined' && module.exports) {
         LM_OUTER_TOL, LM_MAX_OUTER_REJECTS, LM_TRUST_INITIAL, LM_TRUST_GROWTH,
         PT_NUM_REPLICAS, PT_MAX_TEMP, PT_MIN_TEMP, PT_SWAP_INTERVAL,
         PT_COST_SCALE_FLOOR, PT_RESCALE_THRESHOLD,
-        PAWLEY_VARPRO_EXACT_JACOBIAN, PAWLEY_PIVOT_REPAIR,
-        PAWLEY_DEGENERACY_CORRELATION,
+        WPPF_VARPRO_EXACT_JACOBIAN, WPPF_PIVOT_REPAIR,
+        WPPF_DEGENERACY_CORRELATION,
         lowerBound
     };
     Object.defineProperty(_exports, 'MIN_PROFILE_FWHM_DEG', {

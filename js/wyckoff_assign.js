@@ -498,6 +498,23 @@ function enumerateAssignments(wyckoff, demand, options = {}) {
             `Lower Z, or choose a higher-symmetry setting.` };
     }
 
+    // EVERY ELEMENT HAS OPTIONS, BUT NOT TOGETHER.
+    //
+    // Each element on its own can be placed, so the per-element check above
+    // passed, and the recursion still found nothing: the only thing it tests
+    // across elements is that a fixed point holds one element. So the elements
+    // were competing for the same fixed points. Returned with no error string,
+    // this reached the user as a message blaming the formula, Z and the
+    // density window -- for LaSrCoO4 in I4/mmm at Z = 2, where La, Sr and Co
+    // each need a 2-fold site and only 2a and 2b exist. Name the clash instead.
+    if (!assignments.length) {
+        const clash = describeFixedPointClash(wyckoff, demand, perElement, fixedOnly);
+        if (clash) {
+            return { assignments: [], siteSymmetryExcluded: excluded,
+                     droppedTooManySites, fixedPointClash: true, error: clash };
+        }
+    }
+
     return { assignments, truncated: assignments.length >= opts.maxTotal,
              // How many valid assignments were skipped for exceeding the
              // kernel's site limit. Reported rather than silent: an
@@ -508,6 +525,51 @@ function enumerateAssignments(wyckoff, demand, options = {}) {
              // ruled out and why. Silence here would be indistinguishable
              // from the filter not running.
              siteSymmetryExcluded: excluded };
+}
+
+/**
+ * Why no assignment exists when every element can be placed on its own: the
+ * elements need the same fixed points (positions with no free coordinate),
+ * and a fixed point holds one element.
+ *
+ * @param {Array} wyckoff     the setting's wyckoff array
+ * @param {Array} demand      [{ element, count }], count per cell
+ * @param {Array} perElement  per element, the position-index multisets it may use
+ * @param {Set}   fixedOnly   indices of the zero-freedom positions
+ * @returns {string|null}     a message, or null when this is not the cause
+ */
+function describeFixedPointClash(wyckoff, demand, perElement, fixedOnly) {
+    const label = i => `${wyckoff[i].multiplicity || ''}${wyckoff[i].letter || '?'}`;
+    // Elements that cannot be placed without at least one fixed point, and
+    // the fixed points they could use between them.
+    const forced = [];
+    const pool = new Set();
+    for (let e = 0; e < demand.length; e++) {
+        const combos = perElement[e] || [];
+        if (!combos.length) continue;
+        if (!combos.every(c => c.some(i => fixedOnly.has(i)))) continue;
+        forced.push(e);
+        for (const c of combos) for (const i of c) if (fixedOnly.has(i)) pool.add(i);
+    }
+    if (forced.length < 2) return null;
+
+    const list = a => a.length <= 1 ? a.join('')
+        : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+    const who = forced.map(e => `${demand[e].element} (${demand[e].count} per cell)`);
+    const where = [...pool].sort((a, b) => a - b).map(label);
+    const pigeonhole = forced.length > pool.size;
+    return `No assignment places ${list(forced.map(e => demand[e].element))} on separate ` +
+        `sites: ${list(who)} can only go on fixed points (positions with no free ` +
+        `coordinate: ${list(where)}), and a fixed point holds one element. ` +
+        (pigeonhole
+            ? `That is ${forced.length} elements for ${pool.size} such position(s). `
+            : `No way of sharing them out leaves every element its own. `) +
+        `This is not a problem with Z or the density: the search builds ORDERED ` +
+        `models, one element per site, and cannot represent two elements sharing ` +
+        `a site. If some of these atoms are disordered over one site in the real ` +
+        `structure (La/Sr on 4e in K2NiF4-type LaSrCoO4, for example), replace them ` +
+        `in the formula by a single element of similar average scattering power ` +
+        `for the search, and restore the mixed occupancy afterwards.`;
 }
 
 /* ------------------------------------------------------------------ */

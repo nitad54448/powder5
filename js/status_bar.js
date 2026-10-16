@@ -2,7 +2,7 @@
 // ---------------------------------------------------------------------------
 //  ONE PROGRESS BAR AND ONE COMMENT LINE, FOR EVERY LONG-RUNNING PROCESS.
 //
-//  There were four. Le Bail and Pawley drove #progress-bar in the results
+//  There were four. Le Bail and WPPF drove #progress-bar in the results
 //  header; charge flipping drove #cf-progress-bar plus #cf-iter-count and
 //  #cf-r-factor inside its own tab; the Wyckoff search drove
 //  #wyckoff-progress-bar plus #wyckoff-gen-count, #wyckoff-cc and

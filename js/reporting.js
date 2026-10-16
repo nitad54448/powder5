@@ -282,11 +282,11 @@ function renderTextPdf(text, filename, withChart = true) {
 }
 
 // Reusable PDF generator. `results` is the snapshot to report; `modeName` is
-// 'Pawley' or 'LeBail'. Refactored out of the old button handler so the
+// 'WPPF' or 'LeBail'. Refactored out of the old button handler so the
 // per-run history tabs can export any stored run, not just the live fit.
 /**
  * @param {object} results   The snapshot to report.
- * @param {string} modeName  'Pawley', 'LeBail', 'Wyckoff', 'ChargeFlipping'.
+ * @param {string} modeName  'WPPF', 'LeBail', 'Wyckoff', 'ChargeFlipping'.
  * @param {boolean} [withChart=true] Append the powder pattern on its own page.
  *        FALSE for charge flipping and Wyckoff: those report a density map and
  *        a set of atomic positions, and the diffraction pattern behind them is
@@ -425,6 +425,24 @@ function reportExcludedSection(snap) {
     return lines;
 }
 
+/**
+ * The sign convention of the zero shift, as printed under every place a report
+ * quotes it.
+ *
+ * Powder 5 draws a calculated reflection at 2theta_calc + zeroShift, so
+ *     zeroShift = 2theta_obs - 2theta_calc.
+ * The CIF calibration (PD_CALIB_XCOORD, actual = nominal + offset) uses the
+ * opposite sign, offset = -zeroShift, and data_io.js converts on export. A
+ * value copied out of a report without its convention is a value of unknown
+ * sign.
+ */
+const ZERO_SHIFT_CONVENTION_LINES = [
+    'Zero shift convention (Powder 5): zero shift = 2theta_obs - 2theta_calc,',
+    '  i.e. a calculated peak is drawn at 2theta_calc + zero shift. This is the',
+    '  OPPOSITE sign to the CIF offset (actual 2theta = nominal 2theta + offset,',
+    '  offset = -zero shift).'
+];
+
 function generateReportContent(format = 'summary', resultsArg = null) {
     // resultsArg lets the per-run history export a specific snapshot;
     // callers that pass nothing keep using the live global fitResults.
@@ -438,8 +456,8 @@ function generateReportContent(format = 'summary', resultsArg = null) {
     }
 
     // A Wyckoff solution has neither a gridSize nor a bestR -- it never built a
-    // map -- so it fell past the charge-flipping branch and into the Pawley
-    // guard below, which correctly reported that a Pawley fit was missing. The
+    // map -- so it fell past the charge-flipping branch and into the WPPF
+    // guard below, which correctly reported that a WPPF fit was missing. The
     // PDF came out as a single line saying the fit results were incomplete.
     if (fitResults && Array.isArray(fitResults.sites) &&
         (fitResults.source === 'wyckoff' || fitResults.sites.some(x => x && x.wyckoff))) {
@@ -469,7 +487,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         }).join(' ');
     };
 
-    const modeName = refinementMode === 'pawley' ? 'Pawley' : 'Le Bail';
+    const modeName = refinementMode === 'wppf' ? 'WPPF' : 'Le Bail';
 
     const header = [
         `${modeName} Refinement Report`,
@@ -545,7 +563,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         `Model:        ${polarizationDescription(reportPol)}`,
         ...polarizationFormulaLines(reportPol).map(s => '  ' + s),
         '  I(hkl) = s * m * Lp * |F(hkl)|^2',
-        '(Lp does not enter the profile: in Le Bail and Pawley the intensity is a',
+        '(Lp does not enter the profile: in Le Bail and WPPF the intensity is a',
         ' free parameter and absorbs it. It is applied when converting an extracted',
         ' intensity into |F|, both in the table below and in the charge-flipping input.)',
         ''
@@ -706,7 +724,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
     // (above), but they are not in the normal-equations matrix, so its
     // inverse contains no profile-to-intensity correlation at all -- and
     // the cell parameters are strongly correlated with the intensities
-    // they help partition. A Pawley fit refines the intensities as
+    // they help partition. A WPPF fit refines the intensities as
     // proper least-squares parameters and does not have this problem.
     if (refinementMode === 'le-bail' && Object.keys(esds).length > 0) {
         const nI = (fitResults && fitResults.nIntensities) || 0;
@@ -850,6 +868,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         if (typeof finalParams.zeroShift === 'number' && isFinite(finalParams.zeroShift)) {
             const z = fitFlags.zeroShift ? formatWithEsd(finalParams.zeroShift, esds.zeroShift) : null;
             out.push(`zero shift = ${z !== null ? z : fmtNum(finalParams.zeroShift, 5)}\u00b0`);
+            out.push(...ZERO_SHIFT_CONVENTION_LINES);
         }
         // Whether the background contributes to these depends on whether it was
         // refined, so say which -- the statistics block above states it too,
@@ -920,6 +939,12 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                     paramLines.push(formatLine([p.name, valStr, fitStr, esdStr], paramWidths));
                 }
             });
+            // The sign of the zero shift is the one convention a reader of this
+            // table cannot infer, and it is the OPPOSITE of the CIF offset.
+            if (groupName === 'Structural & Instrumental' &&
+                paramGroups[groupName].some(p => p.esd_key === 'zeroShift')) {
+                paramLines.push('Zero Shift = 2theta_obs - 2theta_calc (opposite sign to the CIF offset).');
+            }
             paramLines.push(''); // Add blank line after each group
         }
     }
@@ -968,7 +993,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
     // still asks for 'full'.
     const wantReflections = (format !== 'summary');
     if (wantReflections && hklList && hklList.length > 0 && workerWorkingData && workerWorkingData.tth) {
-        const isPawley = (refinementMode === 'pawley');
+        const isWppf = (refinementMode === 'wppf');
 
         // The doublet: the integrated area below is the sum over the
         // Ka1/Ka2 pair, so it is larger than the single-wavelength
@@ -992,7 +1017,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         const sfByKey = new Map();
         if (typeof reflectionStructureFactors === 'function') {
             const sigmaArea = (hkl, widthFactor) => {
-                if (isPawley) {
+                if (isWppf) {
                     const sh = esds[`I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`];
                     return Number.isFinite(sh) ? sh * widthFactor : NaN;
                 }
@@ -1009,7 +1034,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         }
 
         // Le Bail has ONE intensity per reflection: the decomposed
-        // observed intensity. Pawley additionally has the refined
+        // observed intensity. WPPF additionally has the refined
         // parameter, which is worth comparing against the observed.
         //
         // Both now report the full set required to get from a peak to
@@ -1019,7 +1044,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         const reflCols = ['h,k,l', '2th_corr (°)', 'd (Å)', 'm', 'Lp',
                           'I_hkl (Area)', 'sigma(I)', '|Fo|'];
         const reflWidths = [13, 12, 9, 5, 12, 14, 12, 12];
-        if (isPawley) { reflCols.push('I_obs (Area)'); reflWidths.push(14); }
+        if (isWppf) { reflCols.push('I_obs (Area)'); reflWidths.push(14); }
         const reflHeader = formatLine(reflCols, reflWidths);
 
         reflectionsSection.push(
@@ -1028,16 +1053,19 @@ function generateReportContent(format = 'summary', resultsArg = null) {
             `Lp model : ${polarizationDescription(reportPol)}`,
             ...polarizationFormulaLines(reportPol).map(s => '  ' + s),
             `I_hkl    : integrated intensity of the reflection${dbl ? ' (Ka1 + Ka2)' : ''}, scale factor applied`,
+            '2th_corr : 2th_calc + zero shift + sample displacement/transparency shift,',
+            '           i.e. where the reflection is drawn on the observed 2-theta axis',
+            '           (zero shift = 2theta_obs - 2theta_calc; see the cell section)',
             'm        : powder multiplicity of the reflection',
             `|Fo|     : sqrt( I_hkl / ( m * Lp${dbl ? ` * ${doubletSum.toFixed(4)}` : ''} ) )    [arbitrary scale]`,
-            ...(isPawley
+            ...(isWppf
                 ? ['I_obs    : same reflection re-integrated from the observed pattern (cross-check)']
                 : []),
             '',
             reflHeader, '-'.repeat(reflHeader.length));
 
         let i_obs_map = new Map();
-        if (isPawley) {
+        if (isWppf) {
             try {
                  i_obs_map = calculateAllObservedIntensities(hklList, finalParams, workerWorkingData).area;
             } catch(iobsError) {
@@ -1066,7 +1094,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                 // area gave a different number, because the drawn peak
                 // is truncated and pedestal-subtracted. Fall back to the
                 // analytic route only for reflections the extraction
-                // never visited (e.g. a Pawley run).
+                // never visited (e.g. a WPPF run).
                 const total_calc_area = integratedPeakArea(hkl, finalParams, mainScaleFactor);
 
                 // 5. Calculate Effective Width Factor for ESD Scaling
@@ -1081,8 +1109,8 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                 const i_obs_str = i_obs_known ? i_obs_raw.toFixed(1) : 'n/a';
                 let esd_I_str = '';
 
-                if (isPawley) {
-                     // Pawley intensities are least-squares parameters,
+                if (isWppf) {
+                     // WPPF intensities are least-squares parameters,
                      // so their ESD comes from the covariance matrix.
                      const hkl_name = `I_(${hkl.h_orig},${hkl.k_orig},${hkl.l_orig})`;
                      const esd_I_val_height = esds[hkl_name];
@@ -1163,7 +1191,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
                         esd_I_str,
                         fo_str
                     ];
-                    if (isPawley) row.push(i_obs_str);
+                    if (isWppf) row.push(i_obs_str);
                     reflectionsSection.push(formatLine(row, reflWidths));
                 }
             });
@@ -1184,7 +1212,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         //  because it had absorbed 11-1-1, and nothing said so.
         // ------------------------------------------------------------------
         const degGroups = (fitResults && fitResults.degenerateGroups) || [];
-        if (isPawley && degGroups.length) {
+        if (isWppf && degGroups.length) {
             reflectionsSection.push('',
                 '--- Exactly Coincident Reflections (not separable at all) ---',
                 'These reflections have identical calculated profiles, so only the SUM',
@@ -1213,7 +1241,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         // ------------------------------------------------------------------
         //  OVERLAP CLUSTERS
         //
-        //  A Pawley intensity with an ESD larger than itself is not a failed
+        //  A WPPF intensity with an ESD larger than itself is not a failed
         //  fit, and printing it without context invites exactly that reading.
         //  It means the reflection overlaps its neighbours so closely that the
         //  data cannot say how the intensity divides between them -- while
@@ -1225,7 +1253,7 @@ function generateReportContent(format = 'summary', resultsArg = null) {
         //  a well-separated reflection is its own cluster and its sigma in the
         //  table above is already the whole story.
         // ------------------------------------------------------------------
-        if (isPawley && typeof intensityOverlapClusters === 'function') {
+        if (isWppf && typeof intensityOverlapClusters === 'function') {
             const oc = intensityOverlapClusters(fitResults, finalParams, reportCovariance(fitResults));
             const bad = oc ? oc.clusters.filter(c => c.members.length > 1 && c.nUnresolved > 0) : [];
             if (bad.length) {
@@ -1496,8 +1524,8 @@ function generateWyckoffReport(st) {
     }
 
     lines.push('',
-        'Coordinates were fitted to the Pawley intensities and tabulated scattering',
-        'factors, weighted on 1/sigma^2 from the Pawley decomposition rather than on',
+        'Coordinates were fitted to the WPPF intensities and tabulated scattering',
+        'factors, weighted on 1/sigma^2 from the WPPF decomposition rather than on',
         'counting statistics: the uncertainty on one of these intensities comes from',
         'the decomposition, and for an overlapped reflection it is far larger than',
         'sqrt(I). wR is the residual actually minimised.');
@@ -1637,7 +1665,7 @@ function generateChargeFlippingReport(cfResult) {
         ...(ref.absentButObserved > 0
             ? [`Transferred overlaps   : ${ref.absentTransferred || 0} forbidden HKL(s) shared a cluster`,
                '                         with allowed reflection(s); cluster totals were retained.',
-               `Significant isolated   : ${ref.significantAbsent || 0} with raw Pawley I/sigma >= 3`,
+               `Significant isolated   : ${ref.significantAbsent || 0} with raw WPPF I/sigma >= 3`,
                ...(ref.absentExample
                     ? [`Example                  : ${ref.absentExample}`]
                     : [])]
@@ -1715,9 +1743,9 @@ function generateChargeFlippingReport(cfResult) {
             if (wyckoff.refinement) {
                 const wr = wyckoff.refinement;
                 if (wr.skipped) {
-                    structureSection.push(`Pawley Refinement    : Skipped (${wr.skipped})`);
+                    structureSection.push(`WPPF Refinement      : Skipped (${wr.skipped})`);
                 } else {
-                    structureSection.push(`Pawley Refinement    : Converged in ${wr.iterations} iterations`);
+                    structureSection.push(`WPPF Refinement      : Converged in ${wr.iterations} iterations`);
                     structureSection.push(`Initial R-factor     : ${num(wr.Rstart, 4)}`);
                     structureSection.push(`Final R-factor       : ${num(wr.R, 4)}`);
                 }
@@ -1787,7 +1815,7 @@ function generateChargeFlippingReport(cfResult) {
     return [
         ...header,
         ...summarySection,
-        // Charge flipping phases the Pawley intensities, so an excluded region
+        // Charge flipping phases the WPPF intensities, so an excluded region
         // is missing from the extraction those intensities came from. It
         // belongs on this report for the same reason it belongs on the fit's.
         ...reportExcludedSection(cfResult.excluded || cfOpts.excluded ||

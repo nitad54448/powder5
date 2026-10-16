@@ -425,7 +425,7 @@ blockquote {
             <li><a href="#status-footer" class="sub-link">The Status Bar</a></li>
             <li><a href="#decomposition-methods">Decomposition Methods</a></li>
             <li><a href="#le-bail-method" class="sub-link">Le Bail Method</a></li>
-            <li><a href="#pawley-method" class="sub-link">Pawley Method</a></li>
+            <li><a href="#wppf-method" class="sub-link">WPPF Method</a></li>
             <li><a href="#algorithms">Refinement Algorithms</a></li>
             <li><a href="#algorithms-lm" class="sub-link">Levenberg-Marquardt</a></li>
             <li><a href="#algorithms-pt" class="sub-link">Parallel Tempering</a></li>
@@ -490,7 +490,7 @@ blockquote {
                 This document serves as a scientific and technical guide for the <strong>powder5</strong> web application, a tool for the analysis of powder X-ray diffraction (PXRD) data via whole-pattern fitting. This technique, also known as pattern decomposition, is a crucial method in materials science and crystallography for refining structural and microstructural parameters when a complete structural model is either unknown or unnecessary.
             </p>
             <p>
-                This application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and the <strong>Pawley method</strong> for unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using a monotonic cubic spline interpolation between user-defined
+                This application facilitates the extraction of precise lattice parameters, peak profile information, and integrated intensities of Bragg reflections. It implements two decomposition algorithms: the iterative <strong>Le Bail method</strong> for rapid and stable convergence, and <strong>WPPF</strong> (whole-powder-pattern fitting, Toraya 1986; a Pawley-type method) for unbiased intensity extraction. Peak profiles are modeled using phenomenological functions, including a versatile <strong>Simple pseudo-Voigt</strong>, an <strong>Asymmetric Split pseudo-Voigt</strong>, and <strong>Anisotropic model (TCH)</strong> based on the Thompson-Cox-Hastings formulation with a Stephens model for anisotropic line broadening. The background is modeled using a monotonic cubic spline interpolation between user-defined
                 anchors, which are held fixed or fitted during refinement.
             </p>
             <p>
@@ -546,8 +546,8 @@ blockquote {
                     <tr><td><code>powder5.html</code></td><td>The application itself.</td></tr>
                     <tr><td><code>style.css</code></td><td>All styling.</td></tr>
                     <tr><td><code>charge_flipping.wgsl</code></td><td>WebGPU kernels for the charge-flipping loop.</td></tr>
-                    <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel. Scores grouped |F<sub>calc</sub>|&sup2; against the Pawley intensities with the scale-only weighted wR2 objective and applies the ramped geometry penalties used during the global search.</td></tr>
-                    <tr><td><code>js/</code></td><td>All application modules - <code>charting.js</code>, <code>constants.js</code>, <code>contacts.js</code>, <code>coord_refine.js</code>, <code>crystal.js</code>, <code>data_io.js</code>, <code>density3d.js</code>, <code>excluded.js</code>, <code>observations.js</code>, <code>parsers.js</code>, <code>pawley_linear.js</code>, <code>polarization.js</code>, <code>profile.js</code>, <code>profile_presets.js</code>, <code>refinement_controller.js</code>, <code>reporting.js</code>, <code>scatterers.js</code>, <code>sg_engine.js</code>, <code>simulation.js</code>, <code>spacegroup_ui.js</code>, <code>spline_background.js</code>, <code>state.js</code>, <code>status_bar.js</code>, <code>swarm_wyckoff.js</code>, <code>symmetry_utils.js</code>, <code>wyckoff_assign.js</code>, <code>wyckoff_report.js</code> and the three Web Workers <code>charge_flipping_worker.js</code>, <code>refinement_worker.js</code>, and <code>wyckoff_worker.js</code>.</td></tr>
+                    <tr><td><code>swarm_reflection.wgsl</code></td><td>Wyckoff swarm kernel. Scores grouped |F<sub>calc</sub>|&sup2; against the WPPF intensities with the scale-only weighted wR2 objective and applies the ramped geometry penalties used during the global search.</td></tr>
+                    <tr><td><code>js/</code></td><td>All application modules - <code>charting.js</code>, <code>constants.js</code>, <code>contacts.js</code>, <code>coord_refine.js</code>, <code>crystal.js</code>, <code>data_io.js</code>, <code>density3d.js</code>, <code>excluded.js</code>, <code>observations.js</code>, <code>parsers.js</code>, <code>wppf_linear.js</code>, <code>polarization.js</code>, <code>profile.js</code>, <code>profile_presets.js</code>, <code>refinement_controller.js</code>, <code>reporting.js</code>, <code>scatterers.js</code>, <code>sg_engine.js</code>, <code>simulation.js</code>, <code>spacegroup_ui.js</code>, <code>spline_background.js</code>, <code>state.js</code>, <code>status_bar.js</code>, <code>swarm_wyckoff.js</code>, <code>symmetry_utils.js</code>, <code>wyckoff_assign.js</code>, <code>wyckoff_report.js</code> and the three Web Workers <code>charge_flipping_worker.js</code>, <code>refinement_worker.js</code>, and <code>wyckoff_worker.js</code>.</td></tr>
                     <tr><td><code>lib/</code></td><td>Vendor bundles: <code>chart.umd.min.js</code>, <code>three.min.js</code>, <code>jspdf.umd.min.js</code>, <code>html2canvas.min.js</code>.</td></tr>
                     <tr><td><code>sg/</code></td><td>Space-group database (all settings of the 230 groups).</td></tr>
                     <tr><td><code>scatters/</code></td><td>Tabulated atomic scattering factors, with <code>index.json</code> naming the available tables.</td></tr>
@@ -646,7 +646,7 @@ blockquote {
             <h3 id="status-footer">The status bar</h3>
             <p>
                 One bar, at the foot of the results panel, reports whatever is running:
-                a Le Bail or Pawley refinement, a charge-flipping run, or a Wyckoff
+                a Le Bail or WPPF refinement, a charge-flipping run, or a Wyckoff
                 search. It reads, for example
             </p>
             <pre>Wyckoff search: Z = 4 (2/3), wave 2/3, restart 1/4, gen 500/1000, wR2 13.0%
@@ -716,11 +716,12 @@ Refinement: 64%</pre>
                 intensities that are still moving.
             </div>
 
-<h3 id="pawley-method">The Pawley Method</h3>
+<h3 id="wppf-method">The WPPF Method (Whole-Powder-Pattern Fitting)</h3>
             <p>
-                The Pawley method treats the peak height ($I_{hkl}$) of every Bragg
-                reflection as a free variable, fitted at the same time as the cell and
-                the profile. The pattern is linear in every intensity:
+                WPPF, whole-powder-pattern fitting without reference to a structural
+                model (Toraya, 1986), treats the peak height ($I_{hkl}$) of every Bragg
+                reflection as a free least-squares variable, fitted at the same time as
+                the cell and the profile. The pattern is linear in every intensity:
                 $$y(x) = \sum_j I_j\,\phi_j(x;\theta) + b(x)$$
                 so for any given set of non-linear parameters $\theta$ - cell,
                 zero-point, profile widths - the optimal intensities are not
@@ -735,8 +736,46 @@ Refinement: 64%</pre>
                 the residual reported is the residual of the model actually fitted.
                 And the search space is the dozen or so genuinely non-linear
                 parameters instead of several thousand, which is what makes parallel
-                tempering usable on a Pawley fit at all.
+                tempering usable on a WPPF fit at all.
             </p>
+            <div class="note" id="wppf-vs-wppf">
+                <strong>WPPF and the Pawley method: why this program says WPPF.</strong>
+                <p>
+                    Both treat every integrated intensity as a free least-squares
+                    variable, alongside the cell and profile, with no structural model.
+                    In that sense the model refined here is the one Pawley introduced
+                    (Pawley, 1981), and everything said about such intensities &mdash; that
+                    they carry a full covariance matrix, that exactly coincident reflections determine only their sum &mdash; applies
+                    unchanged. What differs is everything around that model:
+                </p>
+                <ul>
+                    <li><b>The data and the profile.</b> Pawley's method was introduced for
+                        constant-wavelength neutron data with a symmetric Gaussian peak
+                        shape. Toraya (1986) developed whole-powder-pattern fitting for
+                        laboratory X-ray diffractometer data: a K&alpha;<sub>1</sub>/K&alpha;<sub>2</sub>
+                        doublet, asymmetric peaks and profile functions with Lorentzian
+                        character. That is the situation powder5 is built for &mdash; the
+                        doublet, pseudo-Voigt / Thompson&ndash;Cox&ndash;Hastings / split
+                        profiles, Stephens anisotropic broadening, asymmetry, sample
+                        displacement and transparency, and a spline background.</li>
+                    <li><b>How the intensities are obtained.</b> In the original Pawley
+                        refinement the intensities are refined jointly with the other
+                        parameters in one full-matrix least squares, and near-coincident
+                        reflections are kept in check with slack constraints. powder5 does
+                        neither: at every step it solves for all the intensities exactly
+                        (variable projection, see above), and the optimiser &mdash;
+                        Levenberg&ndash;Marquardt or parallel tempering &mdash; searches only the
+                        non-linear parameters. Exact coincidences are reported as
+                        groups, not constrained.</li>
+                    <li><b>The name.</b> &ldquo;Pawley refinement&rdquo; usually designates that
+                        specific 1981 algorithm. &ldquo;WPPF&rdquo; is Toraya's term for the
+                        general approach &mdash; a structure-free fit of the whole pattern with
+                        intensities as least-squares variables &mdash; and is the accurate
+                        description of what is done here. The Le&nbsp;Bail method, also
+                        structure-free, is kept separate because its intensities are
+                        partitioned iteratively rather than fitted, and have no covariance.</li>
+                </ul>
+            </div>
             <p>
                 The normal matrix of the linear step is <em>banded</em>: it has a
                 non-zero entry for two reflections only where their profile windows
@@ -769,7 +808,7 @@ Refinement: 64%</pre>
             </div>
 
             <ul>
-                <li><b>Advantages:</b> The Pawley method is considered more rigorous as it avoids the iterative bias of the Le Bail method, particularly in cases of severe peak overlap. It can yield more accurate and statistically sound integrated intensities (reported as areas) and parameter uncertainties.</li>
+                <li><b>Advantages:</b> The WPPF method is considered more rigorous as it avoids the iterative bias of the Le Bail method, particularly in cases of severe peak overlap. It can yield more accurate and statistically sound integrated intensities (reported as areas) and parameter uncertainties.</li>
                 <li><b>Limitations:</b> the cost is no longer the parameter count -
                     the intensities are projected out rather than iterated - but the
                     information content of the data is unchanged. Where reflections
@@ -782,7 +821,7 @@ Refinement: 64%</pre>
                     convex.</li>
             </ul>
              <div class="note">
-                <strong>Which algorithm for a Pawley fit?</strong>
+                <strong>Which algorithm for a WPPF fit?</strong>
                 Parallel tempering searches the same dozen
                 non-linear parameters it searches in Le Bail mode, and is the better
                 choice whenever the starting cell is uncertain. Use
@@ -807,11 +846,11 @@ Refinement: 64%</pre>
                 <li><b>Characteristics:</b> LM is a local minimizer, exhibiting rapid quadratic convergence when the initial parameters are close to the true minimum. It is the preferred method for final, high-precision refinement and is the only algorithm here that can calculate valid estimated standard deviations (ESDs) for the refined parameters from the covariance matrix.</li>
                 <li><b>Limitations:</b> It is susceptible to converging to a local minimum if the starting model is far from the global solution.</li>
                 <li><b>Parameter bounds:</b> several parameters are bounded - profile widths and
-                    Pawley intensities below at zero, the mixing parameter $\eta$ to $[0,1]$, cell
+                    WPPF intensities below at zero, the mixing parameter $\eta$ to $[0,1]$, cell
                     angles to $(0^\circ, 180^\circ)$. A step that would cross a bound is clipped to it,
                     and the gain ratio
                     $\rho = \Delta\chi^2_{\mathrm{actual}} / \Delta\chi^2_{\mathrm{predicted}}$
-                    is formed from the step that was <em>actually applied</em>. This matters in Pawley
+                    is formed from the step that was <em>actually applied</em>. This matters in WPPF
                     mode, where weak reflections routinely park at zero intensity: the damping
                     parameter $\lambda$ is shared by the whole model, so measuring $\rho$ against a
                     step that was never taken would let a handful of pinned intensities throttle the
@@ -820,7 +859,7 @@ Refinement: 64%</pre>
                     a corner of the bound box with the gradient pointing out of it - the
                     refinement stops and reports it, rather than spending its remaining iterations
                     raising $\lambda$ against a wall.</li>
-                <li><b>Pawley Mode: Generally the recommended algorithm for Pawley refinements due to stability and efficiency.</b></li>
+                <li><b>WPPF Mode: Generally the recommended algorithm for WPPF refinements due to stability and efficiency.</b></li>
             </ul>
             <div class="note">
                 <strong>The normal equations are solved by Cholesky factorisation</strong>, with LU
@@ -851,9 +890,9 @@ Refinement: 64%</pre>
                 <li><b>The Swap Move:</b> Periodically, the algorithm attempts to swap the entire set of parameters between adjacent replicas (e.g., between replica $i$ at temperature $T_i$ and replica $i+1$ at $T_{i+1}$). The swap is accepted with a Metropolis-like probability that depends on the energies (costs) and temperatures of the two replicas. This crucial step allows a good solution discovered by a high-temperature replica in a distant valley to "percolate down" to the low-temperature replicas, dramatically improving the efficiency of finding the global minimum compared to single-temperature methods.</li>
                  <li><b>Advantages:</b> Significantly more efficient at global exploration than simpler stochastic methods, making it a robust choice for complex problems or when the starting model is highly uncertain (primarily in Le Bail mode).</li>
                  <li><b>Le Bail intensities under PT:</b> Unlike the LM path, which re-extracts at the top of each iteration, the stochastic search extracts the intensities once before the run and holds them fixed throughout. A stochastic walker proposes many rejected moves, and re-extracting on each would make the cost function non-stationary and the Metropolis test meaningless.</li>
-                 <li><b>Pawley mode:</b> the intensities are not searched. They are
+                 <li><b>WPPF mode:</b> the intensities are not searched. They are
                  solved exactly at each cost evaluation (see
-                 <a href="#pawley-method">the Pawley method</a>), so a replica walks the
+                 <a href="#wppf-method">the WPPF method</a>), so a replica walks the
                  same non-linear parameters it would in Le Bail mode and the cost it
                  reports is the reduced objective - the residual after the
                  intensities have been optimised. That is the function whose minimum in
@@ -980,7 +1019,7 @@ Refinement: 64%</pre>
             </p>
             $$I(hkl) \;=\; s \cdot m \cdot Lp(2\theta) \cdot |F(hkl)|^2$$
             <p>
-                $Lp$ is therefore the last thing standing between an extracted Le&nbsp;Bail or Pawley
+                $Lp$ is therefore the last thing standing between an extracted Le&nbsp;Bail or WPPF
                 intensity and a structure factor, and it is the reason the reflection table in the
                 report prints $m$, $Lp$ and $|F_o|$ next to the intensity rather than the intensity
                 on its own.
@@ -989,7 +1028,7 @@ Refinement: 64%</pre>
             <div class="note">
                 <h4>Lp does not affect the refinement</h4>
                 <p>
-                    In both Le&nbsp;Bail and Pawley the intensity of every peak is a free quantity:
+                    In both Le&nbsp;Bail and WPPF the intensity of every peak is a free quantity:
                     it is re-partitioned from the observation each cycle, or refined as a
                     least-squares parameter. Either way it absorbs $Lp$ completely. Changing the
                     polarisation model therefore cannot move a lattice parameter, a profile
@@ -1431,7 +1470,7 @@ Refinement: 64%</pre>
             <h2>Forward Simulation: Calculating a Pattern from a Structure</h2>
             <p>
                 Every other mode in this program starts from a measured pattern and works
-                backwards. Le Bail and Pawley extract intensities from it; charge flipping and
+                backwards. Le Bail and WPPF extract intensities from it; charge flipping and
                 the Wyckoff search turn those intensities into a structure. <strong>Simulation
                 runs the same physics forwards</strong> &mdash; atoms in, pattern out &mdash; and
                 needs no data file at all.
@@ -1498,7 +1537,7 @@ Refinement: 64%</pre>
                 isotropic displacement parameter. $|F|^2$ is then handed to
                 <code>reflectionHeightsFromFsq()</code>, which applies the multiplicity, the
                 Lorentz&ndash;polarisation factor and the K&alpha;<sub>2</sub> doublet exactly
-                as the Pawley extraction does in reverse.
+                as the WPPF extraction does in reverse.
             </p>
             <div class="note">
                 <strong>$s$ versus $s/2$.</strong> The Gaussian scattering coefficients are
@@ -1942,7 +1981,7 @@ Refinement: 64%</pre>
         <section id="space-group-test">
             <h2>Probabilistic Space-Group Determination</h2>
             <p>
-                Once a Pawley refinement has completed, a small <strong>?</strong> button becomes
+                Once a WPPF refinement has completed, a small <strong>?</strong> button becomes
                 active on the space-group line of the control panel. It scores every space group
                 compatible with the current Laue class against the extracted intensities and
                 returns a ranked list of posterior probabilities. The method follows
@@ -1959,7 +1998,7 @@ Refinement: 64%</pre>
                 actually determine them?&rdquo;
             </p>
             <p>
-                A Pawley refinement is what makes this answerable. Because every intensity is a free
+                A WPPF refinement is what makes this answerable. Because every intensity is a free
                 least-squares parameter, the refinement returns not only the intensities
                 $\hat{\mathbf{I}}$ but the normal matrix behind them, and therefore their full
                 <em>covariance</em>. That matters enormously: in a powder pattern reflections overlap,
@@ -1973,7 +2012,7 @@ Refinement: 64%</pre>
                 least-squares parameters - they are re-partitioned from the observed profile at
                 each cycle. They have no normal matrix and no covariance, so there is no way to ask
                 how well any of them is determined. The test therefore requires a
-                <a href="#pawley-method">Pawley</a> refinement run with the
+                <a href="#wppf-method">WPPF</a> refinement run with the
                 <a href="#algorithms-lm">Levenberg-Marquardt</a> algorithm; the button stays disabled
                 otherwise.
             </div>
@@ -2034,7 +2073,7 @@ Refinement: 64%</pre>
 
             <h3 id="sgt-caveats">Requirements and Limitations</h3>
             <div class="warning-note">
-                <strong>Run the Pawley refinement in a condition-free group.</strong>
+                <strong>Run the WPPF refinement in a condition-free group.</strong>
                 A reflection can only be tested if it was actually a parameter of the fit. If the
                 refinement is run in, say, $Pnma$, every reflection $Pnma$ forbids was never refined
                 and carries no information - so the test is blind exactly where it matters.
@@ -2080,7 +2119,7 @@ Refinement: 64%</pre>
         <section id="charge-flipping">
             <h2>Ab Initio Structure Solution: Charge Flipping</h2>
             <p>
-                Once a Pawley refinement has extracted a set of individual integrated
+                Once a WPPF refinement has extracted a set of individual integrated
                 intensities, Powder&nbsp;5 can attempt to solve the crystal structure
                 <em>ab initio</em> - with no starting model - using the
                 dual-space <strong>charge-flipping</strong> algorithm of Oszl&aacute;nyi
@@ -2089,9 +2128,9 @@ Refinement: 64%</pre>
                 the unit cell.
             </p>
             <div class="note">
-                Charge Flipping is only available after a converged Pawley fit. The
+                Charge Flipping is only available after a converged WPPF fit. The
                 tab stays disabled until one exists, because the method needs the
-                individual reflection intensities that only Pawley - not
+                individual reflection intensities that only WPPF - not
                 Le&nbsp;Bail - provides, together with the normal matrix produced
                 by a Levenberg-Marquardt step (Parallel Tempering supplies this through
                 its LM polish).
@@ -2155,7 +2194,7 @@ Refinement: 64%</pre>
 
             <h4>1. Orbits: symmetry equivalents share one intensity</h4>
             <p>
-                A Pawley fit reports one intensity per symmetry-unique reflection. Its
+                A WPPF fit reports one intensity per symmetry-unique reflection. Its
                 equivalents \(hR\) must be placed on the \(P1\) grid before a transform
                 is possible, and they are generated from the <em>actual symmetry
                 operators</em> of the selected group. The distinction matters: the Laue
@@ -2202,7 +2241,7 @@ Refinement: 64%</pre>
                 \(I\) lattice that is most of the reciprocal grid.
             </p>
             <p>
-                The raw, signed Pawley area and its ESD are retained long enough to test the
+                The raw, signed WPPF area and its ESD are retained long enough to test the
                 selected space group. A forbidden fitted HKL never becomes an ordinary CF
                 reflection. If it overlaps an allowed reflection, however, its corrected
                 intensity remains in the measured cluster total and is re-partitioned only
@@ -2289,7 +2328,7 @@ Refinement: 64%</pre>
 
             <h4>Intensity scaling</h4>
             <p>
-                The refined Pawley parameter is a peak <em>height</em>, because the
+                The refined WPPF parameter is a peak <em>height</em>, because the
                 profile functions Powder&nbsp;5 uses are normalised to unit height, not
                 unit area. What charge flipping needs is the integrated intensity, so
                 each height is multiplied by the area of its own profile (summed over
@@ -2300,7 +2339,7 @@ Refinement: 64%</pre>
             </p>
             <p>
                 The signed fitted height is preserved during that conversion. In particular,
-                a negative Pawley estimate is not clipped before French&ndash;Wilson correction:
+                a negative WPPF estimate is not clipped before French&ndash;Wilson correction:
                 both the integrated value and its ESD are transformed by the same profile-area
                 factor, so weak and negative observations retain their statistical meaning.
                 If French&ndash;Wilson cannot be applied, only then are non-positive amplitudes
@@ -2521,7 +2560,7 @@ Refinement: 64%</pre>
             <ul>
                 <li><strong>Best R.</strong> The amplitude agreement of the retained map, summed over measured peaks. Below ~0.15 is promising; above ~0.30 usually means the run has not converged - add random starts, adjust the threshold by &plusmn;0.1&sigma;, or see <a href="#cf-settings">Recommended Settings</a>.</li>
                 <li><strong>Electron-density peaks.</strong> Fractional coordinates. At \(\lambda = 0\) the map is in \(P1\) with an arbitrary origin and hand, so absolute positions are meaningless - compare interatomic <em>distances</em>. At \(\lambda &gt; 0\) the origin is pinned by the symmetrisation and the coordinates are directly comparable to the space group's Wyckoff positions. <strong>Read the <em>Charge</em> column, not <em>Height</em>, to tell a heavy atom from a light one</strong> - see <a href="#cf-peak-columns">the column descriptions</a> for why height gets this backwards.</li>
-                <li><strong>Symmetry and absence diagnostics.</strong> The summary reports whether full operators or a Laue fallback expanded the data, the requested and effective in-loop symmetry, how many reciprocal points were forced to zero, how many forbidden fitted HKLs were excluded from the CF orbits, how many of those shared a cluster whose intensity was transferred to allowed orbits, and how many isolated ones had raw \(I/\sigma \geq 3\). A large systematic-zero count is normal for a centred lattice. A significant isolated forbidden observation is a direct inconsistency to investigate; a forbidden HKL inside an unresolved allowed peak may instead be an artefact of the Pawley partition.</li>
+                <li><strong>Symmetry and absence diagnostics.</strong> The summary reports whether full operators or a Laue fallback expanded the data, the requested and effective in-loop symmetry, how many reciprocal points were forced to zero, how many forbidden fitted HKLs were excluded from the CF orbits, how many of those shared a cluster whose intensity was transferred to allowed orbits, and how many isolated ones had raw \(I/\sigma \geq 3\). A large systematic-zero count is normal for a centred lattice. A significant isolated forbidden observation is a direct inconsistency to investigate; a forbidden HKL inside an unresolved allowed peak may instead be an artefact of the WPPF partition.</li>
                 <li><strong>Density section.</strong> A slice through the map, with selectable axis and depth. The colour bar under the image is an <em>absolute</em> scale taken from the whole map, not from the slice on screen, so slices are directly comparable and an empty one looks empty. The caption gives the slice maximum in units of the map's \(\sigma\); anything under about 3&sigma; is ripple, not an atom. The <em>Stretch each slice to its own range</em> checkbox restores per-slice auto-contrast, which is occasionally useful for tracing weak features but makes noise look like structure - the caption says so whenever it is on.</li>
                 <li><strong>3D isosurface.</strong> The same map drawn as a surface of constant density, at a level you set in units of the map's \(\sigma\) — the same units as the section caption, so the two views can be read against each other. Drag to rotate, scroll to zoom. At 1&ndash;2&sigma; you will see mostly noise; real atoms usually appear as isolated closed blobs somewhere above 3&sigma;.
                     <ul>
@@ -2720,14 +2759,14 @@ Refinement: 64%</pre>
                     <tr><td><strong>Reached at iteration</strong></td><td>Which cycle produced that best map. Powder&nbsp;5 retains the best iterate, not the last, because the algorithm oscillates once it has converged.</td></tr>
                     <tr><td><strong>Random starts</strong></td><td>How many independent random-phase trials were run; the best across all of them is shown.</td></tr>
                     <tr><td><strong>Grid / spacing</strong></td><td>The density-grid edge and the corresponding real-space voxel size in &Aring;ngstr&ouml;m.</td></tr>
-                    <tr><td><strong>Unique reflections used</strong></td><td>How many allowed Pawley reflections entered the CF orbits after intensity preparation and grid-range checks. Negative fitted values are retained through integrated-area conversion and French&ndash;Wilson correction rather than being clipped prematurely.</td></tr>
+                    <tr><td><strong>Unique reflections used</strong></td><td>How many allowed WPPF reflections entered the CF orbits after intensity preparation and grid-range checks. Negative fitted values are retained through integrated-area conversion and French&ndash;Wilson correction rather than being clipped prematurely.</td></tr>
                     <tr><td><strong>Grid points filled</strong></td><td>Total reciprocal-grid points carrying an observed amplitude, i.e. the sum of all orbit sizes. Much larger than the number of unique reflections in a high-symmetry group.</td></tr>
-                    <tr><td><strong>Space group</strong></td><td>The group whose operators were used. This is the group the Pawley fit ran in, not necessarily the current selection.</td></tr>
+                    <tr><td><strong>Space group</strong></td><td>The group whose operators were used. This is the group the WPPF fit ran in, not necessarily the current selection.</td></tr>
                     <tr><td><strong>Expansion symmetry</strong></td><td>How the orbits were generated: the number of full space-group operators and the Laue class, or - if the database lacks <code>sym_ops</code> - a note that only the Laue-class fallback was available. In the fallback case screw and glide absences cannot be derived.</td></tr>
                     <tr><td><strong>Symmetry in loop</strong></td><td>The effective \(\lambda\) actually used. <em>none</em> means the map was solved in \(P1\) and its origin is arbitrary. If a non-zero value was requested but full translations were unavailable, the effective value is reported as zero because in-loop phase symmetry was safely disabled.</td></tr>
                     <tr><td><strong>Lorentz-polarisation</strong></td><td>The $Lp$ model the worker actually divided by, reported back by the worker itself rather than restated from the control panel - so a mismatch between the two would be visible here instead of silent. Where the counts differ, it also says how many reflections took the value computed by the refinement and how many the worker had to recompute. See <a href="#parameters-lp">Lorentz&ndash;Polarisation Factor</a>.</td></tr>
                     <tr><td><strong>Systematic zeros</strong></td><td>How many reciprocal-grid points were held at \(F = 0\) as systematically absent. Expect roughly half the grid for an \(I\) lattice and three quarters for \(F\); zero for a primitive group with no screws or glides.</td></tr>
-                    <tr><td><strong>Forbidden fitted HKLs</strong></td><td>How many Pawley HKLs carried positive raw fitted intensity but were excluded from CF because the selected space group forbids them.</td></tr>
+                    <tr><td><strong>Forbidden fitted HKLs</strong></td><td>How many WPPF HKLs carried positive raw fitted intensity but were excluded from CF because the selected space group forbids them.</td></tr>
                     <tr><td><strong>Transferred overlaps</strong></td><td>How many forbidden HKLs shared a measured cluster with an allowed reflection. Their corrected intensity remains in the cluster total but is assigned only to allowed orbits.</td></tr>
                     <tr><td><strong>Significant isolated</strong></td><td>How many isolated forbidden HKLs had raw \(I/\sigma \geq 3\). Strict symmetry refuses such a run; softer symmetry modes retain this prominent diagnostic.</td></tr>
                     <tr><td><strong>Overlapping reflections</strong></td><td>How many of the reflection orbits share a measured peak with at least one other, and how many distinct peaks they occupy. If this approaches the total, either the sample really is heavily overlapped or the overlap tolerance is set too wide.</td></tr>
@@ -2804,10 +2843,10 @@ Refinement: 64%</pre>
             <p>
                 The Wyckoff search has its <strong>own tab</strong> in the left panel and its own
                 results tab on the right. It is a peer of charge flipping, not a step inside it:
-                it consumes a space group, a cell, a composition and the Pawley intensities, and
+                it consumes a space group, a cell, a composition and the WPPF intensities, and
                 not one of those comes from a density map. <strong>It does not require a
                 charge-flipping run, and it cannot read one.</strong> The two methods share only
-                the Pawley intensity list - the same measurement, seen independently.
+                the WPPF intensity list - the same measurement, seen independently.
             </p>
             <div class="note">
                 <strong>The independence is enforced, not merely intended.</strong> The
@@ -2849,7 +2888,7 @@ Refinement: 64%</pre>
                 Scattering factors are the tabulated \(f(s)\) with an overall temperature factor
                 folded in as \(f(s)\exp(-Bs^2/4)\), pre-computed per (reflection, element) on the
                 host. \(B\) is estimated by a <strong>Wilson plot</strong> over resolution shells
-                from the extracted intensities themselves. The Pawley intensities do not lack a
+                from the extracted intensities themselves. The WPPF intensities do not lack a
                 temperature factor - they <em>contain</em> the real one, because they are a
                 measurement - so the model needs one to reproduce their fall-off.
             </p>
@@ -3529,7 +3568,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             <p>
                 Reflections the powder pattern cannot separate are summed into one group
                 first, so the comparison is made where the measurement exists. Each group is
-                weighted by \( 1/\sigma^2 \) on its total when usable Pawley ESDs exist. If at
+                weighted by \( 1/\sigma^2 \) on its total when usable WPPF ESDs exist. If at
                 least one complete group has an ESD, incomplete groups receive zero weight rather
                 than unit or \(1/I\) weight. Only when no group has a usable ESD is the whole
                 problem unweighted. The same policy is used in final coordinate refinement.
@@ -3604,7 +3643,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 observed denominator, \( w_i I_i^2 \), not merely for being in the list.
                 Those shares are very uneven: \(1/\sigma^2\) rewards sharp low-angle
                 reflections, whose ESDs are small, and all but erases high-angle overlaps a
-                Pawley fit could not partition, whose ESDs can exceed their own values. The
+                WPPF fit could not partition, whose ESDs can exceed their own values. The
                 search reports the <strong>effective number of observations</strong>
             </p>
             <p style="text-align:center;">
@@ -3674,7 +3713,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             <h3>Phase 3: Finalization and Intensity Extraction</h3>
             <ol start="7">
                  <li><b>Global Optimization (Optional):</b> If the LM algorithm converges to a poor solution during the Le Bail steps, switch to <strong>Parallel Tempering (PT)</strong> for one or more Le Bail cycles to perform a global search. Afterwards, switch back to LM for a final, precise local minimization.</li>
-                 <li><b>Pawley Refinement:</b> With a stable and well-refined model from the Le Bail method, perform a final refinement using the <strong>Pawley method</strong>. It is generally recommended to use the <strong>Levenberg-Marquardt (LM)</strong> algorithm for stability, though <strong>Parallel Tempering (PT)</strong> can also be used (potentially requiring more iterations). This will provide the most statistically robust set of integrated intensities, suitable for subsequent structure solution.</li>
+                 <li><b>WPPF Refinement:</b> With a stable and well-refined model from the Le Bail method, perform a final refinement using the <strong>WPPF method</strong>. It is generally recommended to use the <strong>Levenberg-Marquardt (LM)</strong> algorithm for stability, though <strong>Parallel Tempering (PT)</strong> can also be used (potentially requiring more iterations). This will provide the most statistically robust set of integrated intensities, suitable for subsequent structure solution.</li>
                  </ol>
 
                         <div class="note">
@@ -3746,7 +3785,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                     measured count.</li>
                 <li><strong>Structure fitting</strong> - the Wyckoff search and the final
                     coordinate refinement - weights each observation by \(1/\sigma^2\)
-                    from the Pawley decomposition. Counting statistics are the <em>wrong</em>
+                    from the WPPF decomposition. Counting statistics are the <em>wrong</em>
                     model there: the uncertainty on an extracted intensity comes from the
                     decomposition, not from how many photons arrived, and for a heavily
                     overlapped reflection it is far larger than \(\sqrt{I}\). A measured 200
@@ -4027,18 +4066,18 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 <tbody>
                     <tr><td><b>Plot</b></td><td>The pattern, never a refinement. With data loaded: the calculated reflection list and the plot. With no data: the theoretical reflection list alone - <code>h k l</code>, the $d$-spacing, the K&alpha;<sub>1</sub> (and K&alpha;<sub>2</sub>) positions, the multiplicity and $Lp$ - and no plot page, because there is nothing to plot.</td></tr>
                     <tr><td><b>Le Bail results</b></td><td>The run selected in that tab's history, with the fit to the pattern.</td></tr>
-                    <tr><td><b>Pawley results</b></td><td>The run selected in that tab's history, with the fit to the pattern.</td></tr>
+                    <tr><td><b>WPPF results</b></td><td>The run selected in that tab's history, with the fit to the pattern.</td></tr>
                     <tr><td><b>Charge Flipping</b></td><td>The selected run: map statistics, the built structure, and the <b>electron-density peak table</b> with each peak&rsquo;s distance to its nearest neighbour. The peaks are the observation and the structure is an interpretation of them, so the report carries both. No powder plot - that is the Plot tab&rsquo;s report.</td></tr>
                     <tr><td><b>Wyckoff</b></td><td>The selected solution: refined positions, and the <b>structure quality table</b> - coordination number, mean contact distance, spread and bond-valence sum per site. The wR says the fit converged; this table says whether the result is chemistry. For a $Z$ scan, the solution currently displayed, not necessarily the best. No powder plot.</td></tr>
-                    <tr><td><b>Log</b></td><td>The whole session: the log, followed by the most recent run from each of the four histories that has one. The per-tab reports answer &ldquo;what does this run say&rdquo;; this one answers &ldquo;what did I do today&rdquo;. Only the last run of each history is included - thirty Pawley attempts would make a document nobody reads, and the earlier ones are still reachable one at a time from their own tab.</td></tr>
+                    <tr><td><b>Log</b></td><td>The whole session: the log, followed by the most recent run from each of the four histories that has one. The per-tab reports answer &ldquo;what does this run say&rdquo;; this one answers &ldquo;what did I do today&rdquo;. Only the last run of each history is included - thirty WPPF attempts would make a document nobody reads, and the earlier ones are still reachable one at a time from their own tab.</td></tr>
                 </tbody>
             </table>
             <p>
                 <b>A refinement is reported only from its own tab, and only for the run
                 selected in that tab's history selector.</b> The Plot tab reports the
                 pattern and nothing else - otherwise the same button on the same tab
-                would produce a Le Bail report after a Le Bail run and a Pawley one after
-                a Pawley run, with nothing on screen saying which you were about to get.
+                would produce a Le Bail report after a Le Bail run and a WPPF one after
+                a WPPF run, with nothing on screen saying which you were about to get.
             </p>
             <p>
                 It is never greyed out. Press it where there is nothing to report and it says
@@ -4048,7 +4087,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                 the run history.
             </p>
             <p>
-                <b>Save report</b> on the Le Bail and Pawley tabs still writes the plain-text
+                <b>Save report</b> on the Le Bail and WPPF tabs still writes the plain-text
                 version: all statistical indicators, refined parameters with their ESDs, the
                 Williamson-Hall results where applicable, the declared Lorentz&ndash;polarisation
                 model, the background spline points, the reflection table below, and a
@@ -4060,8 +4099,8 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             <h4>The reflection table</h4>
             <p>
                 Both the text and PDF reports list every reflection inside the fitted range with the
-                complete chain from peak to structure factor. Le&nbsp;Bail and Pawley share the same
-                columns; Pawley adds one.
+                complete chain from peak to structure factor. Le&nbsp;Bail and WPPF share the same
+                columns; WPPF adds one.
             </p>
             <table class="param-table">
                 <thead><tr><th>Column</th><th>Meaning</th></tr></thead>
@@ -4088,7 +4127,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                             underweights the high-angle reflections by the full profile broadening,
                             which typically doubles across a scan.</td></tr>
                     <tr><td><code>sigma(I)</code></td>
-                        <td>Standard uncertainty on the area. For Pawley it comes from the
+                        <td>Standard uncertainty on the area. For WPPF it comes from the
                             covariance matrix, converted from a height ESD; for Le&nbsp;Bail it is the
                             counting statistics of the observed points propagated through the
                             partition fractions.</td></tr>
@@ -4096,10 +4135,10 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
                         <td>$\sqrt{I_{hkl} / (m \cdot Lp \cdot (1 + I_2/I_1))}$, on an arbitrary
                             scale. Blank for a non-positive intensity - see the note
                             below.</td></tr>
-                    <tr><td><code>I_obs</code> <em>(Pawley only)</em></td>
+                    <tr><td><code>I_obs</code> <em>(WPPF only)</em></td>
                         <td>The same reflection re-integrated from the observed pattern by
                             partitioning the net counts over the calculated profile. A cross-check on
-                            the refined parameter, which is what <code>I_hkl</code> holds for a Pawley
+                            the refined parameter, which is what <code>I_hkl</code> holds for a WPPF
                             fit. Large disagreement points at an overlap the fit has resolved badly.
                             For Le&nbsp;Bail the two are the same integral by construction, so the
                             column is omitted.</td></tr>
@@ -4113,7 +4152,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             <div class="note">
                 <h4>Weak reflections and Non-Negative Least Squares (NNLS)</h4>
                 <p>
-                    A Pawley intensity can naturally tend below zero when the background runs
+                    A WPPF intensity can naturally tend below zero when the background runs
                     above the data across a peak's window. The NNLS solver actively bounds these
                     intensities at zero (so <code>I_hkl</code> is reported as 0), preventing
                     unphysical negative ripples. However, the corresponding standard uncertainty
@@ -4129,6 +4168,10 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
 
         <section id="references">
             <h2>References & Further Reading</h2>
+             <div class="reference-item">
+                <strong>WPPF (whole-powder-pattern fitting):</strong><br>
+                Toraya, H. (1986). "Whole-powder-pattern fitting without reference to a structural model: application to X-ray powder diffractometer data". <em>Journal of Applied Crystallography</em>, 19(6), 440-447.
+            </div>
              <div class="reference-item">
                 <strong>Pawley Method:</strong><br>
                 Pawley, G. S. (1981). "Unit-cell refinement from powder diffraction scans". <em>Journal of Applied Crystallography</em>, 14(6), 357-361.
@@ -4235,12 +4278,12 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
         <section id="about">
             <h2>About This Tool</h2>
             <p>
-                The <strong>powder5</strong> toolkit was developed by Nita Dragoe from Université Paris-Saclay as a simple browser-based implementation of powder pattern decomposition methods. It is a long-time successor of PowderV2 (Dragoe, N. (2001). <em>J. Appl. Cryst.</em>, 34, 535) and has been updated to include the Pawley method and modern global optimization algorithms.
+                The <strong>powder5</strong> toolkit was developed by Nita Dragoe from Université Paris-Saclay as a simple browser-based implementation of powder pattern decomposition methods. It is a long-time successor of PowderV2 (Dragoe, N. (2001). <em>J. Appl. Cryst.</em>, 34, 535) and has been updated to include whole-powder-pattern fitting (WPPF, Toraya 1986; Pawley-type intensity extraction) and modern global optimization algorithms.
             </p>
 
             <p>
                 All numerical work - the skyline Cholesky behind the covariance
-                matrix and the ESDs, the banded solver for the separable Pawley
+                matrix and the ESDs, the banded solver for the separable WPPF
                 intensities, and the least-squares machinery itself - is
                 implemented locally. An earlier version depended on
                 <a href="https://mathjs.org/" target="_blank">math.js</a> for these; it was removed
@@ -4263,7 +4306,7 @@ O  O      2.40          # keep the tetrahedra from interpenetrating</pre>
             </div>
         </section>
         <footer id="help-footer">
-            Powder 5, version 179, 5 October 2026
+            Powder 5, version 180, 16 October 2026
         </footer>
     </main>
 </div>

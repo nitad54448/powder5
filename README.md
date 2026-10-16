@@ -1,6 +1,6 @@
 # powder5
 
-Version 179 — 5 October 2026.
+Version 180 — 16 October 2026.
 
 Whole-pattern analysis of powder X-ray diffraction data, in a browser.
 [Launch it](https://nitad54448.github.io/powder5/powder5.html) — there is
@@ -16,22 +16,36 @@ search, both of which run in the browser too.
 ## What it does
 
 **Pattern decomposition** — refine the cell, zero-point, peak profile and
-background, and extract integrated intensities, by the **Le Bail** or
-**Pawley** method. Three profile functions: simple pseudo-Voigt, the
+background, and extract integrated intensities, by the **Le Bail** method or by
+**WPPF** — whole-powder-pattern fitting (Toraya, 1986), in which every
+intensity is a free least-squares variable as in the Pawley (1981) method.
+Three profile functions: simple pseudo-Voigt, the
 Thompson–Cox–Hastings model with Stephens anisotropic broadening, and a split
 pseudo-Voigt for asymmetric peaks. Refinement runs on a background thread, by
 Levenberg–Marquardt or by parallel tempering with an LM polish.
 
 **Space-group determination** — test the settings compatible with the observed
-extinctions against the Pawley intensities, and rank them.
+extinctions against the WPPF intensities, and rank them.
 
 **Structure solution** — charge flipping (WebGPU where available, CPU
 otherwise), or a Wyckoff-position swarm search that fits atoms directly to the
-Pawley intensities. Either produces coordinates, a structure plot, contacts and
+WPPF intensities. Either produces coordinates, a structure plot, contacts and
 bond-valence sums, and a CIF.
 
 **Reporting** — statistics, refined parameters with standard uncertainties,
 reflection tables, and export to text, CIF or PDF.
+
+### Why "WPPF" and not "Pawley"
+
+The model is Pawley's: integrated intensities are refined as free
+least-squares variables together with the cell and profile, with no structure.
+But the original Pawley refinement was a joint full-matrix fit with slack
+constraints, written for neutron data with Gaussian peaks. powder5 fits
+laboratory X-ray patterns (Kα doublet, asymmetric TCH/pseudo-Voigt profiles)
+and solves the intensities exactly at every step by variable projection, the
+optimiser searching only the non-linear parameters. Toraya's term for
+structure-free whole-pattern fitting describes that more accurately. See *The
+WPPF Method* in the help.
 
 ---
 
@@ -50,12 +64,12 @@ reflection tables, and export to text, CIF or PDF.
 4. **Choose a profile** on the *Profile* tab. Start with the simple
    pseudo-Voigt.
 5. **Refine.** Le Bail first, to get the cell and profile settled — it is
-   faster and far more forgiving of a poor starting point. Then Pawley, when
+   faster and far more forgiving of a poor starting point. Then WPPF, when
    you want individual intensities and their uncertainties.
 6. **Read the difference curve**, not just R<sub>wp</sub>. Structure in the
    residual means the model is wrong somewhere, whatever the number says.
 7. **Solve**, if that is where you are going: *Charge Flipping* or *Wyckoff*,
-   both of which need a converged Pawley fit.
+   both of which need a converged WPPF fit.
 
 A single status bar at the foot of the results panel reports whatever is
 running, from any tab. One report button, top right between the theme toggle
@@ -99,8 +113,8 @@ Developed by Nita Dragoe, Université Paris-Saclay. It is the successor to Powde
 PowderV2 — Dragoe, N. (2001), *J. Appl. Cryst.* **34**, 535.
 
 Methods implemented here are due to their authors; the help file lists the
-references in full. The principal ones are Le Bail *et al.* (1988), Pawley
-(1981), Thompson, Cox & Hastings (1987), Stephens (1999), Oszlányi & Sütő
+references in full. The principal ones are Le Bail *et al.* (1988), Toraya
+(1986) for WPPF, Pawley (1981), Thompson, Cox & Hastings (1987), Stephens (1999), Oszlányi & Sütő
 (2004) for charge flipping, and Larson & Von Dreele (2004) for the GSAS profile
 parameterisation. The Wyckoff direct space fit is - imho - original, but it is a way of "manually" determining the structures from powder data.
 

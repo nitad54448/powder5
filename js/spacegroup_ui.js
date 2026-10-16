@@ -429,10 +429,10 @@ setTimeout(() => {
         //  IMPORTANT LIMITATION
         //  --------------------
         //  A reflection can only be tested if it was actually a parameter of
-        //  the Pawley fit. If the Pawley refinement was run in a group that
+        //  the WPPF fit. If the WPPF refinement was run in a group that
         //  already imposes reflection conditions, the reflections it forbids
         //  were never refined and carry no information. For a complete test,
-        //  run the Pawley refinement in the condition-free group of the same
+        //  run the WPPF refinement in the condition-free group of the same
         //  Laue class (P-1, P2/m, Pmmm, P4/mmm, P6/mmm, Pm-3m, ...). The test
         //  detects this case and says so.
         // =====================================================================
@@ -497,7 +497,7 @@ setTimeout(() => {
 
             //   ---------- space-group helpers ----------
             // A group is "condition-free" if it forbids nothing: those are the
-            // groups a Pawley fit must be run in for the test to see every
+            // groups a WPPF fit must be run in for the test to see every
             // reflection.
             const PROBE_HKL = (() => {
                 const out = [];
@@ -547,16 +547,16 @@ setTimeout(() => {
                     .replace(/\s+/g, ' ').trim();
             }
 
-            //   ---------- gather the Pawley result ----------
+            //   ---------- gather the WPPF result ----------
             function collect() {
                 if (!fitResults)
-                    return { error: 'No refinement results are available yet. Run a Pawley refinement first.' };
-                if (fitResults.refinementMode !== 'pawley')
-                    return { error: 'The last refinement was a Le Bail fit. Le Bail intensities are not least-squares parameters and have no normal matrix, so the test cannot be applied. Run a Pawley refinement.' };
+                    return { error: 'No refinement results are available yet. Run a WPPF refinement first.' };
+                if (fitResults.refinementMode !== 'wppf')
+                    return { error: 'The last refinement was a Le Bail fit. Le Bail intensities are not least-squares parameters and have no normal matrix, so the test cannot be applied. Run a WPPF refinement.' };
                 if (!fitResults.JtJ || !fitResults.parameterInfo)
-                    return { error: 'The test needs the normal-equations matrix. The Levenberg-Marquardt refiner builds one, and a Parallel Tempering run gets one from its LM polish; neither was available here. Re-run the Pawley fit.' };
+                    return { error: 'The test needs the normal-equations matrix. The Levenberg-Marquardt refiner builds one, and a Parallel Tempering run gets one from its LM polish; neither was available here. Re-run the WPPF fit.' };
                 if (!workerWorkingData || !workerWorkingData.intensity || !workerWorkingData.intensity.length)
-                    return { error: 'The fitted data slice is no longer in memory. Re-run the Pawley refinement.' };
+                    return { error: 'The fitted data slice is no longer in memory. Re-run the WPPF refinement.' };
 
                 const { hklList, JtJ, parameterInfo, ss_res, params } = fitResults;
                 const P = parameterInfo.length;
@@ -830,11 +830,11 @@ setTimeout(() => {
                 if (!cands.length) return { error: `No space-group settings found for Laue class ${sgFit.laue_class}.` };
 
                 const openRec = cands.find(isConditionFree) || null;
-                const pawleyIsOpen = isConditionFree(sgFit);
+                const wppfIsOpen = isConditionFree(sgFit);
 
-                // Reflections the Pawley model never contained, so never tested.
+                // Reflections the WPPF model never contained, so never tested.
                 let missingSet = null;
-                if (!pawleyIsOpen && openRec) {
+                if (!wppfIsOpen && openRec) {
                     try {
                         const have = new Set(refl.map(r => `${r.h},${r.k},${r.l}`));
                         const loTth = refl[0].tth, hiTth = refl[n - 1].tth;
@@ -915,7 +915,7 @@ setTimeout(() => {
                     rows, n,
                     laue: sgFit.laue_class,
                     system: sgFit.system,
-                    sgFit, openRec, pawleyIsOpen,
+                    sgFit, openRec, wppfIsOpen,
                     missingCount: missingSet ? missingSet.length : 0,
                     sigmaExact: data.sigmaExact,
                     marginalised: data.marginalised,
@@ -941,20 +941,20 @@ setTimeout(() => {
 
                 parts.push(
                     `<div class="sgt-intro">Probability of each distinct set of systematic absences, given the `
-                    + `${res.n} refined Pawley intensities and their full correlation structure. `
+                    + `${res.n} refined WPPF intensities and their full correlation structure. `
                     + `Method: Markvardsen, David, Johnson &amp; Shankland, <i>Acta Cryst.</i> (2001) <b>A57</b>, 47&ndash;54.</div>`
                 );
 
-                if (!res.pawleyIsOpen) {
+                if (!res.wppfIsOpen) {
                     parts.push(
                         `<div class="sg-explain-warning" style="margin:10px 0;">`
-                        + `<b>Incomplete test.</b> The Pawley refinement was run in `
+                        + `<b>Incomplete test.</b> The WPPF refinement was run in `
                         + `<b>${esc(label(res.sgFit))}</b>, which already forbids `
                         + `${res.missingCount ? res.missingCount + ' ' : ''}reflections in this range. `
                         + `Those reflections were never refined, so nothing is known about them and any `
                         + `candidate that relies on them is scored on partial evidence (marked below). `
                         + (res.openRec
-                            ? `For a proper test, re-run the Pawley fit in <b>${esc(label(res.openRec))}</b> `
+                            ? `For a proper test, re-run the WPPF fit in <b>${esc(label(res.openRec))}</b> `
                             + `&mdash; same Laue class, no reflection conditions &mdash; then come back here.`
                             : ``)
                         + `</div>`
@@ -990,7 +990,7 @@ setTimeout(() => {
                     }).join('');
                     const more = r.recs.length > 14 ? `<span class="sgt-more">+${r.recs.length - 14} more</span>` : '';
                     const flag = r.untested
-                        ? `<span class="sgt-flag" title="${r.untested} of this group's conditions involve reflections that were not in the Pawley model">partial</span>`
+                        ? `<span class="sgt-flag" title="${r.untested} of this group's conditions involve reflections that were not in the WPPF model">partial</span>`
                         : '';
                     parts.push(`<tr${rank === 0 ? ' class="sgt-top"' : ''}>`
                         + `<td><div class="sgt-bar"><span style="width:${bar}%"></span></div>`
@@ -1020,8 +1020,8 @@ setTimeout(() => {
                 L.push('Markvardsen, David, Johnson & Shankland (2001), Acta Cryst. A57, 47-54');
                 L.push('');
                 L.push(`Laue class          : ${res.laue}`);
-                L.push(`Pawley group used   : ${label(res.sgFit)}${res.pawleyIsOpen ? '' : '  (imposes conditions - test is incomplete)'}`);
-                if (!res.pawleyIsOpen && res.openRec)
+                L.push(`WPPF group used     : ${label(res.sgFit)}${res.wppfIsOpen ? '' : '  (imposes conditions - test is incomplete)'}`);
+                if (!res.wppfIsOpen && res.openRec)
                     L.push(`Recommended re-run  : ${label(res.openRec)}  (condition-free, same Laue class)`);
                 L.push(`Reflections tested  : ${res.n}`);
                 L.push('');

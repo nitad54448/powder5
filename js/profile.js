@@ -726,7 +726,7 @@ function getPseudoVoigtArea(tth_peak, hkl, params) {
 //  a browser. WebGPU is retained where the result is not a refined number
 //  with an uncertainty attached: charge flipping and the Wyckoff swarm.
 //
-//  The decomposition into "contributions" is what makes the analytic Pawley
+//  The decomposition into "contributions" is what makes the analytic WPPF
 //  Jacobian possible: a contribution already carries the prepared profile and
 //  the index range it touches, so d(y)/d(I_j) is a lookup rather than a
 //  finite difference over a re-evaluated pattern.
@@ -736,7 +736,7 @@ function getPseudoVoigtArea(tth_peak, hkl, params) {
  * True if a reflection has a usable POSITION, regardless of its intensity.
  *
  * Deliberately separate from hasRenderableIntensity: a reflection whose
- * intensity is zero (or negative, which a Pawley fit is allowed to produce)
+ * intensity is zero (or negative, which a WPPF fit is allowed to produce)
  * still has a well-defined profile and therefore a well-defined derivative,
  * and it must keep its Jacobian column or it can never move again.
  *
@@ -755,7 +755,7 @@ function hasRenderablePosition(peak) {
 
 /**
  * True if a reflection contributes anything to the pattern right now.
- * Negative is fine -- see the note on Pawley intensities in
+ * Negative is fine -- see the note on WPPF intensities in
  * getParameterMapping.
  * @param {Reflection} peak
  * @returns {boolean}
@@ -898,7 +898,7 @@ function accumulatePattern(tthAxis, hklList, contributions, out = null) {
  */
 function intensityDerivativeColumn(tthAxis, contributions, peakIndex) {
     // PERF FIX: accept the BUCKETED form from bucketContributionsByPeak
-    // (pawley_linear.js) as well as the flat list. The flat path scans the
+    // (wppf_linear.js) as well as the flat list. The flat path scans the
     // whole contribution array twice per reflection while the caller invokes
     // it once per reflection, so the sweep was quadratic: 114 ms per LM
     // iteration at 4000 reflections against 29 ms bucketed, and the gap grows
